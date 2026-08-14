@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+build/
+.vite/
+
+# Env
+.env
+.env.local
+*.env.*.local
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Cursor (코에이전트 기록·로컬 설정은 올리지 않음)
+.cursor/
+.cursorignore
+agent-transcripts/
+
+# Logs
+*.log
