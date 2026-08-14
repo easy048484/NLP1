@@ -16,9 +16,9 @@ from pydantic import BaseModel, Field
 
 
 class AgentName(str, Enum):
-    HEIR_NAVIGATOR = "heir_navigator"          # 상속인 절차 내비게이터
-    DECEDENT_ESTATE = "decedent_estate"        # 피상속인 유언장·자산정리
-    TAX_CALCULATOR = "tax_calculator"          # 상속세 계산·설계
+    HEIR_NAVIGATOR = "heir_navigator"  # 상속인 절차 내비게이터
+    DECEDENT_ESTATE = "decedent_estate"  # 피상속인 유언장·자산정리
+    TAX_CALCULATOR = "tax_calculator"  # 상속세 계산·설계
 
 
 class AgentInput(BaseModel):
@@ -34,6 +34,7 @@ class AgentOutput(BaseModel):
     agent: AgentName
     reply: str
     next_action: Optional[str] = Field(
-        default=None, description="오케스트레이터에게 다음에 무엇을 할지 힌트 (예: 다른 에이전트로 전환)"
+        default=None,
+        description="오케스트레이터에게 다음에 무엇을 할지 힌트 (예: 다른 에이전트로 전환)",
     )
     data: dict[str, Any] = Field(default_factory=dict)
