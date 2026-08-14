@@ -23,10 +23,5 @@ build/
 .vscode/
 .idea/
 
-# Cursor (코에이전트 기록·로컬 설정은 올리지 않음)
-.cursor/
-.cursorignore
-agent-transcripts/
-
 # Logs
 *.log
