@@ -1,0 +1,189 @@
+{
+  "schema_version": "1.0",
+  "source": "apps/api/agents/decedent_estate/요건판정_문구_스펙_v1.md",
+  "legal_basis": "민법 제1066조 (자필증서에 의한 유언)",
+  "note": "판정은 룰 엔진이 수행한다. LLM은 텍스트에서 값 추출(날짜 문자열, 주소·성명 유무 등)만 담당하며 판례를 생성·인용하지 않는다.",
+
+  "grade_legend": {
+    "GREEN": { "label": "확인됨", "meaning": "요건 기재 확인", "precedent_status": "없음", "card_count": 0 },
+    "RED": { "label": "확인 안 됨", "meaning": "무효 방향 판례 확립", "precedent_status": "확립 판례 존재", "card_count": 1 },
+    "YELLOW": { "label": "쟁점 있음", "meaning": "사실관계 따라 갈림", "precedent_status": "판례 분기", "card_count": 2 },
+    "WHITE": { "label": "참고", "meaning": "법정 요건 아님", "precedent_status": "해당 없음", "card_count": 0 },
+    "PENDING": { "label": "확인 대기", "meaning": "텍스트로 판별 불가", "precedent_status": "없음", "card_count": 0 }
+  },
+
+  "requirements": [
+    {
+      "id": "date",
+      "name": "연월일",
+      "order": 1,
+      "extraction_type": "text_derivable",
+      "extraction_note": "LLM은 날짜 문자열 추출만 수행하고, 판정은 룰 엔진이 수행한다.",
+      "conditions": [
+        {
+          "id": "all_present",
+          "description": "년·월·일 3요소 모두 기재",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "day_missing",
+          "description": "일(日) 누락 (예: \"2026년 5월\")",
+          "grade": "RED",
+          "precedent_ids": ["date_missing_day_invalid"]
+        },
+        {
+          "id": "absent",
+          "description": "연월일 전부 없음",
+          "grade": "RED",
+          "precedent_ids": ["date_missing_day_invalid"]
+        },
+        {
+          "id": "verbal_specified",
+          "description": "말로 특정 (예: \"칠순 기념일에\")",
+          "grade": "YELLOW",
+          "precedent_ids": ["date_missing_day_invalid", "date_specifiable_valid"]
+        },
+        {
+          "id": "multiple_dates_mixed",
+          "description": "날짜 복수 혼재",
+          "grade": "YELLOW",
+          "precedent_ids": []
+        }
+      ]
+    },
+    {
+      "id": "address",
+      "name": "주소",
+      "order": 2,
+      "extraction_type": "text_derivable",
+      "conditions": [
+        {
+          "id": "full_address",
+          "description": "번지/동·호수까지 기재",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "city_district_only",
+          "description": "시·구 수준까지만 기재",
+          "grade": "YELLOW",
+          "precedent_ids": ["address_specificity_dispute"],
+          "note": "\"구별 가능한 정도\" 쟁점 판례 — 동·호수 누락 무효 사례 포함"
+        },
+        {
+          "id": "absent",
+          "description": "주소 아예 없음",
+          "grade": "RED",
+          "precedent_ids": ["address_missing_invalid"]
+        }
+      ]
+    },
+    {
+      "id": "name",
+      "name": "성명",
+      "order": 3,
+      "extraction_type": "text_derivable",
+      "conditions": [
+        {
+          "id": "present",
+          "description": "성명 기재",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "absent",
+          "description": "성명 없음",
+          "grade": "RED",
+          "precedent_ids": [],
+          "note": "근거: §1066 조문. 판례 카드 없어도 무방"
+        },
+        {
+          "id": "alias_or_pen_name",
+          "description": "호·아호 등 이례 표기",
+          "grade": "YELLOW",
+          "precedent_ids": ["name_identity_dispute"],
+          "note": "동일성 인정 여부 쟁점"
+        }
+      ]
+    },
+    {
+      "id": "handwriting",
+      "name": "전문 자서",
+      "order": 4,
+      "extraction_type": "user_confirm",
+      "reason": "텍스트 판별 불가 → 사용자 확인",
+      "question": "유언장 전체를 직접 손으로 쓰셨나요? (타이핑·워드 출력 아님)",
+      "default_grade": "PENDING",
+      "conditions": [
+        {
+          "id": "yes",
+          "description": "예 (전문 자필)",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "no_or_partial_typed",
+          "description": "아니오 · 일부 타이핑",
+          "grade": "RED",
+          "precedent_ids": ["typed_will_invalid"]
+        }
+      ]
+    },
+    {
+      "id": "seal",
+      "name": "날인",
+      "order": 5,
+      "extraction_type": "user_confirm",
+      "reason": "텍스트 판별 불가 → 사용자 확인",
+      "question": "도장 또는 지장(손도장)이 찍혀 있나요?",
+      "default_grade": "PENDING",
+      "conditions": [
+        {
+          "id": "seal_or_fingerprint",
+          "description": "도장/지장",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "signature_only",
+          "description": "서명(사인)만",
+          "grade": "RED",
+          "precedent_ids": ["signature_only_insufficient", "fingerprint_seal_valid"],
+          "note": "서명만으로는 날인 불충족 판례와 함께, 지장(무인)은 날인으로 인정된다는 판례를 나란히 안내"
+        },
+        {
+          "id": "absent",
+          "description": "날인 없음",
+          "grade": "RED",
+          "precedent_ids": ["signature_only_insufficient", "fingerprint_seal_valid"],
+          "note": "서명만으로는 날인 불충족 판례와 함께, 지장(무인)은 날인으로 인정된다는 판례를 나란히 안내"
+        }
+      ]
+    },
+    {
+      "id": "interseal",
+      "name": "간인",
+      "order": 6,
+      "extraction_type": "text_derivable",
+      "is_legal_requirement": false,
+      "note": "체크 항목(형식 요건 판정)에서 제외. 여러 장 감지 시 참고 문구만 표시.",
+      "conditions": [
+        {
+          "id": "single_page",
+          "description": "단일 장",
+          "grade": null,
+          "precedent_ids": [],
+          "note": "표시 없음"
+        },
+        {
+          "id": "multiple_pages",
+          "description": "여러 장 감지",
+          "grade": "WHITE",
+          "precedent_ids": [],
+          "note": "간인은 법정 요건이 아니지만, 여러 장일 경우 위조 다툼 예방에 도움이 됩니다"
+        }
+      ]
+    }
+  ]
+}
