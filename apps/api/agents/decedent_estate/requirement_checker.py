@@ -31,9 +31,21 @@ _ADDRESS_UNIT_RE = re.compile(
 _ADDRESS_DISTRICT_RE = re.compile(
     r"[가-힣]{2,8}(?:특별시|광역시|특별자치시|특별자치도|도|시)?\s+[가-힣]{2,6}(?:구|군|시|읍|면)"
 )
+# 유언자 본인 주소가 아니라 상속·증여 대상 부동산 소재지를 설명하는 문장은
+# 주소 요건 판정에서 제외한다 (예: "내가 소유한 OO 아파트를 ~에게 상속한다").
+_ADDRESS_PROPERTY_CONTEXT_RE = re.compile(
+    r"소유(?:한|하는|권)?|부동산|명의로|아파트를|주택을|토지를|건물을|"
+    r"상속한다|상속하며|증여한다|증여하며|물려준다|물려주며|양도한다|양도하며"
+)
 
 _NAME_ALIAS_RE = re.compile(r"(?:아호|호)\s*[:：]\s*([가-힣]{1,4})")
-_NAME_LABEL_RE = re.compile(r"(?:유언자|성명|이름)\s*[:：]\s*([가-힣]{2,4})")
+# 콜론 없는 "유언자 김영수" 형태도 허용 (콜론은 선택)
+_NAME_LABEL_RE = re.compile(r"(?:유언자|성명|이름)\s*[:：]?\s*([가-힣]{2,4})")
+# 라벨 없이 도장 표시 앞에 이름만 적힌 경우: "김영수 (인)" / "김영수(印)"
+_NAME_BEFORE_SEAL_MARK_RE = re.compile(r"([가-힣]{2,4})\s*\(\s*(?:인|印)\s*\)")
+# 라벨도 도장 표시도 없이 줄 끝에 이름만 단독으로 적힌 경우 (서명란 관행)
+_NAME_STANDALONE_LINE_RE = re.compile(r"^[가-힣]{2,4}$")
+_NAME_STANDALONE_LINE_BLOCKLIST = {"유언장", "유언", "증인", "서명", "이상", "끝"}
 
 _MULTI_PAGE_RE = re.compile(r"\(\s*(\d+)\s*/\s*(\d+)\s*\)|(\d+)\s*페이지|총\s*(\d+)\s*장")
 
@@ -103,13 +115,18 @@ class ExtractedText:
 
 
 def extract_address(text: str) -> ExtractedText:
-    unit_match = _ADDRESS_UNIT_RE.search(text)
-    if unit_match:
-        return ExtractedText(case="full_address", raw_text=_line_of(text, unit_match))
+    # 재산 목적물 소재지를 설명하는 줄은 유언자 주소 후보에서 제외한다.
+    candidate_lines = [
+        line for line in text.splitlines() if not _ADDRESS_PROPERTY_CONTEXT_RE.search(line)
+    ]
 
-    district_match = _ADDRESS_DISTRICT_RE.search(text)
-    if district_match:
-        return ExtractedText(case="city_district_only", raw_text=_line_of(text, district_match))
+    for line in candidate_lines:
+        if _ADDRESS_UNIT_RE.search(line):
+            return ExtractedText(case="full_address", raw_text=line.strip())
+
+    for line in candidate_lines:
+        if _ADDRESS_DISTRICT_RE.search(line):
+            return ExtractedText(case="city_district_only", raw_text=line.strip())
 
     return ExtractedText(case="absent", raw_text=None)
 
@@ -122,6 +139,18 @@ def extract_name(text: str) -> ExtractedText:
     label_match = _NAME_LABEL_RE.search(text)
     if label_match:
         return ExtractedText(case="present", raw_text=label_match.group())
+
+    seal_match = _NAME_BEFORE_SEAL_MARK_RE.search(text)
+    if seal_match:
+        return ExtractedText(case="present", raw_text=seal_match.group())
+
+    # 문서 하단(서명란)에 가까운 쪽부터 훑어 표제("유언장" 등)를 오탐하지 않도록 한다.
+    for line in reversed(text.splitlines()):
+        stripped = line.strip()
+        if stripped in _NAME_STANDALONE_LINE_BLOCKLIST:
+            continue
+        if _NAME_STANDALONE_LINE_RE.match(stripped):
+            return ExtractedText(case="present", raw_text=stripped)
 
     return ExtractedText(case="absent", raw_text=None)
 
@@ -136,15 +165,6 @@ def detect_interseal(text: str) -> ExtractedText:
         return ExtractedText(case="single_page", raw_text=match.group())
 
     return ExtractedText(case="multiple_pages", raw_text=match.group())
-
-
-def _line_of(text: str, match: re.Match[str]) -> str:
-    start, end = match.span()
-    line_start = text.rfind("\n", 0, start) + 1
-    line_end = text.find("\n", end)
-    if line_end == -1:
-        line_end = len(text)
-    return text[line_start:line_end].strip()
 
 
 def check_requirements(

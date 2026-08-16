@@ -115,3 +115,44 @@ def test_unanswered_user_confirm_fields_are_pending() -> None:
     assert results["handwriting"].grade == "PENDING"
     assert results["seal"].condition_id is None
     assert results["seal"].grade == "PENDING"
+
+
+def test_name_label_without_colon() -> None:
+    text = _will_text("유언자 홍길동", _ADDRESS_LINE, _DATE_LINE)
+
+    results = check_requirements(text)
+
+    assert results["name"].condition_id == "present"
+    assert "홍길동" in results["name"].extracted["raw_text"]
+
+
+def test_name_before_seal_mark_without_label() -> None:
+    text = _will_text(_ADDRESS_LINE, _DATE_LINE, "홍길동 (인)")
+
+    results = check_requirements(text)
+
+    assert results["name"].condition_id == "present"
+    assert "홍길동" in results["name"].extracted["raw_text"]
+
+
+def test_name_standalone_line_at_signature() -> None:
+    text = "유언장\n" + _will_text(_ADDRESS_LINE, _DATE_LINE, "홍길동")
+
+    results = check_requirements(text)
+
+    assert results["name"].condition_id == "present"
+    assert results["name"].extracted["raw_text"] == "홍길동"
+
+
+def test_property_address_is_not_mistaken_for_testator_address() -> None:
+    """상속 대상 부동산 소재지는 유언자 주소가 아니므로 absent 로 판정되어야 한다."""
+    text = _will_text(
+        _NAME_LINE,
+        "나는 내가 소유한 서울특별시 강남구 테헤란로 123, 456동 789호 아파트를 장남 김철수에게 상속한다.",
+        _DATE_LINE,
+    )
+
+    results = check_requirements(text)
+
+    assert results["address"].condition_id == "absent"
+    assert results["address"].grade == "RED"

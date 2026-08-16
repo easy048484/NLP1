@@ -52,3 +52,67 @@ def test_multiple_dates_mixed() -> None:
         (2025, 12, 25),
         (2026, 1, 1),
     }
+
+
+def test_dot_separated_full_date() -> None:
+    result = parse_dates("2026. 5. 3.\n유언자 김영수 (인)")
+
+    assert result.case == "all_present"
+    assert len(result.entries) == 1
+    assert (result.entries[0].year, result.entries[0].month, result.entries[0].day) == (
+        2026, 5, 3,
+    )
+
+
+def test_dot_separated_day_missing() -> None:
+    result = parse_dates("2026. 5.\n유언자 김영수 (인)")
+
+    assert result.case == "day_missing"
+    assert (result.entries[0].year, result.entries[0].month, result.entries[0].day) == (
+        2026, 5, None,
+    )
+
+
+def test_hyphen_separated_full_date() -> None:
+    result = parse_dates("작성일: 2026-05-03")
+
+    assert result.case == "all_present"
+    assert (result.entries[0].year, result.entries[0].month, result.entries[0].day) == (
+        2026, 5, 3,
+    )
+
+
+def test_hyphen_separated_day_missing() -> None:
+    result = parse_dates("작성일: 2026-05")
+
+    assert result.case == "day_missing"
+    assert (result.entries[0].year, result.entries[0].month, result.entries[0].day) == (
+        2026, 5, None,
+    )
+
+
+def test_korean_numeral_full_date() -> None:
+    result = parse_dates("이천이십육년 오월 삼일 작성함")
+
+    assert result.case == "all_present"
+    assert (result.entries[0].year, result.entries[0].month, result.entries[0].day) == (
+        2026, 5, 3,
+    )
+
+
+def test_korean_numeral_day_missing() -> None:
+    result = parse_dates("이천이십육년 오월 작성함")
+
+    assert result.case == "day_missing"
+    assert (result.entries[0].year, result.entries[0].month, result.entries[0].day) == (
+        2026, 5, None,
+    )
+
+
+def test_korean_numeral_irregular_month_names() -> None:
+    result = parse_dates("이천이십육년 유월 십일")
+
+    assert result.case == "all_present"
+    assert (result.entries[0].year, result.entries[0].month, result.entries[0].day) == (
+        2026, 6, 10,
+    )
