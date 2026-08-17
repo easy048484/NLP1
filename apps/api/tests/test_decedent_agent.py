@@ -115,3 +115,54 @@ def test_run_requirement_payload_covers_all_six_requirements() -> None:
         "seal",
         "interseal",
     }
+
+
+def test_run_no_context_has_no_warnings() -> None:
+    """확인 답변을 아예 안 준 것은 "잘못된 값"이 아니라 "미확인"이라 경고 대상이 아니다."""
+    payload = AgentInput(session_id="s1", user_message=_WILL_TEXT_COMPLETE)
+
+    output = decedent_estate.run(payload)
+
+    assert output.data["warnings"] == []
+
+
+def test_run_invalid_seal_answer_produces_warning_but_stays_pending() -> None:
+    payload = AgentInput(
+        session_id="s1",
+        user_message=_WILL_TEXT_COMPLETE,
+        context={"handwriting_answer": "yes", "seal_answer": "yes"},  # 잘못된 필드에 넣음
+    )
+
+    output = decedent_estate.run(payload)
+
+    assert output.data["warnings"] == [
+        {
+            "field": "seal_answer",
+            "invalid_value": "yes",
+            "allowed": ["seal_or_fingerprint", "signature_only", "absent"],
+        }
+    ]
+    # 경고는 나가지만 판정 자체는 죽지 않고 PENDING 유지, next_action도 되묻는 힌트여야 한다.
+    assert output.data["requirements"]["seal"]["grade"] == "PENDING"
+    assert output.next_action == NEXT_ACTION_AWAIT_USER
+
+
+def test_run_pending_question_includes_field_and_options() -> None:
+    payload = AgentInput(
+        session_id="s1", user_message=_WILL_TEXT_COMPLETE, context={"handwriting_answer": "yes"}
+    )
+
+    output = decedent_estate.run(payload)
+
+    assert output.data["pending_questions"] == [
+        {
+            "requirement": "날인",
+            "field": "seal_answer",
+            "question": "도장 또는 지장(손도장)이 찍혀 있나요?",
+            "options": [
+                {"label": "도장 또는 지장이 있다", "value": "seal_or_fingerprint"},
+                {"label": "서명만 있다", "value": "signature_only"},
+                {"label": "아무것도 없다", "value": "absent"},
+            ],
+        }
+    ]

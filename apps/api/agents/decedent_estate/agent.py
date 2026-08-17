@@ -16,7 +16,7 @@ from typing import Any, Optional
 
 from schemas import AgentInput, AgentName, AgentOutput
 
-from .requirement_checker import RequirementResult, check_requirements
+from .requirement_checker import RequirementResult, check_requirements, validate_confirm_answers
 from .result_formatter import format_result, pending_questions, red_label
 
 _FORMAL_REQUIREMENT_IDS = ("date", "address", "name", "handwriting", "seal")
@@ -56,11 +56,15 @@ def _next_action(results: dict[str, RequirementResult]) -> Optional[str]:
 
 def run(payload: AgentInput) -> AgentOutput:
     context = payload.context
+    handwriting_answer = context.get("handwriting_answer")
+    seal_answer = context.get("seal_answer")
+    address_envelope_answer = context.get("address_envelope_answer")
+
     results = check_requirements(
         payload.user_message,
-        handwriting_answer=context.get("handwriting_answer"),
-        seal_answer=context.get("seal_answer"),
-        address_envelope_answer=context.get("address_envelope_answer"),
+        handwriting_answer=handwriting_answer,
+        seal_answer=seal_answer,
+        address_envelope_answer=address_envelope_answer,
     )
 
     next_action = _next_action(results)
@@ -69,10 +73,14 @@ def run(payload: AgentInput) -> AgentOutput:
         "requirements": {
             rid: _requirement_payload(results[rid]) for rid in _ALL_REQUIREMENT_IDS
         },
-        "pending_questions": [
-            {"requirement": name, "question": question}
-            for name, question in pending_questions(results)
-        ],
+        "pending_questions": pending_questions(results),
+        # 화이트리스트에 없는 답변값이 와도 판정은 그대로 PENDING 유지(위 check_requirements
+        # 호출과 동일 입력) — 여기서는 그 "조용한 무시"를 호출자가 알아채도록만 알려준다.
+        "warnings": validate_confirm_answers(
+            handwriting_answer=handwriting_answer,
+            seal_answer=seal_answer,
+            address_envelope_answer=address_envelope_answer,
+        ),
     }
     if next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR:
         data["handoff_reason"] = "가정법원 검인 절차 안내 필요"

@@ -50,9 +50,19 @@ _NAME_STANDALONE_LINE_BLOCKLIST = {"유언장", "유언", "증인", "서명", "�
 
 _MULTI_PAGE_RE = re.compile(r"\(\s*(\d+)\s*/\s*(\d+)\s*\)|(\d+)\s*페이지|총\s*(\d+)\s*장")
 
-_HANDWRITING_CONDITION_IDS = {"yes", "no_or_partial_typed"}
-_SEAL_CONDITION_IDS = {"seal_or_fingerprint", "signature_only", "absent"}
-_ADDRESS_ENVELOPE_CONDITION_IDS = {"envelope_or_minor_discrepancy", "no_envelope"}
+# 튜플(순서 있음)로 둔다 — validate_confirm_answers() 의 경고에 담기는 "allowed"
+# 목록이 rules/requirements.json 의 conditions 선언 순서와 그대로 일치해야 하므로.
+_HANDWRITING_CONDITION_IDS = ("yes", "no_or_partial_typed")
+_SEAL_CONDITION_IDS = ("seal_or_fingerprint", "signature_only", "absent")
+_ADDRESS_ENVELOPE_CONDITION_IDS = ("envelope_or_minor_discrepancy", "no_envelope")
+
+# context 필드 이름 → 허용값 목록. validate_confirm_answers() 와 check_requirements()
+# 양쪽이 이 하나의 매핑만 참조하도록 해서 두 곳의 화이트리스트가 어긋나지 않게 한다.
+_CONFIRM_FIELD_ALLOWED_VALUES = {
+    "handwriting_answer": _HANDWRITING_CONDITION_IDS,
+    "seal_answer": _SEAL_CONDITION_IDS,
+    "address_envelope_answer": _ADDRESS_ENVELOPE_CONDITION_IDS,
+}
 
 
 @lru_cache(maxsize=1)
@@ -120,7 +130,13 @@ def _build_address_result(
 ) -> RequirementResult:
     """주소 요건 + followup(봉투 확인 질문)을 함께 판정한다.
 
-    본문 판정이 RED가 아니면 followup은 아예 트리거되지 않는다. RED인 경우:
+    followup은 본문 판정의 condition_id 가 followup.trigger_conditions 에 속할
+    때만(현재는 "absent" 뿐) 트리거된다 — "본문에 주소가 아예 없어야" 봉투 질문이
+    말이 된다. "city_district_only"(본문에 불완전하게라도 주소가 있음)는 이미
+    본문에 주소가 있는 상태라 "봉투에 적혀 있나요?"라는 질문 자체가 성립하지
+    않으므로 트리거하지 않고 RED로 확정한다.
+
+    트리거되는 경우:
     - 답변 없음 → PENDING (자서/날인 미확인과 동일한 취급)
     - "envelope_or_minor_discrepancy" → followup 조건의 YELLOW로 승격
     - "no_envelope" → 본문 기반 RED 판정 그대로 유지
@@ -131,7 +147,7 @@ def _build_address_result(
     )
 
     followup = req.get("followup")
-    if not followup or base.grade != followup.get("trigger_grade"):
+    if not followup or base.condition_id not in followup.get("trigger_conditions", []):
         return base
 
     question = followup["question"]
@@ -192,17 +208,19 @@ def extract_address(text: str) -> ExtractedText:
 
 
 def extract_name(text: str) -> ExtractedText:
+    # 각 정규식의 group(1)이 라벨/도장 표시를 뺀 이름 그 자체다 — group(0)(전체 매치)을
+    # 쓰면 "유언자: 홍길동"처럼 라벨까지 extracted 값에 섞여 들어간다.
     alias_match = _NAME_ALIAS_RE.search(text)
     if alias_match:
-        return ExtractedText(case="alias_or_pen_name", raw_text=alias_match.group())
+        return ExtractedText(case="alias_or_pen_name", raw_text=alias_match.group(1))
 
     label_match = _NAME_LABEL_RE.search(text)
     if label_match:
-        return ExtractedText(case="present", raw_text=label_match.group())
+        return ExtractedText(case="present", raw_text=label_match.group(1))
 
     seal_match = _NAME_BEFORE_SEAL_MARK_RE.search(text)
     if seal_match:
-        return ExtractedText(case="present", raw_text=seal_match.group())
+        return ExtractedText(case="present", raw_text=seal_match.group(1))
 
     # 문서 하단(서명란)에 가까운 쪽부터 훑어 표제("유언장" 등)를 오탐하지 않도록 한다.
     for line in reversed(text.splitlines()):
@@ -227,6 +245,36 @@ def detect_interseal(text: str) -> ExtractedText:
         return ExtractedText(case="single_page", raw_text=match.group())
 
     return ExtractedText(case="multiple_pages", raw_text=match.group())
+
+
+def validate_confirm_answers(
+    *,
+    handwriting_answer: Optional[str] = None,
+    seal_answer: Optional[str] = None,
+    address_envelope_answer: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """사용자 확인 답변 중 화이트리스트에 없는 값을 찾아 경고 목록으로 반환한다.
+
+    판정 자체(check_requirements)는 그런 값을 조용히 미확인(None)으로 취급해
+    PENDING을 유지한다 — 이 함수는 그 "조용한 실패"를 호출자가 알아챌 수 있게
+    해줄 뿐, check_requirements 의 동작을 바꾸지 않는다.
+    """
+    provided = {
+        "handwriting_answer": handwriting_answer,
+        "seal_answer": seal_answer,
+        "address_envelope_answer": address_envelope_answer,
+    }
+
+    warnings: list[dict[str, Any]] = []
+    for field, value in provided.items():
+        if value is None:
+            continue
+        allowed = _CONFIRM_FIELD_ALLOWED_VALUES[field]
+        if value not in allowed:
+            warnings.append(
+                {"field": field, "invalid_value": value, "allowed": list(allowed)}
+            )
+    return warnings
 
 
 def check_requirements(

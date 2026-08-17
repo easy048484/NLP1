@@ -204,18 +204,57 @@ def summarize(results: dict[str, RequirementResult]) -> str:
     return _SUMMARY_ALL_GREEN
 
 
-def pending_questions(results: dict[str, RequirementResult]) -> list[tuple[str, str]]:
-    """D 케이스에서 실제로 물어봐야 할 (요건 이름, 질문) 목록.
+def _confirm_field(requirement_id: str, req: dict[str, Any]) -> Optional[str]:
+    """요건 id → context 필드 이름 (rules/requirements.json 의 confirm_field)."""
+    if requirement_id == "address":
+        followup = req.get("followup")
+        return followup.get("confirm_field") if followup else None
+    return req.get("confirm_field")
 
-    §3 본문에는 없는 보조 기능이지만, "2가지만 직접 확인해주세요"라는 요약 문구
-    뒤에 실제로 무엇을 물어야 하는지가 있어야 화면을 완성할 수 있어 추가했다.
-    질문 문구 자체는 rules/requirements.json 에 이미 있는 값을 그대로 쓴다.
+
+def _confirm_options(requirement_id: str, req: dict[str, Any]) -> list[dict[str, str]]:
+    """PENDING 요건을 물어볼 때 프론트가 버튼으로 그릴 선택지 (label/value).
+
+    label 문구는 rules/requirements.json 의 conditions[].label 을 그대로 쓴다 —
+    여기서 문구를 새로 짓지 않는다.
     """
+    conditions = req["followup"]["conditions"] if requirement_id == "address" else req["conditions"]
     return [
-        (results[rid].name, results[rid].followup_question)
-        for rid in _FORMAL_REQUIREMENT_IDS
-        if results[rid].grade == "PENDING" and results[rid].followup_question
+        {"label": cond["label"], "value": cond["id"]}
+        for cond in conditions
+        if "label" in cond
     ]
+
+
+def pending_questions(results: dict[str, RequirementResult]) -> list[dict[str, Any]]:
+    """D 케이스에서 실제로 물어봐야 할 질문들을, 프론트가 버튼을 그릴 수 있는 형태로.
+
+    §3 본문에는 없는 보조 기능이지만, "N가지만 직접 확인해주세요"라는 요약 문구
+    뒤에 실제로 무엇을(어떤 선택지로) 물어야 하는지가 있어야 화면을 완성할 수 있어
+    추가했다. question/field/label 문구는 전부 rules/requirements.json 값을 그대로
+    쓴다 — 여기서 새로 짓지 않는다.
+
+    반환 형태: [{"requirement": str, "field": str, "question": str,
+                 "options": [{"label": str, "value": str}, ...]}, ...]
+    """
+    rules = _load_rules()
+    rules_by_id = {req["id"]: req for req in rules["requirements"]}
+
+    questions = []
+    for rid in _FORMAL_REQUIREMENT_IDS:
+        result = results[rid]
+        if result.grade != "PENDING" or not result.followup_question:
+            continue
+        req = rules_by_id[rid]
+        questions.append(
+            {
+                "requirement": result.name,
+                "field": _confirm_field(rid, req),
+                "question": result.followup_question,
+                "options": _confirm_options(rid, req),
+            }
+        )
+    return questions
 
 
 def format_result(results: dict[str, RequirementResult]) -> str:
@@ -230,7 +269,7 @@ def format_result(results: dict[str, RequirementResult]) -> str:
     pending = pending_questions(results)
     if pending:
         sections.append(
-            "\n".join(f"- {name}: {question}" for name, question in pending)
+            "\n".join(f"- {item['requirement']}: {item['question']}" for item in pending)
         )
 
     for requirement_id in ordered_ids:

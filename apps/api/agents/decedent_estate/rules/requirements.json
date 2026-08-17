@@ -82,14 +82,16 @@
       ],
       "followup": {
         "id": "address_envelope_check",
-        "trigger_grade": "RED",
+        "confirm_field": "address_envelope_answer",
+        "trigger_conditions": ["absent"],
         "extraction_type": "user_confirm",
-        "reason": "본문 주소가 RED(city_district_only/absent)로 판정된 경우에만 물어본다 — 본문에 주소가 부족·부재해도 봉투에 적혀 있으면 유효로 본 판례가 있기 때문",
+        "reason": "본문에 주소가 아예 없는 경우(absent)에만 물어본다 — 봉투에 적혀 있으면 유효로 본 판례가 있기 때문. city_district_only(불완전 기재)는 본문에 주소가 이미 있으므로 봉투 질문 자체가 성립하지 않아 대상에서 제외한다",
         "question": "주소가 유언장 본문이 아니라 봉투에 적혀 있나요?",
         "conditions": [
           {
             "id": "envelope_or_minor_discrepancy",
             "description": "예 — 주소가 봉투에 기재되어 있음",
+            "label": "봉투에 적혀 있다",
             "grade": "YELLOW",
             "precedent_ids": ["fingerprint_seal_valid"],
             "note": "97다38510 — 주소도 전문을 담은 봉투에 기재해도 무방하다는 판례 참조. 최종 유효 여부는 개별 판단 필요"
@@ -97,6 +99,7 @@
           {
             "id": "no_envelope",
             "description": "아니오 — 봉투에도 기재되어 있지 않음",
+            "label": "봉투에도 없다",
             "grade": null,
             "precedent_ids": [],
             "note": "본문 판정 결과(city_district_only 또는 absent)를 그대로 유지"
@@ -137,6 +140,7 @@
       "id": "handwriting",
       "name": "전문 자서",
       "red_label": "자필 작성 여부",
+      "confirm_field": "handwriting_answer",
       "order": 4,
       "extraction_type": "user_confirm",
       "reason": "텍스트 판별 불가 → 사용자 확인",
@@ -146,12 +150,14 @@
         {
           "id": "yes",
           "description": "예 (전문 자필)",
+          "label": "직접 손으로 썼다",
           "grade": "GREEN",
           "precedent_ids": []
         },
         {
           "id": "no_or_partial_typed",
           "description": "아니오 · 일부 타이핑",
+          "label": "타이핑했거나 일부만 손으로 썼다",
           "grade": "RED",
           "precedent_ids": ["typed_will_invalid"]
         }
@@ -161,6 +167,7 @@
       "id": "seal",
       "name": "날인",
       "red_label": "도장·지장",
+      "confirm_field": "seal_answer",
       "order": 5,
       "extraction_type": "user_confirm",
       "reason": "텍스트 판별 불가 → 사용자 확인",
@@ -170,12 +177,14 @@
         {
           "id": "seal_or_fingerprint",
           "description": "도장/지장",
+          "label": "도장 또는 지장이 있다",
           "grade": "GREEN",
           "precedent_ids": []
         },
         {
           "id": "signature_only",
           "description": "서명(사인)만",
+          "label": "서명만 있다",
           "grade": "RED",
           "precedent_ids": ["signature_only_insufficient", "fingerprint_seal_valid"],
           "note": "서명만으로는 날인 불충족 판례와 함께, 지장(무인)은 날인으로 인정된다는 판례를 나란히 안내"
@@ -183,6 +192,7 @@
         {
           "id": "absent",
           "description": "날인 없음",
+          "label": "아무것도 없다",
           "grade": "RED",
           "precedent_ids": ["signature_only_insufficient", "fingerprint_seal_valid"],
           "note": "서명만으로는 날인 불충족 판례와 함께, 지장(무인)은 날인으로 인정된다는 판례를 나란히 안내"

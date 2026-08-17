@@ -128,10 +128,57 @@ def test_case_d_pending_summary_lists_question() -> None:
     )
 
     questions = pending_questions(results)
-    assert ("전문 자서", "유언장 전체를 직접 손으로 쓰셨나요? (타이핑·워드 출력 아님)") in questions
+    assert questions == [
+        {
+            "requirement": "전문 자서",
+            "field": "handwriting_answer",
+            "question": "유언장 전체를 직접 손으로 쓰셨나요? (타이핑·워드 출력 아님)",
+            "options": [
+                {"label": "직접 손으로 썼다", "value": "yes"},
+                {"label": "타이핑했거나 일부만 손으로 썼다", "value": "no_or_partial_typed"},
+            ],
+        }
+    ]
 
     output = format_result(results)
     assert "전문 자서: 유언장 전체를 직접 손으로 쓰셨나요?" in output
+
+
+def test_pending_question_options_for_seal() -> None:
+    text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
+    results = check_requirements(text, handwriting_answer="yes")  # seal만 미답변
+
+    questions = pending_questions(results)
+    assert questions == [
+        {
+            "requirement": "날인",
+            "field": "seal_answer",
+            "question": "도장 또는 지장(손도장)이 찍혀 있나요?",
+            "options": [
+                {"label": "도장 또는 지장이 있다", "value": "seal_or_fingerprint"},
+                {"label": "서명만 있다", "value": "signature_only"},
+                {"label": "아무것도 없다", "value": "absent"},
+            ],
+        }
+    ]
+
+
+def test_pending_question_options_for_address_envelope() -> None:
+    text = _will_text(_NAME_LINE, _DATE_LINE)  # 주소 없음(absent) → 봉투 확인 트리거
+    results = check_requirements(text, handwriting_answer="yes", seal_answer="seal_or_fingerprint")
+
+    questions = pending_questions(results)
+    assert questions == [
+        {
+            "requirement": "주소",
+            "field": "address_envelope_answer",
+            "question": "주소가 유언장 본문이 아니라 봉투에 적혀 있나요?",
+            "options": [
+                {"label": "봉투에 적혀 있다", "value": "envelope_or_minor_discrepancy"},
+                {"label": "봉투에도 없다", "value": "no_envelope"},
+            ],
+        }
+    ]
 
 
 def test_pending_takes_priority_over_red() -> None:

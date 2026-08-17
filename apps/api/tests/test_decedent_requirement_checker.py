@@ -7,7 +7,7 @@ decedent_estate.requirement_checker 통합 테스트.
 ⑤ 성명 누락  ⑥ 주소가 시·구 수준까지만  ⑦ 날짜 2개 혼재  ⑧ 날인 없이 서명만
 """
 
-from agents.decedent_estate.requirement_checker import check_requirements
+from agents.decedent_estate.requirement_checker import check_requirements, validate_confirm_answers
 
 _NAME_LINE = "유언자: 홍길동"
 _ADDRESS_LINE = "주소: 서울특별시 강남구 테헤란로 123, 45동 678호"
@@ -93,6 +93,30 @@ def test_sample6_address_city_district_only() -> None:
     assert results["address"].precedent_ids == ["address_missing_invalid"]
 
 
+def test_city_district_only_does_not_trigger_envelope_followup() -> None:
+    """본문에 불완전하게라도 주소가 있으면(city_district_only) 봉투 질문은 말이 안 되므로
+    PENDING으로 새지 않고 곧바로 RED로 확정돼야 한다 — 봉투 확인 답변 없이도."""
+    text = _will_text(_NAME_LINE, "주소: 서울 강남구", _DATE_LINE)
+
+    results = check_requirements(text)  # address_envelope_answer 를 아예 안 줌
+
+    assert results["address"].condition_id == "city_district_only"
+    assert results["address"].grade == "RED"
+    assert results["address"].followup_question is None
+
+
+def test_absent_address_still_triggers_envelope_followup() -> None:
+    """주소가 아예 없는(absent) 경우에는 여전히 봉투 질문이 트리거돼 PENDING이어야 한다."""
+    text = _will_text(_NAME_LINE, _DATE_LINE)  # 주소 언급 자체가 없음
+
+    results = check_requirements(text)  # address_envelope_answer 를 아예 안 줌
+
+    assert results["address"].condition_id is None
+    assert results["address"].grade == "PENDING"
+    assert results["address"].followup_question == "주소가 유언장 본문이 아니라 봉투에 적혀 있나요?"
+    assert results["address"].extracted["underlying_case"] == "absent"
+
+
 def test_sample7_multiple_dates_mixed() -> None:
     text = _will_text(
         _NAME_LINE,
@@ -136,13 +160,22 @@ def test_name_label_without_colon() -> None:
     assert "홍길동" in results["name"].extracted["raw_text"]
 
 
+def test_name_extracted_value_excludes_label() -> None:
+    """GREEN extracted 값은 "유언자: 홍길동"이 아니라 이름만("홍길동")이어야 한다."""
+    text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)  # _NAME_LINE = "유언자: 홍길동"
+
+    results = check_requirements(text)
+
+    assert results["name"].extracted["raw_text"] == "홍길동"
+
+
 def test_name_before_seal_mark_without_label() -> None:
     text = _will_text(_ADDRESS_LINE, _DATE_LINE, "홍길동 (인)")
 
     results = check_requirements(text)
 
     assert results["name"].condition_id == "present"
-    assert "홍길동" in results["name"].extracted["raw_text"]
+    assert results["name"].extracted["raw_text"] == "홍길동"
 
 
 def test_name_standalone_line_at_signature() -> None:
@@ -216,3 +249,48 @@ def test_address_green_ignores_envelope_answer() -> None:
     assert address.condition_id == "full_address"
     assert address.grade == "GREEN"
     assert address.followup_question is None
+
+
+def test_validate_confirm_answers_flags_value_from_wrong_field() -> None:
+    """seal_answer 에 handwriting_answer 의 값("yes")을 잘못 넣은 경우를 잡아내야 한다."""
+    warnings = validate_confirm_answers(seal_answer="yes")
+
+    assert warnings == [
+        {
+            "field": "seal_answer",
+            "invalid_value": "yes",
+            "allowed": ["seal_or_fingerprint", "signature_only", "absent"],
+        }
+    ]
+
+
+def test_validate_confirm_answers_no_warnings_for_valid_or_missing() -> None:
+    warnings = validate_confirm_answers(
+        handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )  # address_envelope_answer 는 아예 안 줌
+
+    assert warnings == []
+
+
+def test_validate_confirm_answers_multiple_invalid_fields() -> None:
+    warnings = validate_confirm_answers(
+        handwriting_answer="maybe",
+        seal_answer="yes",
+        address_envelope_answer="예",
+    )
+
+    assert {w["field"] for w in warnings} == {
+        "handwriting_answer",
+        "seal_answer",
+        "address_envelope_answer",
+    }
+
+
+def test_invalid_confirm_answer_still_results_in_pending_not_crash() -> None:
+    """CLAUDE.md 원칙: 잘못된 입력이 와도 판정은 죽지 않고 PENDING으로 남는다."""
+    text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
+
+    results = check_requirements(text, seal_answer="yes")
+
+    assert results["seal"].condition_id is None
+    assert results["seal"].grade == "PENDING"
