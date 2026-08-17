@@ -1,11 +1,11 @@
 # 유언장 검증 에이전트 (decedent_estate)
 
 ## 역할
-유언 방식(민법 5방식, rules/will_types.json)을 먼저 확인해 분기하고, 방식이
-자필증서(§1066, handwritten)이면 형식 요건(자서·연월일·주소·성명·날인)을 점검해
-판례 기반 카드와 함께 신호등(GREEN/YELLOW/RED) 결과를 반환한다. 그 외 방식은
-검증 필요 여부·요건 요약만 안내한다 (공정증서는 검증·검인 모두 불요, 녹음·비밀·구수는
-자동 점검 미지원).
+유언 방식(민법 5방식, rules/will_types.json)을 먼저 확인해 분기한다. 방식이
+자필증서(§1066, handwritten) 또는 녹음(§1067, recording)이면 각각의 형식 요건을
+점검해 판례·조문 기반 카드와 함께 신호등(GREEN/YELLOW/RED) 결과를 반환한다.
+공정증서(§1068)는 검증·검인 모두 불요 안내만, 비밀증서(§1069)·구수증서(§1070)는
+요건 요약 + 자동 점검 미지원 안내만 한다.
 
 ## 절대 원칙
 1. 판정은 룰 엔진이 한다. LLM은 텍스트에서 값 추출(날짜 문자열, 주소·성명 유무)만 한다.
@@ -33,7 +33,16 @@
 - 날짜/주소는 여전히 정규식 전용이며, LLM 폴백이 없다 (docs/known_limitations.md
   의 항목들이 아직 해당 요건에 남아 있음).
 - **유언 방식 분기**(rules/will_types.json, will_types.py)가 agent.run() 맨 앞단에
-  추가됨: context.will_type 이 없으면 방식을 먼저 묻고, handwritten/unknown(기본값
-  자필증서 적용)만 위 요건 판정 파이프라인을 탄다. notarial/recording/secret/oral은
-  요건 판정을 아예 돌지 않고 안내만 한다. recording(§1067)은 "지원 예정, 구현 전"
-  상태 — will_types.json 의 support: "none" + planned: true 로 표시됨.
+  추가됨: context.will_type 이 없으면 방식을 먼저 묻는다.
+  - handwritten/unknown(기본값 자필증서 적용) → requirement_checker.py 파이프라인
+  - **recording(§1067)** → recording_checker.py 파이프라인 (will_types.json 의
+    support: "full"). 대본(전사) 텍스트 기준으로 5개 요건(유언 취지/유언자 성명/
+    연월일/증인의 정확함 확인/증인 성명)은 규칙 기반(+성명은 LLM 폴백)으로,
+    2개(증인 실제 참여 여부/증인 결격 여부)는 사용자 확인으로 판정한다.
+    requirement_checker._build_result/_load_rules 와 date_parser.parse_dates,
+    extract_name_with_fallback 을 그대로 재사용해 등급표 중복을 만들지 않는다.
+  - notarial/secret/oral → 요건 판정을 아예 돌지 않고 안내만 한다.
+  - result_formatter.py 는 summarize()/pending_questions()/format_result() 가
+    formal_ids·messages(SummaryMessages)를 파라미터로 받도록 일반화되어
+    handwritten·recording 두 요건 집합을 하나의 §3 렌더링 로직으로 처리한다
+    (§3-1 A/B/C 문구만 will_type별로 다르고, 나머지는 공통).

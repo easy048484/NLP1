@@ -17,6 +17,7 @@
       "id": "date",
       "name": "연월일",
       "red_label": "날짜",
+      "will_type": "handwritten",
       "order": 1,
       "extraction_type": "text_derivable",
       "extraction_note": "LLM은 날짜 문자열 추출만 수행하고, 판정은 룰 엔진이 수행한다.",
@@ -57,6 +58,7 @@
       "id": "address",
       "name": "주소",
       "red_label": "유언자 주소",
+      "will_type": "handwritten",
       "order": 2,
       "extraction_type": "text_derivable",
       "conditions": [
@@ -111,6 +113,7 @@
       "id": "name",
       "name": "성명",
       "red_label": "성명",
+      "will_type": "handwritten",
       "order": 3,
       "extraction_type": "text_derivable",
       "conditions": [
@@ -141,6 +144,7 @@
       "name": "전문 자서",
       "red_label": "자필 작성 여부",
       "confirm_field": "handwriting_answer",
+      "will_type": "handwritten",
       "order": 4,
       "extraction_type": "user_confirm",
       "reason": "텍스트 판별 불가 → 사용자 확인",
@@ -168,6 +172,7 @@
       "name": "날인",
       "red_label": "도장·지장",
       "confirm_field": "seal_answer",
+      "will_type": "handwritten",
       "order": 5,
       "extraction_type": "user_confirm",
       "reason": "텍스트 판별 불가 → 사용자 확인",
@@ -202,6 +207,7 @@
     {
       "id": "interseal",
       "name": "간인",
+      "will_type": "handwritten",
       "order": 6,
       "extraction_type": "text_derivable",
       "is_legal_requirement": false,
@@ -220,6 +226,193 @@
           "grade": "WHITE",
           "precedent_ids": [],
           "note": "간인은 법정 요건이 아니지만, 여러 장일 경우 위조 다툼 예방에 도움이 됩니다"
+        }
+      ]
+    },
+    {
+      "id": "rec_content",
+      "name": "유언 취지",
+      "red_label": "유언 취지 구술",
+      "will_type": "recording",
+      "order": 1,
+      "extraction_type": "text_derivable",
+      "extraction_note": "재산 처분 의사 표현(상속한다/증여한다/물려준다 등) 유무만 규칙으로 추출한다.",
+      "conditions": [
+        {
+          "id": "present",
+          "description": "재산 처분 의사 표현 있음",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "absent",
+          "description": "재산 처분 의사 표현 없음",
+          "grade": "RED",
+          "precedent_ids": ["recording_requirements"]
+        }
+      ]
+    },
+    {
+      "id": "rec_testator_name",
+      "name": "유언자 성명",
+      "red_label": "유언자 성명 구술",
+      "will_type": "recording",
+      "order": 2,
+      "extraction_type": "text_derivable",
+      "extraction_note": "requirement_checker.extract_name_with_fallback 재사용 (정규식 우선, 못 찾으면 LLM 폴백).",
+      "conditions": [
+        {
+          "id": "present",
+          "description": "유언자 성명 구술 확인",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "absent",
+          "description": "유언자 성명 구술 없음",
+          "grade": "RED",
+          "precedent_ids": ["recording_requirements"]
+        }
+      ]
+    },
+    {
+      "id": "rec_date",
+      "name": "연월일",
+      "red_label": "구술 연월일",
+      "will_type": "recording",
+      "order": 3,
+      "extraction_type": "text_derivable",
+      "extraction_note": "date_parser.parse_dates 재사용 — 자필증서 date 요건과 동일한 조건 구조를 그대로 쓴다.",
+      "conditions": [
+        {
+          "id": "all_present",
+          "description": "년·월·일 3요소 모두 구술",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "day_missing",
+          "description": "일(日) 누락 (예: \"2026년 5월\")",
+          "grade": "RED",
+          "precedent_ids": ["date_missing_day_invalid"]
+        },
+        {
+          "id": "absent",
+          "description": "연월일 전부 없음",
+          "grade": "RED",
+          "precedent_ids": ["date_missing_day_invalid"]
+        },
+        {
+          "id": "verbal_specified",
+          "description": "말로 특정 (예: \"칠순 기념일에\")",
+          "grade": "YELLOW",
+          "precedent_ids": ["date_missing_day_invalid", "date_specifiable_valid"]
+        },
+        {
+          "id": "multiple_dates_mixed",
+          "description": "날짜 복수 혼재",
+          "grade": "YELLOW",
+          "precedent_ids": []
+        }
+      ]
+    },
+    {
+      "id": "rec_witness_accuracy",
+      "name": "증인의 정확함 확인",
+      "red_label": "증인의 정확함 구술",
+      "will_type": "recording",
+      "order": 4,
+      "extraction_type": "text_derivable",
+      "conditions": [
+        {
+          "id": "present",
+          "description": "증인이 유언의 정확함을 구술함",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "absent",
+          "description": "증인의 정확함 구술 없음",
+          "grade": "RED",
+          "precedent_ids": ["recording_requirements"]
+        }
+      ]
+    },
+    {
+      "id": "rec_witness_name",
+      "name": "증인 성명",
+      "red_label": "증인 성명 구술",
+      "will_type": "recording",
+      "order": 5,
+      "extraction_type": "text_derivable",
+      "conditions": [
+        {
+          "id": "present",
+          "description": "증인 성명 구술 확인",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "absent",
+          "description": "증인 성명 구술 없음",
+          "grade": "RED",
+          "precedent_ids": ["recording_requirements"]
+        }
+      ]
+    },
+    {
+      "id": "rec_witness_present",
+      "name": "증인 참여",
+      "red_label": "증인 참여 여부",
+      "will_type": "recording",
+      "order": 6,
+      "extraction_type": "user_confirm",
+      "reason": "대본만으로는 실제 참여 여부를 알 수 없음 → 사용자 확인",
+      "confirm_field": "rec_witness_present_answer",
+      "question": "녹음에 증인이 실제로 참여했나요?",
+      "default_grade": "PENDING",
+      "conditions": [
+        {
+          "id": "yes",
+          "description": "증인이 실제로 참여함",
+          "label": "네, 증인이 참여했습니다",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "no",
+          "description": "증인이 참여하지 않음",
+          "label": "아니오, 증인이 없었습니다",
+          "grade": "RED",
+          "precedent_ids": ["recording_requirements"]
+        }
+      ]
+    },
+    {
+      "id": "rec_witness_eligible",
+      "name": "증인 결격 여부",
+      "red_label": "증인 결격 사유",
+      "will_type": "recording",
+      "order": 7,
+      "extraction_type": "user_confirm",
+      "reason": "텍스트로 판별 불가 → 사용자 확인",
+      "confirm_field": "rec_witness_eligible_answer",
+      "question": "증인이 아래에 해당하지 않나요?\n① 미성년자\n② 피성년후견인·피한정후견인\n③ 이 유언으로 재산을 받는 사람과 그 배우자·직계혈족",
+      "default_grade": "PENDING",
+      "conditions": [
+        {
+          "id": "not_disqualified",
+          "description": "해당하지 않음 (결격 사유 없음)",
+          "label": "해당하지 않습니다",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "disqualified",
+          "description": "해당함 (결격 사유 있음)",
+          "label": "해당합니다",
+          "grade": "RED",
+          "precedent_ids": ["witness_disqualification", "executor_not_disqualified"]
         }
       ]
     }

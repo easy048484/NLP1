@@ -35,9 +35,8 @@
       "article": "민법 제1067조",
       "source": "민법 제1067조",
       "requirements_summary": "유언자가 유언의 취지, 그 성명과 연월일을 구술하고, 이에 참여한 증인이 유언의 정확함과 그 성명을 구술하여야 한다",
-      "support": "none",
-      "planned": true,
-      "guidance": "녹음 유언 자동 점검은 아직 준비 중입니다. 법률 전문가 확인을 권합니다."
+      "support": "full",
+      "guidance": null
     },
     {
       "id": "notarial",

@@ -2,9 +2,12 @@
 유언 방식(민법 5방식) 분기 테스트.
 
 context.will_type 값에 따라 agent.run() 이 어떻게 갈라지는지 확인한다:
-미확인(질문 반환) / 잘못된 값(경고+재질문) / handwritten(기존 파이프라인) /
+미확인(질문 반환) / 잘못된 값(경고+재질문) / handwritten(요건 판정 파이프라인) /
 unknown(자필증서 기본값 적용) / notarial(검증·검인 불요 안내+핸드오프) /
-recording·secret·oral(요건 요약 + 자동 점검 미지원 안내).
+secret·oral(요건 요약 + 자동 점검 미지원 안내).
+
+recording(녹음, §1067)은 이제 handwritten과 마찬가지로 실제 요건 판정
+파이프라인을 타므로 별도 파일 test_decedent_recording.py 에서 다룬다.
 """
 
 from agents import decedent_estate
@@ -156,21 +159,8 @@ def test_oral_gives_requirements_summary_and_unsupported_notice() -> None:
     assert output.data["will_type"] == "oral"
 
 
-def test_recording_gives_requirements_summary_and_not_yet_supported_notice() -> None:
-    payload = AgentInput(
-        session_id="s1", user_message=_WILL_TEXT_COMPLETE, context={"will_type": "recording"}
-    )
-
-    output = decedent_estate.run(payload)
-
-    assert "민법 제1067조" in output.reply
-    assert "녹음 유언 자동 점검은 아직 준비 중입니다." in output.reply
-    assert output.next_action is None
-    assert output.data["will_type"] == "recording"
-
-
 def test_all_guidance_only_types_have_no_requirements_payload() -> None:
-    for will_type in ("notarial", "recording", "secret", "oral"):
+    for will_type in ("notarial", "secret", "oral"):
         payload = AgentInput(
             session_id="s1", user_message=_WILL_TEXT_COMPLETE, context={"will_type": will_type}
         )
