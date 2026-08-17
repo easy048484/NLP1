@@ -37,10 +37,13 @@
   - handwritten/unknown(기본값 자필증서 적용) → requirement_checker.py 파이프라인
   - **recording(§1067)** → recording_checker.py 파이프라인 (will_types.json 의
     support: "full"). 대본(전사) 텍스트 기준으로 5개 요건(유언 취지/유언자 성명/
-    연월일/증인의 정확함 확인/증인 성명)은 규칙 기반(+성명은 LLM 폴백)으로,
-    2개(증인 실제 참여 여부/증인 결격 여부)는 사용자 확인으로 판정한다.
-    requirement_checker._build_result/_load_rules 와 date_parser.parse_dates,
-    extract_name_with_fallback 을 그대로 재사용해 등급표 중복을 만들지 않는다.
+    연월일/증인의 정확함 확인/증인 성명) 전부 "정규식 우선 → 5개 중 하나라도
+    못 찾으면 llm_client.extract_recording_fields() 를 한 번만 호출해 나머지를
+    함께 보완"하는 구조다 (항목별로 따로 호출하지 않음 — 구어체 대본은 정규식만으로
+    잡기 어렵다는 게 구조적 한계라 LLM을 주 폴백 경로로 삼음). 나머지 2개
+    (증인 실제 참여 여부/증인 결격 여부)는 사용자 확인으로 판정한다.
+    requirement_checker._build_result/_load_rules/extract_name 과
+    date_parser.parse_dates 를 그대로 재사용해 등급표 중복을 만들지 않는다.
   - notarial/secret/oral → 요건 판정을 아예 돌지 않고 안내만 한다.
   - result_formatter.py 는 summarize()/pending_questions()/format_result() 가
     formal_ids·messages(SummaryMessages)를 파라미터로 받도록 일반화되어

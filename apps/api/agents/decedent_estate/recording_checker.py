@@ -7,13 +7,20 @@ requirement_checker.py(자필증서용 룰 엔진)와 동일한 구조를 record
 텍스트로 점검할 수 있다. 나머지 2개(증인이 실제로 참여했는지, 증인이 결격
 사유에 해당하는지)는 대본만으로는 알 수 없어 사용자 확인으로 처리한다.
 
+구어체 대본은 정규식으로 잡기 어려운 게 구조적 한계라(docs/known_limitations.md
+§6), 5개 요건 모두 "정규식 우선 → 5개 중 하나라도 못 찾으면 LLM 한 번 호출로
+나머지를 보완" 구조를 쓴다. 항목별로 LLM을 따로 부르지 않는다 — 대본 전체를
+한 번만 보내 5개를 함께 받아서, 이미 정규식으로 찾은 항목만 그 값을 그대로
+쓴다 (LLM이 이미 찾은 값을 덮어쓰지 않는다).
+
 ⚠️ CLAUDE.md 절대 원칙:
 1. 판정은 이 모듈 + rules/requirements.json 이 전담한다. 등급표를 여기서
    하드코딩하지 않는다 — requirement_checker._build_result 를 그대로 재사용해
-   항상 rules/requirements.json 을 조회하게 한다.
-   유언자 성명은 requirement_checker.extract_name_with_fallback 를 그대로
-   재사용한다 (정규식 우선, 못 찾을 때만 LLM — 자필증서와 동일한 원칙).
+   항상 rules/requirements.json 을 조회하게 한다. LLM(llm_client.
+   extract_recording_fields)도 값/사실 여부만 반환하며, 그 값 역시 다른
+   추출값과 동일하게 룰 엔진(_build_result)을 통과해야만 등급이 매겨진다.
 3. 판례/조문 카드는 rules/requirements.json(→ precedents.json)에 있는 id만 참조한다.
+4. LLM에는 마스킹(masking.mask_text)을 거친 텍스트만 보낸다.
 """
 
 from __future__ import annotations
@@ -21,13 +28,15 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from .date_parser import parse_dates
+from .date_parser import DateParseResult, parse_dates
+from .llm_client import extract_recording_fields
+from .masking import mask_text
 from .requirement_checker import (
     ExtractedText,
     RequirementResult,
     _build_result,
     _load_rules,
-    extract_name_with_fallback,
+    extract_name,
 )
 
 # 재산 처분 의사 표현(=유언의 취지) 유무. handwritten의 "재산 목적물 소재지" 문맥
@@ -89,6 +98,56 @@ def extract_witness_name(text: str) -> ExtractedText:
     return ExtractedText(case="absent", raw_text=None)
 
 
+def _resolve_text_field(
+    regex_result: ExtractedText, llm_value: Optional[str]
+) -> tuple[ExtractedText, str]:
+    """정규식이 못 찾았을 때(absent)만 LLM 값을 쓴다. 규칙: 정규식 성공 > LLM > 둘 다 실패."""
+    if regex_result.case != "absent":
+        return regex_result, "regex"
+    if llm_value:
+        return ExtractedText(case="present", raw_text=llm_value), "llm"
+    return regex_result, "none"
+
+
+def _resolve_bool_field(
+    regex_result: ExtractedText, llm_flag: Optional[bool]
+) -> tuple[ExtractedText, str]:
+    """has_disposition_intent/has_witness_accuracy 처럼 LLM이 사실 여부(bool)만
+    돌려주는 항목용 — 인용할 원문 스니펫이 없으므로 raw_text 는 None으로 둔다."""
+    if regex_result.case != "absent":
+        return regex_result, "regex"
+    if llm_flag:
+        return ExtractedText(case="present", raw_text=None), "llm"
+    return regex_result, "none"
+
+
+def _resolve_date_field(
+    regex_result: DateParseResult, llm_date_text: Optional[str]
+) -> tuple[DateParseResult, str]:
+    """LLM이 돌려준 date_text도 date_parser.parse_dates 에 그대로 통과시켜 일(日)
+    누락 등 기존 등급 조건 구조를 그대로 유지한다 (LLM은 값만 추출, 판정은 안 함)."""
+    if regex_result.case != "absent":
+        return regex_result, "regex"
+    if llm_date_text:
+        llm_result = parse_dates(llm_date_text)
+        if llm_result.case != "absent":
+            return llm_result, "llm"
+    return regex_result, "none"
+
+
+def _date_entries_payload(date_result: DateParseResult) -> list[dict[str, Any]]:
+    return [
+        {
+            "year": e.year,
+            "month": e.month,
+            "day": e.day,
+            "raw_text": e.raw_text,
+            "case": e.case,
+        }
+        for e in date_result.entries
+    ]
+
+
 def validate_recording_confirm_answers(
     *,
     rec_witness_present_answer: Optional[str] = None,
@@ -126,55 +185,73 @@ def check_recording_requirements(
     rules = _load_rules()
     results: dict[str, RequirementResult] = {}
 
-    content_result = extract_content(text)
+    content_regex = extract_content(text)
+    name_regex = extract_name(text)
+    date_regex = parse_dates(text)
+    accuracy_regex = extract_witness_accuracy(text)
+    witness_name_regex = extract_witness_name(text)
+
+    needs_llm = any(
+        r.case == "absent"
+        for r in (content_regex, name_regex, accuracy_regex, witness_name_regex)
+    ) or date_regex.case == "absent"
+
+    llm_fields: Optional[dict[str, Any]] = extract_recording_fields(mask_text(text)) if needs_llm else None
+
+    content_final, content_method = _resolve_bool_field(
+        content_regex, llm_fields.get("has_disposition_intent") if llm_fields else None
+    )
     results["rec_content"] = _build_result(
-        rules, "rec_content", content_result.case, extracted={"raw_text": content_result.raw_text}
+        rules,
+        "rec_content",
+        content_final.case,
+        extracted={"raw_text": content_final.raw_text, "extraction_method": content_method},
     )
 
-    name_result, name_extraction_method = extract_name_with_fallback(text)
+    name_final, name_method = _resolve_text_field(
+        name_regex, llm_fields.get("testator_name") if llm_fields else None
+    )
     results["rec_testator_name"] = _build_result(
         rules,
         "rec_testator_name",
-        name_result.case,
-        extracted={
-            "raw_text": name_result.raw_text,
-            "extraction_method": name_extraction_method,
-        },
+        name_final.case,
+        extracted={"raw_text": name_final.raw_text, "extraction_method": name_method},
     )
 
-    date_result = parse_dates(text)
+    date_final, date_method = _resolve_date_field(
+        date_regex, llm_fields.get("date_text") if llm_fields else None
+    )
     results["rec_date"] = _build_result(
         rules,
         "rec_date",
-        date_result.case,
+        date_final.case,
         extracted={
-            "entries": [
-                {
-                    "year": e.year,
-                    "month": e.month,
-                    "day": e.day,
-                    "raw_text": e.raw_text,
-                    "case": e.case,
-                }
-                for e in date_result.entries
-            ]
+            "entries": _date_entries_payload(date_final),
+            "extraction_method": date_method,
         },
     )
 
-    accuracy_result = extract_witness_accuracy(text)
+    accuracy_final, accuracy_method = _resolve_bool_field(
+        accuracy_regex, llm_fields.get("has_witness_accuracy") if llm_fields else None
+    )
     results["rec_witness_accuracy"] = _build_result(
         rules,
         "rec_witness_accuracy",
-        accuracy_result.case,
-        extracted={"raw_text": accuracy_result.raw_text},
+        accuracy_final.case,
+        extracted={"raw_text": accuracy_final.raw_text, "extraction_method": accuracy_method},
     )
 
-    witness_name_result = extract_witness_name(text)
+    witness_name_final, witness_name_method = _resolve_text_field(
+        witness_name_regex, llm_fields.get("witness_name") if llm_fields else None
+    )
     results["rec_witness_name"] = _build_result(
         rules,
         "rec_witness_name",
-        witness_name_result.case,
-        extracted={"raw_text": witness_name_result.raw_text},
+        witness_name_final.case,
+        extracted={
+            "raw_text": witness_name_final.raw_text,
+            "extraction_method": witness_name_method,
+        },
     )
 
     present_condition = (

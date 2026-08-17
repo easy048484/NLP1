@@ -6,7 +6,10 @@ agent.run() 레벨에서 확인한다. recording_checker 자체의 추출 로직
 test_decedent_recording_checker.py 를 참고.
 """
 
+import pytest
+
 from agents import decedent_estate
+from agents.decedent_estate import recording_checker
 from agents.decedent_estate.agent import NEXT_ACTION_AWAIT_USER, NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
 from schemas import AgentInput
 
@@ -137,3 +140,72 @@ def test_invalid_recording_confirm_answer_produces_warning_but_stays_pending() -
         }
     ]
     assert output.data["requirements"]["rec_witness_present"]["grade"] == "PENDING"
+
+
+def test_colloquial_transcript_all_five_green_via_llm_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """구어체 대본 — 정규식으로는 취지/유언자 성명/증인 성명을 못 잡고, LLM 폴백
+    (mock)으로 5개 요건 전부 GREEN이 되는지 agent.run() 레벨에서 확인한다."""
+
+    def _fake_extract(masked_text: str):
+        return {
+            "testator_name": "홍길동",
+            "witness_name": "김철수",
+            "date_text": "2026년 5월 3일",
+            "has_disposition_intent": True,
+            "has_witness_accuracy": True,
+        }
+
+    monkeypatch.setattr(recording_checker, "extract_recording_fields", _fake_extract)
+
+    text = (
+        "저는 홍길동입니다. 제 모든 재산을 장남에게 물려주고자 합니다.\n"
+        "오늘은 2026년 5월 3일입니다.\n"
+        "증인 김철수입니다. 위 유언이 정확함을 확인합니다."
+    )
+    output = _run(
+        text,
+        rec_witness_present_answer="yes",
+        rec_witness_eligible_answer="not_disqualified",
+    )
+
+    reqs = output.data["requirements"]
+    for rid in (
+        "rec_content",
+        "rec_testator_name",
+        "rec_date",
+        "rec_witness_accuracy",
+        "rec_witness_name",
+        "rec_witness_present",
+        "rec_witness_eligible",
+    ):
+        assert reqs[rid]["grade"] == "GREEN", rid
+
+    assert reqs["rec_testator_name"]["extracted"]["extraction_method"] == "llm"
+    assert reqs["rec_witness_name"]["extracted"]["extraction_method"] == "llm"
+    assert reqs["rec_content"]["extracted"]["extraction_method"] == "llm"
+    # 이 대본에서는 날짜·증인 정확함 확인은 정규식으로 이미 잡힌다.
+    assert reqs["rec_date"]["extracted"]["extraction_method"] == "regex"
+    assert reqs["rec_witness_accuracy"]["extracted"]["extraction_method"] == "regex"
+
+    assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    assert "형식 요건상 문제가 발견되지 않았습니다" in output.reply
+
+
+def test_fully_regex_catchable_transcript_never_calls_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """5개 요건이 정규식으로 전부 잡히는 대본이면 agent.run() 레벨에서도 LLM이
+    호출되지 않아야 한다."""
+
+    def _fail_if_called(masked_text: str):
+        raise AssertionError("정규식이 이미 다 찾았으면 LLM을 호출하면 안 된다")
+
+    monkeypatch.setattr(recording_checker, "extract_recording_fields", _fail_if_called)
+
+    output = _run(
+        _COMPLETE_TRANSCRIPT,
+        rec_witness_present_answer="yes",
+        rec_witness_eligible_answer="not_disqualified",
+    )
+
+    reqs = output.data["requirements"]
+    for rid in ("rec_content", "rec_testator_name", "rec_date", "rec_witness_accuracy", "rec_witness_name"):
+        assert reqs[rid]["extracted"]["extraction_method"] == "regex", rid
