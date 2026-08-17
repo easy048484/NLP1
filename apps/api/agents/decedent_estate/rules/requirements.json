@@ -66,10 +66,10 @@
         },
         {
           "id": "city_district_only",
-          "description": "시·구 수준까지만 기재",
-          "grade": "YELLOW",
-          "precedent_ids": ["address_specificity_dispute"],
-          "note": "\"구별 가능한 정도\" 쟁점 판례 — 동·호수 누락 무효 사례 포함"
+          "description": "시·구 수준까지만 기재 (동/구까지만, 지번 없음)",
+          "grade": "RED",
+          "precedent_ids": ["address_missing_invalid"],
+          "note": "다른 장소와 구별되는 정도의 표시를 갖추지 못한 것으로 보아 주소 누락과 동일하게 판단"
         },
         {
           "id": "absent",
@@ -77,7 +77,30 @@
           "grade": "RED",
           "precedent_ids": ["address_missing_invalid"]
         }
-      ]
+      ],
+      "followup": {
+        "id": "address_envelope_check",
+        "trigger_grade": "RED",
+        "extraction_type": "user_confirm",
+        "reason": "본문 주소가 RED(city_district_only/absent)로 판정된 경우에만 물어본다 — 본문에 주소가 부족·부재해도 봉투에 적혀 있으면 유효로 본 판례가 있기 때문",
+        "question": "주소가 유언장 본문이 아니라 봉투에 적혀 있나요?",
+        "conditions": [
+          {
+            "id": "envelope_or_minor_discrepancy",
+            "description": "예 — 주소가 봉투에 기재되어 있음",
+            "grade": "YELLOW",
+            "precedent_ids": ["fingerprint_seal_valid"],
+            "note": "97다38510 — 주소도 전문을 담은 봉투에 기재해도 무방하다는 판례 참조. 최종 유효 여부는 개별 판단 필요"
+          },
+          {
+            "id": "no_envelope",
+            "description": "아니오 — 봉투에도 기재되어 있지 않음",
+            "grade": null,
+            "precedent_ids": [],
+            "note": "본문 판정 결과(city_district_only 또는 absent)를 그대로 유지"
+          }
+        ]
+      }
     },
     {
       "id": "name",

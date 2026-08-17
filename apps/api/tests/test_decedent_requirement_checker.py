@@ -79,8 +79,8 @@ def test_sample6_address_city_district_only() -> None:
     results = check_requirements(text, handwriting_answer="yes", seal_answer="seal_or_fingerprint")
 
     assert results["address"].condition_id == "city_district_only"
-    assert results["address"].grade == "YELLOW"
-    assert results["address"].precedent_ids == ["address_specificity_dispute"]
+    assert results["address"].grade == "RED"
+    assert results["address"].precedent_ids == ["address_missing_invalid"]
 
 
 def test_sample7_multiple_dates_mixed() -> None:

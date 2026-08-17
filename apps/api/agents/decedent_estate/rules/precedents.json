@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0",
+  "note": "CLAUDE.md 절대 원칙 3: 판례 카드는 이 파일에 있는 id만 표시한다. LLM이 판례를 생성·인용하는 것은 금지된다.",
+
+  "precedents": [
+    {
+      "id": "date_missing_day_invalid",
+      "type": "precedent",
+      "case_number": "2009다9768",
+      "court": "대법원",
+      "date": "2009-05-14",
+      "case_name": "소유권이전등기말소",
+      "summary": "연·월만 기재하고 일(日)의 기재가 없는 자필유언증서는 작성일을 특정할 수 없어 효력이 없다. 연월일은 유언능력 판단과 복수 유언증서 간 선후 결정의 기준일이 되므로 작성일을 특정할 수 있게 기재해야 한다.",
+      "one_liner": "연·월만 쓰고 일(日)이 없는 자필유언을 무효로 판단한 판례가 있습니다",
+      "source_url": "https://www.law.go.kr/LSW/precInfoP.do?precSeq=132717",
+      "note": null
+    },
+    {
+      "id": "date_specifiable_valid",
+      "type": "commentary",
+      "case_number": null,
+      "court": null,
+      "date": null,
+      "case_name": null,
+      "summary": "연월일은 아라비아 숫자나 양력일 필요는 없으나 달력상 특정 가능해야 한다. \"1954년 9월 길일\"처럼 특정 불가능한 표기는 무효로 본다.",
+      "one_liner": "날짜를 말로 적은 경우, 달력상 특정이 가능한지가 쟁점이 됩니다",
+      "source_url": null,
+      "note": "사건번호 없음 — 직접 판시한 대법원 판례는 확인되지 않음. 근거: 대한법률구조공단 법률상담 해설"
+    },
+    {
+      "id": "address_missing_invalid",
+      "type": "precedent",
+      "case_number": "2012다71688",
+      "court": "대법원",
+      "date": "2014-09-26",
+      "case_name": "소유권이전등기말소등기",
+      "summary": "자서가 필요한 주소는 주민등록지일 필요는 없으나 생활의 근거가 되는 곳으로서 다른 장소와 구별되는 정도의 표시를 갖춰야 한다. \"암사동에서\"라고만 기재한 것은 이에 미치지 못해 주소의 자서가 누락된 것으로 보아 유언이 무효라고 판단했다.",
+      "one_liner": "주소가 없거나 동(洞) 이름만 적은 자필유언을 무효로 판단한 판례가 있습니다",
+      "source_url": "https://www.law.go.kr/LSW/precInfoP.do?precSeq=187497",
+      "note": null
+    },
+    {
+      "id": "name_identity_dispute",
+      "type": "commentary",
+      "case_number": null,
+      "court": null,
+      "date": null,
+      "case_name": null,
+      "summary": "성명 기재는 유언서가 누구의 것인지 알 수 있는 정도면 되므로 호·자·예명도 무방하다. 다만 자서 대신 기호화된 인형(印形)을 날인한 것은 무효다.",
+      "one_liner": "호·예명도 본인 동일성이 인정되면 유효로 보는 것이 실무 해석입니다",
+      "source_url": null,
+      "note": "사건번호 없음. 근거: 대한법률구조공단 법률상담 해설"
+    },
+    {
+      "id": "typed_will_invalid",
+      "type": "precedent",
+      "case_number": "97다38510",
+      "court": "대법원",
+      "date": "1998-06-12",
+      "case_name": "주주명의개서절차이행",
+      "summary": "자필증서 유언은 전문·연월일·주소·성명의 자서가 절대적 요건이므로 전자복사기를 이용해 작성한 복사본은 이에 해당하지 않는다.",
+      "one_liner": "워드 작성본·복사본은 자필증서로 인정되지 않는다는 판례가 있습니다",
+      "source_url": null,
+      "note": "참고: 서울고등법원 2021. 1. 14. 선고 2020나2021150 — 본문은 자필이나 재산목록이 컴퓨터로 작성된 경우 유언 전체 무효"
+    },
+    {
+      "id": "signature_only_insufficient",
+      "type": "precedent",
+      "case_number": "2006다25103, 25110",
+      "court": "대법원",
+      "date": "2006-09-08",
+      "case_name": null,
+      "summary": "유언의 방식에 관한 규정은 강행규정이므로 요건과 방식에 어긋난 유언은 유언자의 진정한 의사에 합치하더라도 무효이며, 유언자의 날인이 없는 유언장은 자필증서 유언으로서 효력이 없다.",
+      "one_liner": "날인 없이 서명만 있는 자필유언을 무효로 판단한 판례가 있습니다",
+      "source_url": "https://www.law.go.kr/LSW/precInfoP.do?precSeq=68123",
+      "note": null
+    },
+    {
+      "id": "fingerprint_seal_valid",
+      "type": "precedent",
+      "case_number": "97다38510",
+      "court": "대법원",
+      "date": "1998-06-12",
+      "case_name": "주주명의개서절차이행",
+      "summary": "날인은 인장 대신 무인(拇印)에 의한 경우에도 유효하다. 주소도 전문과 같은 지편이 아니라 전문을 담은 봉투에 기재해도 무방하다.",
+      "one_liner": "지장(무인)도 날인으로 인정된다는 판례가 있습니다",
+      "source_url": null,
+      "note": "typed_will_invalid 와 동일 판례(97다38510)에서 다른 쟁점(무인 날인 인정)을 인용"
+    }
+  ]
+}
