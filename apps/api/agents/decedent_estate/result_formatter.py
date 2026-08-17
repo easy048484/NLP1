@@ -123,7 +123,11 @@ def _precedent_card_line(precedent_id: str) -> Optional[str]:
     return f"{card['one_liner']} {_precedent_citation(card)}"
 
 
-def _red_label(requirement_id: str) -> str:
+def red_label(requirement_id: str) -> str:
+    """요건 id → RED 문구용 축약 라벨 (rules/requirements.json 의 red_label 필드).
+
+    agent.py 등 다른 모듈에서도 신호등 UI용 data 를 구조화할 때 재사용한다.
+    """
     rules = _load_rules()
     for req in rules["requirements"]:
         if req["id"] == requirement_id:
@@ -157,8 +161,8 @@ def format_requirement_line(result: RequirementResult) -> Optional[str]:
         return f"✅ {name}: 기재 확인{suffix}"
 
     if result.grade == "RED":
-        red_label = _red_label(result.requirement_id)
-        lines = [f"❌ {name}: {red_label}{_josa_i_ga(red_label)} {_RED_VERB_PHRASE}"]
+        label = red_label(result.requirement_id)
+        lines = [f"❌ {name}: {label}{_josa_i_ga(label)} {_RED_VERB_PHRASE}"]
         for precedent_id in result.precedent_ids:
             if precedent_id == _FINGERPRINT_SEAL_NOTE_PRECEDENT_ID:
                 lines.append(_FINGERPRINT_SEAL_NOTE)
