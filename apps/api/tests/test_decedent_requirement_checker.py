@@ -57,7 +57,12 @@ def test_sample3_verbal_specified() -> None:
 def test_sample4_address_missing() -> None:
     text = _will_text(_NAME_LINE, _DATE_LINE)
 
-    results = check_requirements(text, handwriting_answer="yes", seal_answer="seal_or_fingerprint")
+    results = check_requirements(
+        text,
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+        address_envelope_answer="no_envelope",
+    )
 
     assert results["address"].condition_id == "absent"
     assert results["address"].grade == "RED"
@@ -76,7 +81,12 @@ def test_sample5_name_missing() -> None:
 def test_sample6_address_city_district_only() -> None:
     text = _will_text(_NAME_LINE, "주소: 서울 강남구", _DATE_LINE)
 
-    results = check_requirements(text, handwriting_answer="yes", seal_answer="seal_or_fingerprint")
+    results = check_requirements(
+        text,
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+        address_envelope_answer="no_envelope",
+    )
 
     assert results["address"].condition_id == "city_district_only"
     assert results["address"].grade == "RED"
@@ -152,7 +162,57 @@ def test_property_address_is_not_mistaken_for_testator_address() -> None:
         _DATE_LINE,
     )
 
-    results = check_requirements(text)
+    results = check_requirements(text, address_envelope_answer="no_envelope")
 
     assert results["address"].condition_id == "absent"
     assert results["address"].grade == "RED"
+
+
+def test_address_red_without_envelope_answer_is_pending() -> None:
+    """RED 판정 뒤에는 봉투 확인 질문을 먼저 띄워야 하므로, 미답변 시 PENDING이어야 한다."""
+    text = _will_text(_NAME_LINE, _DATE_LINE)  # 주소 없음 → 본문 판정은 absent(RED)
+
+    results = check_requirements(text)
+
+    address = results["address"]
+    assert address.condition_id is None
+    assert address.grade == "PENDING"
+    assert address.followup_question == "주소가 유언장 본문이 아니라 봉투에 적혀 있나요?"
+    assert address.extracted["underlying_case"] == "absent"
+
+
+def test_address_missing_but_envelope_confirmed_upgrades_to_yellow() -> None:
+    """주소 없음 + 봉투에 있다고 확인 → envelope_or_minor_discrepancy(YELLOW)로 승격."""
+    text = _will_text(_NAME_LINE, _DATE_LINE)  # 주소 없음
+
+    results = check_requirements(text, address_envelope_answer="envelope_or_minor_discrepancy")
+
+    address = results["address"]
+    assert address.condition_id == "envelope_or_minor_discrepancy"
+    assert address.grade == "YELLOW"
+    assert address.precedent_ids == ["fingerprint_seal_valid"]
+    assert address.followup_question is None
+
+
+def test_address_red_with_no_envelope_answer_stays_red() -> None:
+    text = _will_text(_NAME_LINE, _DATE_LINE)  # 주소 없음
+
+    results = check_requirements(text, address_envelope_answer="no_envelope")
+
+    address = results["address"]
+    assert address.condition_id == "absent"
+    assert address.grade == "RED"
+    assert address.precedent_ids == ["address_missing_invalid"]
+    assert address.followup_question is None
+
+
+def test_address_green_ignores_envelope_answer() -> None:
+    """본문 판정이 GREEN이면 봉투 질문 자체가 트리거되지 않는다 (답을 줘도 무시)."""
+    text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)  # full_address
+
+    results = check_requirements(text, address_envelope_answer="envelope_or_minor_discrepancy")
+
+    address = results["address"]
+    assert address.condition_id == "full_address"
+    assert address.grade == "GREEN"
+    assert address.followup_question is None

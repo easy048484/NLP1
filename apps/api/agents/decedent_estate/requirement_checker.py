@@ -1,7 +1,8 @@
 """
 요건 판정기 (규칙 기반, LLM 미사용).
 
-유언장 텍스트 + 사용자 확인 답변(전문 자서 / 날인)을 받아 rules/requirements.json
+유언장 텍스트 + 사용자 확인 답변(전문 자서 / 날인 / 주소가 RED일 때만 물어보는 봉투 확인)을
+받아 rules/requirements.json
 에 정의된 6개 요건(연월일·주소·성명·전문자서·날인·간인)에 대해 조건을 매칭하고,
 그 조건에 연결된 등급(GREEN/YELLOW/RED/WHITE/PENDING)과 판례 카드 id를 반환한다.
 
@@ -51,6 +52,7 @@ _MULTI_PAGE_RE = re.compile(r"\(\s*(\d+)\s*/\s*(\d+)\s*\)|(\d+)\s*페이지|총\
 
 _HANDWRITING_CONDITION_IDS = {"yes", "no_or_partial_typed"}
 _SEAL_CONDITION_IDS = {"seal_or_fingerprint", "signature_only", "absent"}
+_ADDRESS_ENVELOPE_CONDITION_IDS = {"envelope_or_minor_discrepancy", "no_envelope"}
 
 
 @lru_cache(maxsize=1)
@@ -74,6 +76,8 @@ class RequirementResult:
     grade: Optional[str]
     precedent_ids: list[str] = field(default_factory=list)
     extracted: dict[str, Any] = field(default_factory=dict)
+    # RED 판정 뒤에 추가로 물어봐야 할 확인 질문이 있을 때만 채워진다 (예: 주소 봉투 확인).
+    followup_question: Optional[str] = None
 
 
 def _build_result(
@@ -92,6 +96,7 @@ def _build_result(
             grade=req.get("default_grade", "PENDING"),
             precedent_ids=[],
             extracted=extracted,
+            followup_question=req.get("question"),
         )
 
     for cond in req["conditions"]:
@@ -106,6 +111,61 @@ def _build_result(
             )
 
     raise KeyError(f"{requirement_id}.{condition_id} 조건이 rules/requirements.json 에 없습니다.")
+
+
+def _build_address_result(
+    rules: dict[str, Any],
+    address_result: "ExtractedText",
+    envelope_answer: Optional[str],
+) -> RequirementResult:
+    """주소 요건 + followup(봉투 확인 질문)을 함께 판정한다.
+
+    본문 판정이 RED가 아니면 followup은 아예 트리거되지 않는다. RED인 경우:
+    - 답변 없음 → PENDING (자서/날인 미확인과 동일한 취급)
+    - "envelope_or_minor_discrepancy" → followup 조건의 YELLOW로 승격
+    - "no_envelope" → 본문 기반 RED 판정 그대로 유지
+    """
+    req = _find_requirement(rules, "address")
+    base = _build_result(
+        rules, "address", address_result.case, extracted={"raw_text": address_result.raw_text}
+    )
+
+    followup = req.get("followup")
+    if not followup or base.grade != followup.get("trigger_grade"):
+        return base
+
+    question = followup["question"]
+    envelope_condition = (
+        envelope_answer if envelope_answer in _ADDRESS_ENVELOPE_CONDITION_IDS else None
+    )
+
+    if envelope_condition is None:
+        return RequirementResult(
+            requirement_id="address",
+            name=req["name"],
+            condition_id=None,
+            grade="PENDING",
+            precedent_ids=[],
+            extracted={**base.extracted, "underlying_case": base.condition_id},
+            followup_question=question,
+        )
+
+    for cond in followup["conditions"]:
+        if cond["id"] != envelope_condition:
+            continue
+        if cond.get("grade") is None:
+            # "no_envelope": 본문 기반 판정을 그대로 유지한다.
+            return base
+        return RequirementResult(
+            requirement_id="address",
+            name=req["name"],
+            condition_id=cond["id"],
+            grade=cond["grade"],
+            precedent_ids=list(cond.get("precedent_ids", [])),
+            extracted={**base.extracted, "underlying_case": base.condition_id},
+        )
+
+    raise KeyError(f"address.followup.{envelope_condition} 조건이 rules/requirements.json 에 없습니다.")
 
 
 @dataclass(frozen=True)
@@ -160,7 +220,9 @@ def detect_interseal(text: str) -> ExtractedText:
     if not match:
         return ExtractedText(case="single_page", raw_text=None)
 
-    total = next((g for g in match.groups() if g), None)
+    # group(1)은 "(N/M)"의 현재 페이지 번호 N이라 총 장수 판단에 쓰면 안 된다.
+    # 총 장수는 group(2)="(N/M)"의 M, group(3)="N페이지", group(4)="총 N장" 중 하나다.
+    total = match.group(2) or match.group(3) or match.group(4)
     if total is not None and int(total) <= 1:
         return ExtractedText(case="single_page", raw_text=match.group())
 
@@ -172,11 +234,14 @@ def check_requirements(
     *,
     handwriting_answer: Optional[str] = None,
     seal_answer: Optional[str] = None,
+    address_envelope_answer: Optional[str] = None,
 ) -> dict[str, RequirementResult]:
     """텍스트 + 사용자 확인 답변을 받아 요건별 판정 결과를 반환한다.
 
     handwriting_answer: "yes" | "no_or_partial_typed" | None(미확인)
     seal_answer: "seal_or_fingerprint" | "signature_only" | "absent" | None(미확인)
+    address_envelope_answer: 주소가 RED로 판정된 경우에만 의미가 있다.
+        "envelope_or_minor_discrepancy" | "no_envelope" | None(미확인)
     """
     rules = _load_rules()
     results: dict[str, RequirementResult] = {}
@@ -201,9 +266,7 @@ def check_requirements(
     )
 
     address_result = extract_address(text)
-    results["address"] = _build_result(
-        rules, "address", address_result.case, extracted={"raw_text": address_result.raw_text}
-    )
+    results["address"] = _build_address_result(rules, address_result, address_envelope_answer)
 
     name_result = extract_name(text)
     results["name"] = _build_result(
