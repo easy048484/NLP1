@@ -169,6 +169,25 @@ def test_name_extracted_value_excludes_label() -> None:
     assert results["name"].extracted["raw_text"] == "홍길동"
 
 
+def test_name_label_word_in_ordinary_sentence_is_not_misdetected() -> None:
+    """"이름"이 라벨이 아니라 평범한 단어로 쓰인 문장에서 오추출되면 안 된다."""
+    text = _will_text(_ADDRESS_LINE, _DATE_LINE, "특별한 이름 없음")
+
+    results = check_requirements(text)
+
+    assert results["name"].condition_id == "absent"
+    assert results["name"].extracted["raw_text"] is None
+
+
+def test_name_label_word_followed_by_more_prose_is_not_misdetected() -> None:
+    text = _will_text(_ADDRESS_LINE, _DATE_LINE, "이름 없는 사람에게 준다.")
+
+    results = check_requirements(text)
+
+    assert results["name"].condition_id == "absent"
+    assert results["name"].extracted["raw_text"] is None
+
+
 def test_name_before_seal_mark_without_label() -> None:
     text = _will_text(_ADDRESS_LINE, _DATE_LINE, "홍길동 (인)")
 

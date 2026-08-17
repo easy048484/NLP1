@@ -1,5 +1,5 @@
 """
-요건 판정기 (규칙 기반, LLM 미사용).
+요건 판정기 (규칙 기반 판정 + 성명 한정 LLM 추출 폴백).
 
 유언장 텍스트 + 사용자 확인 답변(전문 자서 / 날인 / 주소가 RED일 때만 물어보는 봉투 확인)을
 받아 rules/requirements.json
@@ -8,9 +8,14 @@
 
 ⚠️ CLAUDE.md 절대 원칙:
 1. 판정(어떤 등급인가)은 이 모듈 + rules/requirements.json 이 전담한다.
-   텍스트에서 "값"을 뽑아내는 것(추출)만 정규식/규칙으로 하고, 등급표는 절대
-   여기서 하드코딩하지 않는다 — 항상 rules/requirements.json 을 조회한다.
+   텍스트에서 "값"을 뽑아내는 것(추출)만 정규식/규칙(+성명은 LLM 폴백)으로 하고,
+   등급표는 절대 여기서 하드코딩하지 않는다 — 항상 rules/requirements.json 을 조회한다.
+   LLM(llm_client.extract_testator_name)도 값만 반환하며, 그 값 역시 다른
+   추출값과 동일하게 룰 엔진(_build_result)을 통과해야만 등급이 매겨진다.
 3. 판례 카드는 rules/requirements.json(→ precedents.json)에 있는 id만 참조한다.
+4. LLM에는 마스킹(masking.mask_text)을 거친 텍스트만 보낸다 — 성명은 판정에
+   필요한 값이라 마스킹 대상이 아니지만, 그 외 민감정보(주민번호·계좌·전화)는
+   LLM 호출 직전에 제거한다.
 """
 
 from __future__ import annotations
@@ -23,6 +28,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .date_parser import parse_dates
+from .llm_client import extract_testator_name
+from .masking import mask_text
 
 _RULES_PATH = Path(__file__).parent / "rules" / "requirements.json"
 
@@ -40,8 +47,15 @@ _ADDRESS_PROPERTY_CONTEXT_RE = re.compile(
 )
 
 _NAME_ALIAS_RE = re.compile(r"(?:아호|호)\s*[:：]\s*([가-힣]{1,4})")
-# 콜론 없는 "유언자 김영수" 형태도 허용 (콜론은 선택)
-_NAME_LABEL_RE = re.compile(r"(?:유언자|성명|이름)\s*[:：]?\s*([가-힣]{2,4})")
+# 콜론이 붙으면 라벨로 확실히 인정한다: "유언자: 홍길동" / "성명: 홍길동"
+_NAME_LABEL_WITH_COLON_RE = re.compile(r"(?:유언자|성명|이름)\s*[:：]\s*([가-힣]{2,4})")
+# 콜론이 없으면 "이름"처럼 흔한 단어가 문장 중간에 낀 경우("특별한 이름 없음",
+# "이름 없는 사람에게")와 구분하기 위해, 줄이 "라벨 + 이름" 만으로 끝나는 경우만
+# 인정한다 — 라벨이 줄 맨 앞에서 시작하고, 이름 뒤에 다른 말 없이 그 줄이
+# 끝나야 한다 (예: "유언자 홍길동"은 인정, 라벨 뒤에 서술이 더 붙으면 거부).
+_NAME_LABEL_LINE_START_RE = re.compile(
+    r"^(?:유언자|성명|이름)\s+([가-힣]{2,4})\s*$", re.MULTILINE
+)
 # 라벨 없이 도장 표시 앞에 이름만 적힌 경우: "김영수 (인)" / "김영수(印)"
 _NAME_BEFORE_SEAL_MARK_RE = re.compile(r"([가-힣]{2,4})\s*\(\s*(?:인|印)\s*\)")
 # 라벨도 도장 표시도 없이 줄 끝에 이름만 단독으로 적힌 경우 (서명란 관행)
@@ -214,7 +228,7 @@ def extract_name(text: str) -> ExtractedText:
     if alias_match:
         return ExtractedText(case="alias_or_pen_name", raw_text=alias_match.group(1))
 
-    label_match = _NAME_LABEL_RE.search(text)
+    label_match = _NAME_LABEL_WITH_COLON_RE.search(text) or _NAME_LABEL_LINE_START_RE.search(text)
     if label_match:
         return ExtractedText(case="present", raw_text=label_match.group(1))
 
@@ -231,6 +245,31 @@ def extract_name(text: str) -> ExtractedText:
             return ExtractedText(case="present", raw_text=stripped)
 
     return ExtractedText(case="absent", raw_text=None)
+
+
+def extract_name_with_fallback(text: str) -> tuple[ExtractedText, str]:
+    """정규식으로 먼저 시도하고, 못 찾았을 때만 LLM으로 보완한다.
+
+    1) extract_name(정규식)이 뭔가 찾으면(absent 가 아니면) 그대로 쓴다 — LLM은
+       호출하지 않는다 (비용/지연 최소화 + 정규식이 찾은 값을 LLM이 덮어쓰는 일
+       원천 차단).
+    2) 정규식이 absent 를 반환했을 때만 마스킹된 텍스트로 LLM을 호출한다.
+    3) LLM도 못 찾거나(또는 호출 자체가 실패하면) 정규식의 absent 결과를 그대로
+       돌려준다 — 이 함수가 예외로 죽는 일은 없다 (llm_client 가 이미 모든
+       실패를 None 으로 흡수한다).
+
+    반환값의 두 번째 원소(extraction_method)는 최종 값이 어디서 왔는지를
+    그대로 보여준다: "regex" | "llm" | "none"(둘 다 못 찾음).
+    """
+    regex_result = extract_name(text)
+    if regex_result.case != "absent":
+        return regex_result, "regex"
+
+    llm_name = extract_testator_name(mask_text(text))
+    if llm_name:
+        return ExtractedText(case="present", raw_text=llm_name), "llm"
+
+    return regex_result, "none"
 
 
 def detect_interseal(text: str) -> ExtractedText:
@@ -316,9 +355,15 @@ def check_requirements(
     address_result = extract_address(text)
     results["address"] = _build_address_result(rules, address_result, address_envelope_answer)
 
-    name_result = extract_name(text)
+    name_result, name_extraction_method = extract_name_with_fallback(text)
     results["name"] = _build_result(
-        rules, "name", name_result.case, extracted={"raw_text": name_result.raw_text}
+        rules,
+        "name",
+        name_result.case,
+        extracted={
+            "raw_text": name_result.raw_text,
+            "extraction_method": name_extraction_method,
+        },
     )
 
     handwriting_condition = (

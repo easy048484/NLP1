@@ -13,23 +13,34 @@
 
 ## 1. 성명 (`extract_name`)
 
-### 1-1. 문장 속에 묻힌 성명
+### 1-1. 문장 속에 묻힌 성명 — ✅ LLM 폴백으로 해결됨
 예: `"서울 강남구 거주 김영수"`, `"장남 김철수에게 물려주며, 이는 김영수의 뜻이다"`
 
 라벨(`유언자`/`성명`/`이름`), 도장 표시(`(인)`/`(印)`), 줄 끝 단독 표기 중 어디에도 해당하지
-않고 문장 중간에 이름만 섞여 있으면 인식하지 못하고 `absent`로 판정된다.
+않고 문장 중간에 이름만 섞여 있으면 정규식(`extract_name`)은 여전히 `absent`를 반환한다.
 
-- **분류: LLM 추출 단계에서 해결 예정**
-- 참고: 샘플 C(`서울 강남구 거주 김영수`)에서 실제로 재현됨. `test_decedent_requirement_checker.py`
-  에는 아직 이 케이스에 대한 통과 조건을 넣지 않음(현재는 `absent`가 "정직한" 현재 동작).
+- **분류: LLM 추출 단계에서 해결 예정 → 해결됨** (`requirement_checker.extract_name_with_fallback`)
+- 정규식이 `absent`를 반환했을 때만 `masking.mask_text()`를 거쳐 `llm_client.extract_testator_name()`
+  을 호출해 유언자 본인 성명만 뽑는다. `.env`에 `CLAUDE_API_KEY`가 없거나 호출이 실패하면 조용히
+  `absent`로 되돌아간다(에이전트가 죽지 않음). 어느 경로로 값이 왔는지는
+  `extracted["extraction_method"]`(`"regex"|"llm"|"none"`)로 노출된다.
+- 참고: 샘플 C(`서울 강남구 거주 김영수`)와 `test_decedent_name_llm_fallback.py`로 검증됨.
 
 ### 1-2. 알리아스(아호) 라벨도 콜론 필수
-`_NAME_ALIAS_RE`는 `"아호: OO"` / `"호: OO"`처럼 콜론이 있어야만 인식한다. 반면 이름 라벨
-(`_NAME_LABEL_RE`)은 이번에 콜론을 선택 사항으로 완화했기 때문에, 같은 문서 안에서도
-"이름 라벨은 콜론 없이 인식되는데 아호 라벨은 콜론이 없으면 놓친다"는 비일관이 생긴다.
+`_NAME_ALIAS_RE`는 `"아호: OO"` / `"호: OO"`처럼 콜론이 있어야만 인식한다. 이름 라벨은
+`_NAME_LABEL_WITH_COLON_RE`(콜론 필수) / `_NAME_LABEL_LINE_START_RE`(콜론 없이도, 단 라벨이
+줄 맨 앞에서 시작하고 그 줄이 "라벨 + 이름"으로 끝나야 함)로 나뉘어, 콜론 없이도 일부 인식되는
+경로가 있다. 아호 라벨에는 이런 콜론-없는 경로가 없어 여전히 비일관이 남아 있다.
 
 - **분류: LLM 추출 단계에서 해결 예정** (규칙 일관화만으로도 완화 가능하지만, "이 표기가 본명인지
   아호인지" 자체가 의미 판단이라 근본 해결은 LLM 쪽)
+
+### 1-2-1. (수정됨) "이름"이 흔한 단어로 쓰인 문장에서의 오추출
+`"특별한 이름 없음"`, `"이름 없는 사람에게 준다"`처럼 "이름"이 라벨이 아니라 평범한 단어로
+쓰인 문장에서 뒤에 오는 2~4자 한글 단어(`"없음"`, `"없는"`)를 이름으로 잘못 인식하던 문제가
+있었다. 콜론 없는 라벨 매칭을 "줄이 라벨+이름만으로 끝나야 함"으로 좁혀 수정했다
+(`_NAME_LABEL_LINE_START_RE`). `test_name_label_word_in_ordinary_sentence_is_not_misdetected`,
+`test_name_label_word_followed_by_more_prose_is_not_misdetected`로 회귀 방지.
 
 ### 1-3. 줄 끝 단독 이름 판별의 형식 의존성
 `_NAME_STANDALONE_LINE_RE`는 해당 줄이 정확히 2~4자 한글로만 이루어져야 매칭된다.
