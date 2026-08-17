@@ -1,7 +1,11 @@
 # 유언장 검증 에이전트 (decedent_estate)
 
 ## 역할
-유언장 텍스트를 받아 민법 §1066 자필증서 형식 요건(자서·연월일·주소·성명·날인)을 점검하고, 판례 기반 카드와 함께 신호등(GREEN/YELLOW/RED) 결과를 반환한다.
+유언 방식(민법 5방식, rules/will_types.json)을 먼저 확인해 분기하고, 방식이
+자필증서(§1066, handwritten)이면 형식 요건(자서·연월일·주소·성명·날인)을 점검해
+판례 기반 카드와 함께 신호등(GREEN/YELLOW/RED) 결과를 반환한다. 그 외 방식은
+검증 필요 여부·요건 요약만 안내한다 (공정증서는 검증·검인 모두 불요, 녹음·비밀·구수는
+자동 점검 미지원).
 
 ## 절대 원칙
 1. 판정은 룰 엔진이 한다. LLM은 텍스트에서 값 추출(날짜 문자열, 주소·성명 유무)만 한다.
@@ -28,3 +32,8 @@
   requirement_checker.extract_name_with_fallback() 로 연결.
 - 날짜/주소는 여전히 정규식 전용이며, LLM 폴백이 없다 (docs/known_limitations.md
   의 항목들이 아직 해당 요건에 남아 있음).
+- **유언 방식 분기**(rules/will_types.json, will_types.py)가 agent.run() 맨 앞단에
+  추가됨: context.will_type 이 없으면 방식을 먼저 묻고, handwritten/unknown(기본값
+  자필증서 적용)만 위 요건 판정 파이프라인을 탄다. notarial/recording/secret/oral은
+  요건 판정을 아예 돌지 않고 안내만 한다. recording(§1067)은 "지원 예정, 구현 전"
+  상태 — will_types.json 의 support: "none" + planned: true 로 표시됨.

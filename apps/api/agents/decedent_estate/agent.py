@@ -1,13 +1,18 @@
 """
 피상속인 유언장·자산정리 에이전트 (담당: 정호)
 
-AgentInput.user_message 를 유언장 텍스트로 받아
-requirement_checker(요건 판정) → result_formatter(화면 문구) 파이프라인을 실행한다.
+먼저 유언 방식(민법 5방식, rules/will_types.json)을 확인한 뒤 분기한다:
+- 방식 미확인(context.will_type 없음) → 방식을 묻는 질문 반환
+- handwritten(자필증서) → 기존 요건 판정 파이프라인(requirement_checker →
+  result_formatter) 그대로 실행
+- unknown(그 외·모르겠음) → 자필증서를 기본값으로 안내하며 같은 파이프라인 실행
+- notarial(공정증서) → 검증·검인 모두 불필요 안내 후 heir_navigator로 핸드오프
+- recording/secret/oral → 요건 요약만 안내, 자동 점검 미지원
+
 사용자 확인 답변(전문 자서/날인/주소 봉투)은 AgentInput.context 에서 읽는다.
 
 ⚠️ CLAUDE.md 절대 원칙 4: 마스킹 이전의 원본 텍스트를 LLM API에 보내지 않는다.
-   이 단계(빌드 순서 2)에는 아직 LLM 호출이 없으므로 해당 없음 — 3단계(마스킹)와
-   4단계(LLM 추출 연결)가 이 run() 앞단에 붙을 때 지켜야 한다.
+   (성명 요건에 한해 llm_client.py 로 연결됨 — masking.py 를 거친 텍스트만 전송)
 """
 
 from __future__ import annotations
@@ -18,14 +23,25 @@ from schemas import AgentInput, AgentName, AgentOutput
 
 from .requirement_checker import RequirementResult, check_requirements, validate_confirm_answers
 from .result_formatter import format_result, pending_questions, red_label
+from .will_types import get_will_type, known_will_type_ids, selection_question, unknown_default
 
 _FORMAL_REQUIREMENT_IDS = ("date", "address", "name", "handwriting", "seal")
 _ALL_REQUIREMENT_IDS = (*_FORMAL_REQUIREMENT_IDS, "interseal")
+
+_UNKNOWN_WILL_TYPE = "unknown"
+_HANDWRITTEN_WILL_TYPE = "handwritten"
+_NOTARIAL_WILL_TYPE = "notarial"
 
 # next_action 힌트 값. 오케스트레이터/프론트가 참조하는 문자열 상수라 자유 형식이지만,
 # 이 두 값만 이 에이전트가 실제로 내보낸다.
 NEXT_ACTION_AWAIT_USER = "await_user_confirmation"
 NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR = "handoff:heir_navigator"
+
+
+def _valid_will_type_values() -> tuple[str, ...]:
+    """민법 5방식 id + UI의 "모르겠음" sentinel. context.will_type 이 이 안에
+    없으면(None 포함) 방식을 다시 물어본다."""
+    return (*known_will_type_ids(), _UNKNOWN_WILL_TYPE)
 
 
 def _requirement_payload(result: RequirementResult) -> dict[str, Any]:
@@ -54,7 +70,60 @@ def _next_action(results: dict[str, RequirementResult]) -> Optional[str]:
     return None
 
 
-def run(payload: AgentInput) -> AgentOutput:
+def _will_type_question_output(warnings: Optional[list[dict[str, Any]]] = None) -> AgentOutput:
+    q = selection_question()
+    reply = f"{q['question']}\n\n{q['promotion_notice']}"
+    return AgentOutput(
+        agent=AgentName.DECEDENT_ESTATE,
+        reply=reply,
+        next_action=NEXT_ACTION_AWAIT_USER,
+        data={
+            "pending_questions": [
+                {
+                    "requirement": "유언 방식",
+                    "field": q["confirm_field"],
+                    "question": q["question"],
+                    "options": q["options"],
+                }
+            ],
+            "warnings": warnings or [],
+        },
+    )
+
+
+def _guidance_only_output(
+    will_type_info: dict[str, Any],
+    *,
+    include_requirements_summary: bool = True,
+    next_action: Optional[str] = None,
+    handoff_reason: Optional[str] = None,
+) -> AgentOutput:
+    """검증 대상이 아니거나(notarial) 아직 자동 점검을 지원하지 않는(recording/secret/oral)
+    방식에 대해 요건 요약 + 안내 문구만 돌려주고 종료한다."""
+    parts: list[str] = []
+    if include_requirements_summary:
+        parts.append(
+            f"{will_type_info['name']}({will_type_info['article']}) 요건: "
+            f"{will_type_info['requirements_summary']}"
+        )
+    parts.append(will_type_info["guidance"])
+
+    data: dict[str, Any] = {"will_type": will_type_info["id"], "warnings": []}
+    if handoff_reason:
+        data["handoff_reason"] = handoff_reason
+
+    return AgentOutput(
+        agent=AgentName.DECEDENT_ESTATE,
+        reply="\n\n".join(parts),
+        next_action=next_action,
+        data=data,
+    )
+
+
+def _run_handwritten_pipeline(
+    payload: AgentInput, *, prefix_notice: Optional[str] = None
+) -> AgentOutput:
+    """기존 요건 판정 파이프라인. handwritten 직접 선택과 unknown(기본값 적용) 둘 다 여기로 온다."""
     context = payload.context
     handwriting_answer = context.get("handwriting_answer")
     seal_answer = context.get("seal_answer")
@@ -70,6 +139,7 @@ def run(payload: AgentInput) -> AgentOutput:
     next_action = _next_action(results)
 
     data: dict[str, Any] = {
+        "will_type": _HANDWRITTEN_WILL_TYPE,
         "requirements": {
             rid: _requirement_payload(results[rid]) for rid in _ALL_REQUIREMENT_IDS
         },
@@ -85,9 +155,51 @@ def run(payload: AgentInput) -> AgentOutput:
     if next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR:
         data["handoff_reason"] = "가정법원 검인 절차 안내 필요"
 
+    reply = format_result(results)
+    if prefix_notice:
+        reply = f"{prefix_notice}\n\n{reply}"
+
     return AgentOutput(
         agent=AgentName.DECEDENT_ESTATE,
-        reply=format_result(results),
+        reply=reply,
         next_action=next_action,
         data=data,
     )
+
+
+def run(payload: AgentInput) -> AgentOutput:
+    will_type = payload.context.get("will_type")
+
+    if will_type is None:
+        return _will_type_question_output()
+
+    if will_type not in _valid_will_type_values():
+        return _will_type_question_output(
+            warnings=[
+                {
+                    "field": "will_type",
+                    "invalid_value": will_type,
+                    "allowed": list(_valid_will_type_values()),
+                }
+            ]
+        )
+
+    if will_type == _HANDWRITTEN_WILL_TYPE:
+        return _run_handwritten_pipeline(payload)
+
+    if will_type == _UNKNOWN_WILL_TYPE:
+        default = unknown_default()
+        return _run_handwritten_pipeline(payload, prefix_notice=default["notice"])
+
+    will_type_info = get_will_type(will_type)  # notarial / recording / secret / oral
+
+    if will_type == _NOTARIAL_WILL_TYPE:
+        return _guidance_only_output(
+            will_type_info,
+            include_requirements_summary=False,
+            next_action=NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR,
+            handoff_reason="공정증서 유언 확인 완료 — 검인 절차 없이 상속 절차 안내로 연결",
+        )
+
+    # recording / secret / oral: 요건 요약 + "자동 점검 미지원" 안내만 하고 종료.
+    return _guidance_only_output(will_type_info)

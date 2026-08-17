@@ -1,8 +1,11 @@
 """
-agents.decedent_estate.agent.run() 통합 테스트.
+agents.decedent_estate.agent.run() 통합 테스트 (handwritten 파이프라인).
 
 requirement_checker → result_formatter 파이프라인이 AgentInput/AgentOutput
-계약(schemas.agent_io) 위에서 실제로 맞물려 동작하는지 확인한다.
+계약(schemas.agent_io) 위에서 실제로 맞물려 동작하는지 확인한다. 유언 방식
+분기(will_type 질문/notarial/recording/secret/oral) 자체는
+test_decedent_will_type.py 에서 다룬다 — 여기서는 will_type="handwritten"
+이 이미 확정된 이후의 동작만 본다.
 """
 
 from agents import decedent_estate
@@ -26,19 +29,23 @@ _WILL_TEXT_ADDRESS_MISSING = (
 )
 
 
+def _ctx(**extra: str) -> dict[str, str]:
+    return {"will_type": "handwritten", **extra}
+
+
 def test_run_returns_contract_compliant_output() -> None:
-    payload = AgentInput(session_id="s1", user_message=_WILL_TEXT_COMPLETE)
+    payload = AgentInput(session_id="s1", user_message=_WILL_TEXT_COMPLETE, context=_ctx())
     output = decedent_estate.run(payload)
 
     assert output.agent == AgentName.DECEDENT_ESTATE
     assert isinstance(output.reply, str) and output.reply != ""
 
 
-def test_run_with_no_context_defaults_confirm_answers_to_none() -> None:
-    payload = AgentInput(session_id="s1", user_message=_WILL_TEXT_COMPLETE)  # context 없음
+def test_run_handwritten_without_confirm_answers_stays_pending() -> None:
+    """will_type은 확정됐지만 자서·날인 확인 답변이 없으면 여전히 PENDING이어야 한다."""
+    payload = AgentInput(session_id="s1", user_message=_WILL_TEXT_COMPLETE, context=_ctx())
     output = decedent_estate.run(payload)
 
-    # 자서·날인 확인 답변이 없으니 PENDING이 남아야 하고, 되묻는 힌트가 나가야 한다.
     assert output.next_action == NEXT_ACTION_AWAIT_USER
     assert output.data["requirements"]["handwriting"]["grade"] == "PENDING"
     assert output.data["requirements"]["seal"]["grade"] == "PENDING"
@@ -48,7 +55,7 @@ def test_run_all_green_and_confirmed_handoffs_to_heir_navigator() -> None:
     payload = AgentInput(
         session_id="s1",
         user_message=_WILL_TEXT_COMPLETE,
-        context={"handwriting_answer": "yes", "seal_answer": "seal_or_fingerprint"},
+        context=_ctx(handwriting_answer="yes", seal_answer="seal_or_fingerprint"),
     )
     output = decedent_estate.run(payload)
 
@@ -69,11 +76,11 @@ def test_run_reads_answers_from_context() -> None:
     payload = AgentInput(
         session_id="s1",
         user_message=_WILL_TEXT_ADDRESS_MISSING,  # 주소 없음 → 본문 판정 RED
-        context={
-            "handwriting_answer": "yes",
-            "seal_answer": "seal_or_fingerprint",
-            "address_envelope_answer": "envelope_or_minor_discrepancy",
-        },
+        context=_ctx(
+            handwriting_answer="yes",
+            seal_answer="seal_or_fingerprint",
+            address_envelope_answer="envelope_or_minor_discrepancy",
+        ),
     )
     output = decedent_estate.run(payload)
 
@@ -90,7 +97,7 @@ def test_run_confirmed_typed_will_has_no_handoff() -> None:
     payload = AgentInput(
         session_id="s1",
         user_message=_WILL_TEXT_COMPLETE,
-        context={"handwriting_answer": "no_or_partial_typed", "seal_answer": "seal_or_fingerprint"},
+        context=_ctx(handwriting_answer="no_or_partial_typed", seal_answer="seal_or_fingerprint"),
     )
     output = decedent_estate.run(payload)
 
@@ -103,7 +110,7 @@ def test_run_requirement_payload_covers_all_six_requirements() -> None:
     payload = AgentInput(
         session_id="s1",
         user_message=_WILL_TEXT_COMPLETE,
-        context={"handwriting_answer": "yes", "seal_answer": "seal_or_fingerprint"},
+        context=_ctx(handwriting_answer="yes", seal_answer="seal_or_fingerprint"),
     )
     output = decedent_estate.run(payload)
 
@@ -117,9 +124,9 @@ def test_run_requirement_payload_covers_all_six_requirements() -> None:
     }
 
 
-def test_run_no_context_has_no_warnings() -> None:
+def test_run_no_confirm_answers_has_no_warnings() -> None:
     """확인 답변을 아예 안 준 것은 "잘못된 값"이 아니라 "미확인"이라 경고 대상이 아니다."""
-    payload = AgentInput(session_id="s1", user_message=_WILL_TEXT_COMPLETE)
+    payload = AgentInput(session_id="s1", user_message=_WILL_TEXT_COMPLETE, context=_ctx())
 
     output = decedent_estate.run(payload)
 
@@ -130,7 +137,7 @@ def test_run_invalid_seal_answer_produces_warning_but_stays_pending() -> None:
     payload = AgentInput(
         session_id="s1",
         user_message=_WILL_TEXT_COMPLETE,
-        context={"handwriting_answer": "yes", "seal_answer": "yes"},  # 잘못된 필드에 넣음
+        context=_ctx(handwriting_answer="yes", seal_answer="yes"),  # 잘못된 필드에 넣음
     )
 
     output = decedent_estate.run(payload)
@@ -149,7 +156,7 @@ def test_run_invalid_seal_answer_produces_warning_but_stays_pending() -> None:
 
 def test_run_pending_question_includes_field_and_options() -> None:
     payload = AgentInput(
-        session_id="s1", user_message=_WILL_TEXT_COMPLETE, context={"handwriting_answer": "yes"}
+        session_id="s1", user_message=_WILL_TEXT_COMPLETE, context=_ctx(handwriting_answer="yes")
     )
 
     output = decedent_estate.run(payload)

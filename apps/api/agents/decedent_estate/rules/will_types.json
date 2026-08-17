@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "note": "민법이 정한 유언 5방식. support가 \"full\"인 방식만 이 에이전트가 형식 요건을 자동 점검한다. 그 외에는 요건 요약과 안내 문구만 보여주고 자동 판정은 하지 않는다.",
+
+  "selection_question": {
+    "confirm_field": "will_type",
+    "question": "어떤 형태의 유언인가요?",
+    "promotion_notice": "자필증서는 혼자 무료로 작성할 수 있어 가장 널리 쓰이지만, 형식 요건 미비로 무효가 되는 사례가 많아 점검이 필요합니다.",
+    "options": [
+      {"value": "handwritten", "label": "직접 손으로 쓴 유언장"},
+      {"value": "recording", "label": "녹음·영상"},
+      {"value": "notarial", "label": "공증받은 유언"},
+      {"value": "unknown", "label": "그 외·모르겠음"}
+    ]
+  },
+
+  "unknown_default": {
+    "will_type_id": "handwritten",
+    "notice": "가장 널리 쓰이는 자필증서 기준으로 점검하겠습니다."
+  },
+
+  "will_types": [
+    {
+      "id": "handwritten",
+      "name": "자필증서",
+      "article": "민법 제1066조",
+      "source": "민법 제1066조 제1항",
+      "requirements_summary": "유언자가 그 전문과 연월일, 주소, 성명을 자서하고 날인하여야 한다",
+      "support": "full",
+      "guidance": null
+    },
+    {
+      "id": "recording",
+      "name": "녹음",
+      "article": "민법 제1067조",
+      "source": "민법 제1067조",
+      "requirements_summary": "유언자가 유언의 취지, 그 성명과 연월일을 구술하고, 이에 참여한 증인이 유언의 정확함과 그 성명을 구술하여야 한다",
+      "support": "none",
+      "planned": true,
+      "guidance": "녹음 유언 자동 점검은 아직 준비 중입니다. 법률 전문가 확인을 권합니다."
+    },
+    {
+      "id": "notarial",
+      "name": "공정증서",
+      "article": "민법 제1068조",
+      "source": "민법 제1068조",
+      "requirements_summary": "유언자가 증인 2인이 참여한 공증인의 면전에서 유언의 취지를 구수하고, 공증인이 이를 필기낭독하여 유언자와 증인이 그 정확함을 승인한 후 각자 서명 또는 기명날인하여야 한다",
+      "support": "none",
+      "verification_needed": false,
+      "probate_needed": false,
+      "guidance": "공증인이 작성한 유언은 형식 요건 검증이 필요하지 않습니다. 가정법원 검인 절차도 필요하지 않습니다."
+    },
+    {
+      "id": "secret",
+      "name": "비밀증서",
+      "article": "민법 제1069조",
+      "source": "민법 제1069조 제1항",
+      "requirements_summary": "유언자가 필자의 성명을 기입한 증서를 엄봉날인하고 이를 2인 이상의 증인의 면전에 제출하여 자기의 유언서임을 표시한 후 그 봉서 표면에 제출 연월일을 기재하고 유언자와 증인이 각자 서명 또는 기명날인하여야 한다",
+      "support": "none",
+      "guidance": "이 방식은 증인 2인 이상이 필요합니다. 현재 자동 점검을 지원하지 않으니 법률 전문가 확인을 권합니다."
+    },
+    {
+      "id": "oral",
+      "name": "구수증서",
+      "article": "민법 제1070조",
+      "source": "민법 제1070조 제1항",
+      "requirements_summary": "질병 기타 급박한 사유로 인하여 다른 4가지 방식에 의할 수 없는 경우에, 유언자가 2인 이상의 증인의 참여로 그 1인에게 유언의 취지를 구수하고, 그 구수를 받은 자가 이를 필기낭독하여 유언자와 증인이 그 정확함을 승인한 후 각자 서명 또는 기명날인하여야 한다",
+      "support": "none",
+      "guidance": "이 방식은 증인 2인 이상이 필요합니다. 현재 자동 점검을 지원하지 않으니 법률 전문가 확인을 권합니다."
+    }
+  ]
+}
