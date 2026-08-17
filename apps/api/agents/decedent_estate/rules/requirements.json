@@ -16,6 +16,7 @@
     {
       "id": "date",
       "name": "연월일",
+      "red_label": "날짜",
       "order": 1,
       "extraction_type": "text_derivable",
       "extraction_note": "LLM은 날짜 문자열 추출만 수행하고, 판정은 룰 엔진이 수행한다.",
@@ -55,6 +56,7 @@
     {
       "id": "address",
       "name": "주소",
+      "red_label": "유언자 주소",
       "order": 2,
       "extraction_type": "text_derivable",
       "conditions": [
@@ -105,6 +107,7 @@
     {
       "id": "name",
       "name": "성명",
+      "red_label": "성명",
       "order": 3,
       "extraction_type": "text_derivable",
       "conditions": [
@@ -133,6 +136,7 @@
     {
       "id": "handwriting",
       "name": "전문 자서",
+      "red_label": "자필 작성 여부",
       "order": 4,
       "extraction_type": "user_confirm",
       "reason": "텍스트 판별 불가 → 사용자 확인",
@@ -156,6 +160,7 @@
     {
       "id": "seal",
       "name": "날인",
+      "red_label": "도장·지장",
       "order": 5,
       "extraction_type": "user_confirm",
       "reason": "텍스트 판별 불가 → 사용자 확인",

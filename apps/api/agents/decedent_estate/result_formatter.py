@@ -6,10 +6,18 @@
 먼저 고친 뒤 이 파일을 고칠 것 (§4 가드레일: 단정 표현 금지 등도 스펙 문구 안에
 이미 반영되어 있으므로 별도로 재가공하지 않는다).
 
-{요건}/{무엇}/{쟁점} 자리에는 요건 이름(RequirementResult.name)을 넣는다. 스펙
-원문은 뒤에 오는 조사를 "이"로 고정 표기했지만, "주소이"처럼 실제로는 어색한
-조합이 생겨 받침 유무에 따라 "이/가"를 올바르게 골라 붙인다 — 그 외 문장은
-전부 스펙 원문 그대로다.
+{요건} 자리에는 요건 이름(RequirementResult.name)을, RED 문구의 {무엇} 자리에는
+요건명 중복을 피하기 위해 rules/requirements.json 의 red_label 필드를 넣는다
+(YELLOW의 {쟁점}은 그대로 요건 이름). 스펙 원문은 뒤에 오는 조사를 "이"로 고정
+표기했지만 "주소이"처럼 실제로는 어색한 조합이 생겨, 받침 유무에 따라 "이/가"를
+올바르게 골라 붙인다 — 그 외 문장은 전부 스펙 원문 그대로다.
+
+RED 항목은 더 이상 "→ 법률 전문가 확인을 권합니다"로 끝나지 않는다 — 그 안내는
+상단 요약(케이스 B)과 §3-3 상담 연결 줄에 이미 있어서 항목마다 반복하지 않기로
+했다. 판례 카드도 "[카드]" 표기 대신 rules/precedents.json 의 court+case_number
+(또는 commentary면 "(대한법률구조공단 해설)")를 그대로 붙인다. 다만 날인 RED의
+fingerprint_seal_valid 는 "무효 판례"가 아니라 반대 취지(지장도 인정된다)의
+참고 정보라, 카드가 아니라 들여쓴 참고 문구로 따로 보여준다.
 """
 
 from __future__ import annotations
@@ -52,12 +60,15 @@ def _summary_pending(count: int) -> str:
 # §3-2. 요건별 문구 패턴의 고정 부분 — 스펙 원문 그대로
 # ---------------------------------------------------------------------------
 _RED_VERB_PHRASE = "확인되지 않습니다"
-_RED_CTA = "→ 법률 전문가 확인을 권합니다"
 _YELLOW_VERB_PHRASE = "쟁점이 될 수 있습니다"
 _YELLOW_CTA = "→ 개별 판단이 필요합니다. 법률 상담을 권합니다"
 _INTERSEAL_REFERENCE_LINE = (
     "ℹ️ 참고: 간인은 법정 요건이 아니지만, 여러 장일 경우 위조 다툼 예방에 도움이 됩니다"
 )
+# 날인 RED에서 fingerprint_seal_valid는 무효 판례 카드가 아니라 참고 문구로 별도 표시한다.
+_FINGERPRINT_SEAL_NOTE_PRECEDENT_ID = "fingerprint_seal_valid"
+_FINGERPRINT_SEAL_NOTE = "   ℹ️ 참고: 지장(손도장)도 날인으로 인정됩니다"
+_COMMENTARY_CITATION = "(대한법률구조공단 해설)"
 
 # ---------------------------------------------------------------------------
 # §3-3 / §3-4 — 스펙 원문 그대로
@@ -99,11 +110,25 @@ def _josa_i_ga(word: str) -> str:
     return "이" if _has_batchim(word) else "가"
 
 
+def _precedent_citation(card: dict[str, Any]) -> str:
+    if card["type"] == "commentary":
+        return _COMMENTARY_CITATION
+    return f"({card['court']} {card['case_number']})"
+
+
 def _precedent_card_line(precedent_id: str) -> Optional[str]:
     card = _load_precedents().get(precedent_id)
     if not card:
         return None
-    return f"{card['one_liner']} [카드]"
+    return f"{card['one_liner']} {_precedent_citation(card)}"
+
+
+def _red_label(requirement_id: str) -> str:
+    rules = _load_rules()
+    for req in rules["requirements"]:
+        if req["id"] == requirement_id:
+            return req.get("red_label", req["name"])
+    return requirement_id
 
 
 def _extracted_display_value(result: RequirementResult) -> Optional[str]:
@@ -132,12 +157,15 @@ def format_requirement_line(result: RequirementResult) -> Optional[str]:
         return f"✅ {name}: 기재 확인{suffix}"
 
     if result.grade == "RED":
-        lines = [f"❌ {name}: {name}{_josa_i_ga(name)} {_RED_VERB_PHRASE}"]
+        red_label = _red_label(result.requirement_id)
+        lines = [f"❌ {name}: {red_label}{_josa_i_ga(red_label)} {_RED_VERB_PHRASE}"]
         for precedent_id in result.precedent_ids:
+            if precedent_id == _FINGERPRINT_SEAL_NOTE_PRECEDENT_ID:
+                lines.append(_FINGERPRINT_SEAL_NOTE)
+                continue
             card_line = _precedent_card_line(precedent_id)
             if card_line:
                 lines.append(card_line)
-        lines.append(_RED_CTA)
         return "\n".join(lines)
 
     if result.grade == "YELLOW":

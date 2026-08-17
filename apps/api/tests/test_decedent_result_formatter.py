@@ -27,10 +27,21 @@ _PRECEDENTS_PATH = (
 )
 
 
-def _one_liner(precedent_id: str) -> str:
+def _precedent(precedent_id: str) -> dict:
     with _PRECEDENTS_PATH.open(encoding="utf-8") as f:
         data = json.load(f)
-    return next(p["one_liner"] for p in data["precedents"] if p["id"] == precedent_id)
+    return next(p for p in data["precedents"] if p["id"] == precedent_id)
+
+
+def _one_liner(precedent_id: str) -> str:
+    return _precedent(precedent_id)["one_liner"]
+
+
+def _citation(precedent_id: str) -> str:
+    p = _precedent(precedent_id)
+    if p["type"] == "commentary":
+        return "(대한법률구조공단 해설)"
+    return f"({p['court']} {p['case_number']})"
 
 
 _NAME_LINE = "유언자: 홍길동"
@@ -80,11 +91,11 @@ def test_case_b_red_present_summary_and_card() -> None:
     line = format_requirement_line(results["address"])
     assert line == "\n".join(
         [
-            "❌ 주소: 주소가 확인되지 않습니다",
-            f"{_one_liner('address_missing_invalid')} [카드]",
-            "→ 법률 전문가 확인을 권합니다",
+            "❌ 주소: 유언자 주소가 확인되지 않습니다",
+            f"{_one_liner('address_missing_invalid')} {_citation('address_missing_invalid')}",
         ]
     )
+    assert "→ 법률 전문가 확인을 권합니다" not in line
 
 
 def test_case_c_yellow_only_summary_and_two_cards() -> None:
@@ -100,11 +111,12 @@ def test_case_c_yellow_only_summary_and_two_cards() -> None:
     assert line == "\n".join(
         [
             "⚠️ 연월일: 연월일이 쟁점이 될 수 있습니다",
-            f"{_one_liner('date_missing_day_invalid')} [카드]",
-            f"{_one_liner('date_specifiable_valid')} [카드]",
+            f"{_one_liner('date_missing_day_invalid')} {_citation('date_missing_day_invalid')}",
+            f"{_one_liner('date_specifiable_valid')} {_citation('date_specifiable_valid')}",
             "→ 개별 판단이 필요합니다. 법률 상담을 권합니다",
         ]
     )
+    assert _citation("date_specifiable_valid") == "(대한법률구조공단 해설)"
 
 
 def test_case_d_pending_summary_lists_question() -> None:
@@ -154,7 +166,7 @@ def test_josa_selection_no_batchim_for_address() -> None:
     results = check_requirements(text, address_envelope_answer="no_envelope")
 
     line = format_requirement_line(results["address"])
-    assert line.startswith("❌ 주소: 주소가 확인되지 않습니다")
+    assert line.startswith("❌ 주소: 유언자 주소가 확인되지 않습니다")
 
 
 def test_josa_selection_batchim_for_date_and_name_and_seal() -> None:
@@ -165,7 +177,32 @@ def test_josa_selection_batchim_for_date_and_name_and_seal() -> None:
     assert name_line.startswith("❌ 성명: 성명이 확인되지 않습니다")
 
     seal_line = format_requirement_line(results["seal"])
-    assert seal_line.startswith("❌ 날인: 날인이 확인되지 않습니다")
+    assert seal_line.startswith("❌ 날인: 도장·지장이 확인되지 않습니다")
+
+
+def test_seal_red_shows_fingerprint_note_not_card() -> None:
+    """날인 RED에서 fingerprint_seal_valid는 카드가 아니라 들여쓴 참고 문구여야 한다."""
+    text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
+    results = check_requirements(text, handwriting_answer="yes", seal_answer="signature_only")
+
+    line = format_requirement_line(results["seal"])
+    assert "   ℹ️ 참고: 지장(손도장)도 날인으로 인정됩니다" in line
+    assert _one_liner("fingerprint_seal_valid") not in line
+    assert "[카드]" not in line
+
+
+def test_red_lines_never_contain_removed_cta() -> None:
+    text = _will_text(_DATE_LINE)  # 주소·성명 없음
+    results = check_requirements(
+        text,
+        handwriting_answer="no_or_partial_typed",
+        seal_answer="signature_only",
+        address_envelope_answer="no_envelope",
+    )
+
+    output = format_result(results)
+    assert "→ 법률 전문가 확인을 권합니다" not in output
+    assert "[카드]" not in output
 
 
 def test_white_interseal_reference_line() -> None:
