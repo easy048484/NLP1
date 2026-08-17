@@ -1,3 +1,3 @@
-from .agent import run
+from .agent import TRIGGER_KEYWORDS, run
 
-__all__ = ["run"]
+__all__ = ["run", "TRIGGER_KEYWORDS"]

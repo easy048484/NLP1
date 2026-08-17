@@ -15,7 +15,14 @@ Message = dict[str, str]
 
 
 def chat(messages: list[Message], *, provider: str | None = None) -> str:
-    name = (provider or os.getenv("LLM_PROVIDER", "upstage")).strip().lower()
+    name = (provider or os.getenv("LLM_PROVIDER", "claude")).strip().lower()
+    if name in {"claude", "anthropic"}:
+        # Claude만 공식 SDK를 씁니다 (llm/claude.py). 나머지는 OpenAI 호환 HTTP.
+        from . import claude
+
+        system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+        turns = [m for m in messages if m["role"] != "system"]
+        return claude.complete(system=system, messages=turns)
     if name == "upstage":
         return _openai_compatible(
             base_url=os.getenv("UPSTAGE_BASE_URL", "https://api.upstage.ai/v1"),
@@ -25,7 +32,9 @@ def chat(messages: list[Message], *, provider: str | None = None) -> str:
         )
     if name in {"k-exaone", "k_exaone", "exaone"}:
         return _openai_compatible(
-            base_url=os.getenv("K_EXAONE_BASE_URL", "https://api.friendli.ai/dedicated/v1"),
+            base_url=os.getenv(
+                "K_EXAONE_BASE_URL", "https://api.friendli.ai/dedicated/v1"
+            ),
             api_key=_require("K_EXAONE_API_KEY"),
             model=_require("K_EXAONE_ENDPOINT_ID"),
             messages=messages,

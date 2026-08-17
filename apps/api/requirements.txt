@@ -6,7 +6,9 @@ alembic==1.13.3
 psycopg2-binary==2.9.9
 python-dotenv==1.0.1
 langgraph==0.2.34
-anthropic==0.34.2
+# adaptive thinking / output_config.effort / 최신 모델 ID를 쓰려면 최신 SDK가 필요합니다.
+# (0.34.2는 2024년 버전이라 claude-opus-5 계열 파라미터를 보내지 못합니다)
+anthropic>=0.116.0
 
 # dev/test
 pytest==8.3.3
