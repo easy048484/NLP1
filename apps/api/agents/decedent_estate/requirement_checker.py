@@ -305,13 +305,13 @@ def validate_confirm_answers(
     }
 
     warnings: list[dict[str, Any]] = []
-    for field, value in provided.items():
+    for field_name, value in provided.items():
         if value is None:
             continue
-        allowed = _CONFIRM_FIELD_ALLOWED_VALUES[field]
+        allowed = _CONFIRM_FIELD_ALLOWED_VALUES[field_name]
         if value not in allowed:
             warnings.append(
-                {"field": field, "invalid_value": value, "allowed": list(allowed)}
+                {"field": field_name, "invalid_value": value, "allowed": list(allowed)}
             )
     return warnings
 
