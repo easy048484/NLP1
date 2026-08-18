@@ -11,6 +11,14 @@
 - notarial(공정증서) → 검증·검인 모두 불필요 안내 후 heir_navigator로 핸드오프
 - secret/oral → 요건 요약만 안내, 자동 점검 미지원
 
+will_type이 full 지원(handwritten/unknown/recording)이면 두 번째로 intent(이용
+목적)를 확인한다: "review"(기본, 이미 있는 유언장/대본 점검) | "prepare"(아직
+작성 전, 요건별 작성 가이드). context.intent 가 없으면(하위 호환) review로 조용히
+기본 동작하고, 잘못된 값이면 will_type 게이트와 같은 패턴으로 재질문한다.
+prepare 모드에서도 초안 텍스트가 있으면(has_draft_text) 가이드 뒤에 기존
+review 파이프라인 결과를 그대로 이어붙인다(rules/requirements.json 의
+requirements[].guide, CLAUDE.md 빌드 순서 5단계).
+
 사용자 확인 답변은 AgentInput.context 에서 읽는다 (자서/날인/주소 봉투는
 handwritten, 증인 참여/증인 결격은 recording).
 
@@ -32,12 +40,22 @@ from .recording_checker import (
 )
 from .requirement_checker import RequirementResult, check_requirements, validate_confirm_answers
 from .result_formatter import (
+    HANDWRITTEN_GUIDE_INTRO,
+    RECORDING_GUIDE_INTRO,
     RECORDING_SUMMARY_MESSAGES,
+    format_guide,
     format_result,
+    guide_payload,
     pending_questions,
     red_label,
 )
-from .will_types import get_will_type, known_will_type_ids, selection_question, unknown_default
+from .will_types import (
+    get_will_type,
+    intent_question,
+    known_will_type_ids,
+    selection_question,
+    unknown_default,
+)
 
 _FORMAL_REQUIREMENT_IDS = ("date", "address", "name", "handwriting", "seal")
 _ALL_REQUIREMENT_IDS = (*_FORMAL_REQUIREMENT_IDS, "interseal")
@@ -46,6 +64,14 @@ _UNKNOWN_WILL_TYPE = "unknown"
 _HANDWRITTEN_WILL_TYPE = "handwritten"
 _RECORDING_WILL_TYPE = "recording"
 _NOTARIAL_WILL_TYPE = "notarial"
+
+# intent(이용 목적): "review"(기본, 이미 있는 유언장/대본 점검) | "prepare"(아직
+# 작성 전, 준비 가이드). full 지원 방식(handwritten/unknown/recording)에서만 의미가
+# 있다 — notarial/secret/oral은 애초에 review/prepare 구분 없이 안내만 한다.
+_REVIEW_INTENT = "review"
+_PREPARE_INTENT = "prepare"
+_INTENT_VALUES = (_REVIEW_INTENT, _PREPARE_INTENT)
+_FULL_SUPPORT_WILL_TYPES = (_HANDWRITTEN_WILL_TYPE, _UNKNOWN_WILL_TYPE, _RECORDING_WILL_TYPE)
 
 _RECORDING_TRANSCRIPT_NOTICE = (
     "📼 녹음하신 내용을 그대로 적어주세요. 아직 녹음 전이라면, 예정된 대본으로 "
@@ -62,6 +88,61 @@ def _valid_will_type_values() -> tuple[str, ...]:
     """민법 5방식 id + UI의 "모르겠음" sentinel. context.will_type 이 이 안에
     없으면(None 포함) 방식을 다시 물어본다."""
     return (*known_will_type_ids(), _UNKNOWN_WILL_TYPE)
+
+
+def _resolve_intent(payload: AgentInput) -> tuple[Optional[str], list[dict[str, Any]]]:
+    """context.intent 를 review/prepare 로 정리한다.
+
+    will_type 게이트와 같은 패턴을 쓰되(잘못된 값이면 재질문), "미지정"의 취급만
+    다르다 — will_type은 기본값이 없어 None이면 무조건 되묻지만, intent는
+    review라는 합리적인 기본값이 있어서 값이 아예 없으면(context에 키 자체가
+    없거나 None) 조용히 review로 판정한다(기존 호출부 하위 호환 — intent를 아직
+    모르는 옛 클라이언트도 그대로 review 파이프라인을 탄다). 값이 있는데
+    화이트리스트 밖이면(오타 등) will_type과 동일하게 None을 돌려줘 호출부가
+    재질문(_intent_question_output)하게 한다.
+    """
+    intent = payload.context.get("intent")
+    if intent is None:
+        return _REVIEW_INTENT, []
+    if intent not in _INTENT_VALUES:
+        return None, [{"field": "intent", "invalid_value": intent, "allowed": list(_INTENT_VALUES)}]
+    return intent, []
+
+
+def _intent_question_output(
+    will_type_id: str, warnings: Optional[list[dict[str, Any]]] = None
+) -> AgentOutput:
+    q = intent_question()
+    return AgentOutput(
+        agent=AgentName.DECEDENT_ESTATE,
+        reply=q["question"],
+        next_action=NEXT_ACTION_AWAIT_USER,
+        data={
+            "will_type": will_type_id,
+            "pending_questions": [
+                {
+                    "requirement": "이용 목적",
+                    "field": q["confirm_field"],
+                    "question": q["question"],
+                    "options": q["options"],
+                }
+            ],
+            "warnings": warnings or [],
+        },
+    )
+
+
+def _has_draft_text(payload: AgentInput) -> bool:
+    """prepare 모드에서 "이미 초안(텍스트)을 갖고 있는지" 판단한다.
+
+    context.has_draft 를 명시적으로 보내면 그 값을 그대로 쓰고, 없으면
+    user_message에 내용이 있는지로 유추한다(가이드만 원하는 경우 프론트가
+    user_message를 비워 보내는 것을 전제).
+    """
+    context_flag = payload.context.get("has_draft")
+    if context_flag is not None:
+        return bool(context_flag)
+    return bool(payload.user_message and payload.user_message.strip())
 
 
 def _requirement_payload(result: RequirementResult) -> dict[str, Any]:
@@ -246,6 +327,71 @@ def _run_recording_pipeline(payload: AgentInput) -> AgentOutput:
     )
 
 
+_PREPARE_DRAFT_INVITE = (
+    "작성하신 초안(또는 대본)이 있다면 그대로 보내주세요. 위 요건 기준으로 바로 점검해 드립니다."
+)
+
+
+def _run_handwritten_prepare_pipeline(
+    payload: AgentInput, *, prefix_notice: Optional[str] = None
+) -> AgentOutput:
+    """자필증서 준비 가이드(intent == "prepare"). handwritten 직접 선택과 unknown
+    (기본값 적용) 둘 다 여기로 온다 — review 파이프라인과 동일한 분기 구조.
+
+    이미 초안이 있으면(has_draft_text) 가이드 문구 뒤에 기존 review 파이프라인
+    (_run_handwritten_pipeline) 결과를 그대로 이어붙인다 — 판정 로직 자체는
+    중복 구현하지 않는다.
+    """
+    reply = format_guide(list(_FORMAL_REQUIREMENT_IDS), HANDWRITTEN_GUIDE_INTRO)
+    data: dict[str, Any] = {
+        "will_type": _HANDWRITTEN_WILL_TYPE,
+        "intent": _PREPARE_INTENT,
+        "guide": {rid: guide_payload(rid) for rid in _FORMAL_REQUIREMENT_IDS},
+    }
+
+    if prefix_notice:
+        reply = f"{prefix_notice}\n\n{reply}"
+
+    if _has_draft_text(payload):
+        review_output = _run_handwritten_pipeline(payload)
+        reply = f"{reply}\n\n---\n\n**작성하신 초안을 점검한 결과입니다.**\n\n{review_output.reply}"
+        data["review"] = review_output.data
+        return AgentOutput(
+            agent=AgentName.DECEDENT_ESTATE,
+            reply=reply,
+            next_action=review_output.next_action,
+            data=data,
+        )
+
+    reply = f"{reply}\n\n{_PREPARE_DRAFT_INVITE}"
+    return AgentOutput(agent=AgentName.DECEDENT_ESTATE, reply=reply, next_action=None, data=data)
+
+
+def _run_recording_prepare_pipeline(payload: AgentInput) -> AgentOutput:
+    """녹음 유언(§1067) 준비 가이드(intent == "prepare"). 이미 대본이 있으면
+    가이드 뒤에 기존 review 파이프라인(_run_recording_pipeline) 결과를 이어붙인다."""
+    reply = format_guide(list(FORMAL_RECORDING_REQUIREMENT_IDS), RECORDING_GUIDE_INTRO)
+    data: dict[str, Any] = {
+        "will_type": _RECORDING_WILL_TYPE,
+        "intent": _PREPARE_INTENT,
+        "guide": {rid: guide_payload(rid) for rid in FORMAL_RECORDING_REQUIREMENT_IDS},
+    }
+
+    if _has_draft_text(payload):
+        review_output = _run_recording_pipeline(payload)
+        reply = f"{reply}\n\n---\n\n**작성하신 대본을 점검한 결과입니다.**\n\n{review_output.reply}"
+        data["review"] = review_output.data
+        return AgentOutput(
+            agent=AgentName.DECEDENT_ESTATE,
+            reply=reply,
+            next_action=review_output.next_action,
+            data=data,
+        )
+
+    reply = f"{reply}\n\n{_PREPARE_DRAFT_INVITE}"
+    return AgentOutput(agent=AgentName.DECEDENT_ESTATE, reply=reply, next_action=None, data=data)
+
+
 def run(payload: AgentInput) -> AgentOutput:
     will_type = payload.context.get("will_type")
 
@@ -263,14 +409,25 @@ def run(payload: AgentInput) -> AgentOutput:
             ]
         )
 
-    if will_type == _HANDWRITTEN_WILL_TYPE:
-        return _run_handwritten_pipeline(payload)
+    if will_type in _FULL_SUPPORT_WILL_TYPES:
+        intent, intent_warnings = _resolve_intent(payload)
+        if intent is None:  # 화이트리스트 밖 값 — will_type 게이트와 동일하게 재질문
+            return _intent_question_output(will_type, warnings=intent_warnings)
 
-    if will_type == _UNKNOWN_WILL_TYPE:
-        default = unknown_default()
-        return _run_handwritten_pipeline(payload, prefix_notice=default["notice"])
+        if will_type == _HANDWRITTEN_WILL_TYPE:
+            if intent == _PREPARE_INTENT:
+                return _run_handwritten_prepare_pipeline(payload)
+            return _run_handwritten_pipeline(payload)
 
-    if will_type == _RECORDING_WILL_TYPE:
+        if will_type == _UNKNOWN_WILL_TYPE:
+            default = unknown_default()
+            if intent == _PREPARE_INTENT:
+                return _run_handwritten_prepare_pipeline(payload, prefix_notice=default["notice"])
+            return _run_handwritten_pipeline(payload, prefix_notice=default["notice"])
+
+        # will_type == _RECORDING_WILL_TYPE
+        if intent == _PREPARE_INTENT:
+            return _run_recording_prepare_pipeline(payload)
         return _run_recording_pipeline(payload)
 
     will_type_info = get_will_type(will_type)  # notarial / secret / oral

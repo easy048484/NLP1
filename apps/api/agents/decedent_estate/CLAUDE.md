@@ -5,7 +5,9 @@
 자필증서(§1066, handwritten) 또는 녹음(§1067, recording)이면 각각의 형식 요건을
 점검해 판례·조문 기반 카드와 함께 신호등(GREEN/YELLOW/RED) 결과를 반환한다.
 공정증서(§1068)는 검증·검인 모두 불요 안내만, 비밀증서(§1069)·구수증서(§1070)는
-요건 요약 + 자동 점검 미지원 안내만 한다.
+요건 요약 + 자동 점검 미지원 안내만 한다. handwritten/recording(및 unknown)은
+방식 확인 다음으로 intent(이용 목적: review=점검 | prepare=생전 준비 가이드)도
+확인해 분기한다 — 자세한 내용은 아래 빌드 순서 5)를 참고.
 
 ## 절대 원칙
 1. 판정은 룰 엔진이 한다. LLM은 텍스트에서 값 추출(날짜 문자열, 주소·성명 유무)만 한다.
@@ -49,3 +51,27 @@
     formal_ids·messages(SummaryMessages)를 파라미터로 받도록 일반화되어
     handwritten·recording 두 요건 집합을 하나의 §3 렌더링 로직으로 처리한다
     (§3-1 A/B/C 문구만 will_type별로 다르고, 나머지는 공통).
+5) **피상속인(생전 준비) 모드 — intent 게이트**가 will_type 게이트 다음 단계로
+   agent.run() 에 추가됨: context.intent 가 "review"(기본, 이미 있는 유언장/대본
+   점검)인지 "prepare"(아직 작성 전, 요건별 작성 가이드)인지 확인한다.
+  - intent 미지정(context에 키 자체가 없거나 None)이면 조용히 review로 기본
+    동작한다(하위 호환 — intent를 모르는 기존 호출부도 그대로 review 파이프라인).
+    값이 있는데 화이트리스트("review"/"prepare") 밖이면 will_type 게이트와 같은
+    패턴으로 재질문한다(rules/will_types.json 의 intent_question,
+    will_types.intent_question()). 이 게이트는 full 지원 방식
+    (handwritten/unknown/recording)에서만 의미가 있다 — notarial/secret/oral은
+    intent 값과 무관하게 기존 안내 전용 분기를 그대로 탄다.
+  - intent == "prepare"이면 요건 판정을 돌리지 않고, rules/requirements.json 의
+    각 요건에 새로 추가된 guide 필드(instruction/mistake_sentence/
+    mistake_precedent_id/extra_note)를 result_formatter.format_guide()로
+    렌더링해 "✅/❌" 대신 "📝 {요건}: {가이드 문구}" 형태로 안내한다. 판례 인용은
+    review 모드와 동일하게 precedents.json 을 거쳐 만든다(판례 재생성 금지
+    원칙은 가이드 모드에도 그대로 적용). handwritten 5요건·recording 7요건
+    전부 guide를 갖고, interseal(법정 요건 아님)은 guide 대상이 아니다.
+  - 사용자가 이미 초안(대본) 텍스트를 갖고 있으면(has_draft_text — context.
+    has_draft 명시 우선, 없으면 user_message 비어있지 않음으로 유추) prepare
+    모드에서도 가이드 문구 뒤에 기존 review 파이프라인
+    (_run_handwritten_pipeline/_run_recording_pipeline) 결과를 그대로 이어
+    붙인다 — 판정 로직 자체는 절대 중복 구현하지 않고 재사용만 한다. 응답
+    data에는 "guide"(요건별 가이드 payload)와, 초안이 있을 때만 "review"
+    (기존 review 파이프라인의 data 그대로) 두 키가 함께 담긴다.

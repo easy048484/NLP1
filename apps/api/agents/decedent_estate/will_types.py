@@ -32,6 +32,16 @@ def unknown_default() -> dict[str, Any]:
     return _load()["unknown_default"]
 
 
+def intent_question() -> dict[str, Any]:
+    """intent(이용 목적) 값이 잘못 온 경우 재확인할 질문 (review/prepare 선택지).
+
+    will_type이 full 지원(handwritten/recording/unknown)일 때만 의미가 있다 —
+    notarial/secret/oral은 애초에 요건 판정을 돌지 않아 review/prepare 구분이
+    없다. 값이 아예 없을 때는(agent.py 의 _resolve_intent) 이 질문을 띄우지
+    않고 default("review")로 조용히 넘어간다 — 기존 호출부 하위 호환 유지."""
+    return _load()["intent_question"]
+
+
 def get_will_type(will_type_id: str) -> Optional[dict[str, Any]]:
     for wt in _load()["will_types"]:
         if wt["id"] == will_type_id:
