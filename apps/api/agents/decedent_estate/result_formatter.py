@@ -250,6 +250,84 @@ def format_requirement_line(result: RequirementResult) -> Optional[str]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# 가이드 모드 (피상속인 생전 준비, intent == "prepare") — 아직 작성 전인 사용자에게
+# "이렇게 써야 합니다" + 흔한 실수 판례를 요건별로 안내한다. ✅/❌ 신호등 대신
+# 📝 로 시작해 점검 결과가 아니라 안내임을 구분한다. guide 문구는 요건마다
+# rules/requirements.json 의 requirements[].guide 에 있는 것만 쓴다 — 판례
+# 인용도 review 모드와 동일하게 precedents.json 을 거쳐 (_precedent_citation)
+# 만든다 (CLAUDE.md 원칙 3, 판례 재생성 금지).
+# ---------------------------------------------------------------------------
+HANDWRITTEN_GUIDE_INTRO = (
+    "**자필증서 유언 작성 가이드입니다.** 아래 5가지 형식 요건을 지키면 형식 미비로 "
+    "무효가 되는 것을 예방할 수 있습니다. 다만 이 안내는 형식 요건에 한정되며, 유언의 "
+    "최종 유효성은 내용·작성 경위 등에 따라 달라질 수 있습니다."
+)
+RECORDING_GUIDE_INTRO = (
+    "**녹음 유언 작성 가이드입니다.** 아래 요건을 지키면 형식 미비로 무효가 되는 것을 "
+    "예방할 수 있습니다. 다만 이 안내는 형식 요건에 한정되며, 유언의 최종 유효성은 "
+    "내용·작성 경위 등에 따라 달라질 수 있습니다."
+)
+
+
+def _find_requirement_or_none(requirement_id: str) -> Optional[dict[str, Any]]:
+    rules = _load_rules()
+    for req in rules["requirements"]:
+        if req["id"] == requirement_id:
+            return req
+    return None
+
+
+def guide_payload(requirement_id: str) -> Optional[dict[str, Any]]:
+    """요건 하나의 가이드 정보를 구조화한다 (프론트가 카드 UI를 그릴 수 있도록).
+
+    guide가 없는 요건(예: interseal)이면 None을 돌려준다.
+    """
+    req = _find_requirement_or_none(requirement_id)
+    if req is None or not req.get("guide"):
+        return None
+    guide = req["guide"]
+    return {
+        "id": requirement_id,
+        "name": req["name"],
+        "instruction": guide["instruction"],
+        "mistake_sentence": guide.get("mistake_sentence"),
+        "mistake_precedent_id": guide.get("mistake_precedent_id"),
+        "extra_note": guide.get("extra_note"),
+    }
+
+
+def format_guide_line(requirement_id: str) -> Optional[str]:
+    """요건 하나를 "📝 {요건}: 이렇게 써야 합니다 + 흔한 실수 판례" 문구로 변환한다."""
+    req = _find_requirement_or_none(requirement_id)
+    if req is None or not req.get("guide"):
+        return None
+    guide = req["guide"]
+
+    parts = [guide["instruction"]]
+    precedent_id = guide.get("mistake_precedent_id")
+    if precedent_id:
+        card = _load_precedents().get(precedent_id)
+        if card:
+            parts.append(f"{guide['mistake_sentence']} {_precedent_citation(card)}.")
+    if guide.get("extra_note"):
+        parts.append(guide["extra_note"])
+
+    return f"📝 {req['name']}: " + " ".join(parts)
+
+
+def format_guide(ordered_ids: list[str], intro: str) -> str:
+    """가이드 모드 전체 화면 문구를 조립한다: 안내 인트로 → 요건별 가이드 → 상담 연결 → 하단 고지."""
+    sections = [intro]
+    for requirement_id in ordered_ids:
+        line = format_guide_line(requirement_id)
+        if line:
+            sections.append(line)
+    sections.append(_CONSULTATION_LINE)
+    sections.append(_FOOTER_NOTICE)
+    return "\n\n".join(sections)
+
+
 def summarize(
     results: dict[str, RequirementResult],
     formal_ids: tuple[str, ...] = _FORMAL_REQUIREMENT_IDS,

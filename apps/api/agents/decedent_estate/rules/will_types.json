@@ -19,6 +19,16 @@
     "notice": "가장 널리 쓰이는 자필증서 기준으로 점검하겠습니다."
   },
 
+  "intent_question": {
+    "confirm_field": "intent",
+    "question": "지금 필요하신 게 어떤 건가요?",
+    "default": "review",
+    "options": [
+      {"value": "review", "label": "이미 작성한 유언장/대본을 점검하고 싶어요"},
+      {"value": "prepare", "label": "아직 작성 전이고, 준비 방법이 궁금해요"}
+    ]
+  },
+
   "will_types": [
     {
       "id": "handwritten",
