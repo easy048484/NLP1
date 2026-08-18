@@ -25,7 +25,9 @@ def chat(messages: list[Message], *, provider: str | None = None) -> str:
         )
     if name in {"k-exaone", "k_exaone", "exaone"}:
         return _openai_compatible(
-            base_url=os.getenv("K_EXAONE_BASE_URL", "https://api.friendli.ai/dedicated/v1"),
+            base_url=os.getenv(
+                "K_EXAONE_BASE_URL", "https://api.friendli.ai/dedicated/v1"
+            ),
             api_key=_require("K_EXAONE_API_KEY"),
             model=_require("K_EXAONE_ENDPOINT_ID"),
             messages=messages,
