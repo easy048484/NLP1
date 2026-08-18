@@ -10,9 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from orchestrator import route
 from schemas import AgentInput, AgentOutput
 
-# 저장소 루트의 .env를 읽습니다 (README 안내와 동일한 위치: repo-root/.env).
-# docker-compose는 env_file로 별도 주입하므로 여기서는 로컬(uvicorn --reload) 실행만 보정합니다.
-load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+_parents = Path(__file__).resolve().parents
+_env_path = _parents[2] / ".env" if len(_parents) > 2 else None
+if _env_path and _env_path.exists():
+    load_dotenv(_env_path)
 
 app = FastAPI(title="가족 자산 준비 AI 에이전트 API")
 
