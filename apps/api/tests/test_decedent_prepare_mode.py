@@ -294,3 +294,78 @@ def test_prepare_has_draft_context_flag_overrides_heuristic() -> None:
     assert "review" not in output.data
     assert "requirements" not in output.data
     assert output.next_action is None
+
+
+# ---------------------------------------------------------------------------
+# 마무리 문구(§3-3 상담 연결 · §3-4 하단 고지) 중복 방지
+#
+# 가이드 블록(format_guide)과 점검 블록(format_result)이 각각 같은 두 줄로 끝나서,
+# 초안을 함께 낸 경우 한 화면에 두 번씩 반복되던 문제의 회귀 방지. 개수를 세지
+# 않고 `in`으로만 검사하면 중복을 못 잡으므로 여기서는 count()로 확인한다.
+# ---------------------------------------------------------------------------
+
+_CONSULTATION_MARK = "대한법률구조공단 132"
+_FOOTER_MARK = "법률 자문이 아닙니다"
+
+
+def _assert_closing_appears_once(reply: str) -> None:
+    assert reply.count(_CONSULTATION_MARK) == 1, "상담 연결 문구가 한 번만 나와야 한다"
+    assert reply.count(_FOOTER_MARK) == 1, "하단 고지가 한 번만 나와야 한다"
+
+
+def test_prepare_handwritten_with_draft_has_no_duplicated_closing() -> None:
+    output = _run(
+        _WILL_TEXT_COMPLETE,
+        will_type="handwritten",
+        intent="prepare",
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+    )
+
+    _assert_closing_appears_once(output.reply)
+    # 마무리 문구는 가이드가 아니라 점검 결과 뒤(맨 끝)에 남아야 한다.
+    assert output.reply.index(_CONSULTATION_MARK) > output.reply.index(
+        "작성하신 초안을 점검한 결과입니다."
+    )
+
+
+def test_prepare_recording_with_draft_has_no_duplicated_closing() -> None:
+    transcript = "\n".join(
+        [
+            "유언자: 홍길동",
+            "저의 전 재산을 배우자에게 상속한다.",
+            "2026년 5월 3일",
+            "증인: 김철수",
+            "증인은 위 유언이 정확함을 확인합니다.",
+        ]
+    )
+    output = _run(
+        transcript,
+        will_type="recording",
+        intent="prepare",
+        rec_witness_present_answer="yes",
+        rec_witness_eligible_answer="not_disqualified",
+    )
+
+    _assert_closing_appears_once(output.reply)
+
+
+def test_prepare_without_draft_still_keeps_closing_once() -> None:
+    """초안이 없어 가이드만 보여줄 때는 마무리 문구가 그대로 (한 번) 있어야 한다 —
+    스펙 §3-3/§3-4는 "모든 결과 화면"에 들어가야 하므로 중복 제거가 누락으로
+    바뀌면 안 된다."""
+    for will_type in ("handwritten", "recording"):
+        output = _run("", will_type=will_type, intent="prepare")
+        _assert_closing_appears_once(output.reply)
+
+
+def test_review_mode_closing_unaffected() -> None:
+    """기존 review 모드는 이번 수정과 무관하게 그대로 한 번씩만 나와야 한다."""
+    output = _run(
+        _WILL_TEXT_COMPLETE,
+        will_type="handwritten",
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+    )
+
+    _assert_closing_appears_once(output.reply)

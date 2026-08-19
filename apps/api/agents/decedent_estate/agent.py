@@ -361,9 +361,17 @@ def _run_handwritten_prepare_pipeline(
 
     이미 초안이 있으면(has_draft_text) 가이드 문구 뒤에 기존 review 파이프라인
     (_run_handwritten_pipeline) 결과를 그대로 이어붙인다 — 판정 로직 자체는
-    중복 구현하지 않는다.
+    중복 구현하지 않는다. 이때 가이드 쪽 마무리 문구(상담 연결·하단 고지)는
+    빼고(include_closing=False) 이어 붙는 점검 결과 쪽 것만 남긴다 — 한 화면에
+    같은 두 줄이 두 번 반복되지 않게 하기 위해서다.
     """
-    reply = format_guide(list(_FORMAL_REQUIREMENT_IDS), HANDWRITTEN_GUIDE_INTRO)
+    has_draft = _has_draft_text(payload)
+
+    reply = format_guide(
+        list(_FORMAL_REQUIREMENT_IDS),
+        HANDWRITTEN_GUIDE_INTRO,
+        include_closing=not has_draft,
+    )
     data: dict[str, Any] = {
         "will_type": _HANDWRITTEN_WILL_TYPE,
         "intent": _PREPARE_INTENT,
@@ -373,7 +381,7 @@ def _run_handwritten_prepare_pipeline(
     if prefix_notice:
         reply = f"{prefix_notice}\n\n{reply}"
 
-    if _has_draft_text(payload):
+    if has_draft:
         review_output = _run_handwritten_pipeline(payload)
         reply = f"{reply}\n\n---\n\n**작성하신 초안을 점검한 결과입니다.**\n\n{review_output.reply}"
         data["review"] = review_output.data
@@ -392,15 +400,23 @@ def _run_handwritten_prepare_pipeline(
 
 def _run_recording_prepare_pipeline(payload: AgentInput) -> AgentOutput:
     """녹음 유언(§1067) 준비 가이드(intent == "prepare"). 이미 대본이 있으면
-    가이드 뒤에 기존 review 파이프라인(_run_recording_pipeline) 결과를 이어붙인다."""
-    reply = format_guide(list(FORMAL_RECORDING_REQUIREMENT_IDS), RECORDING_GUIDE_INTRO)
+    가이드 뒤에 기존 review 파이프라인(_run_recording_pipeline) 결과를 이어붙이고,
+    이때 가이드 쪽 마무리 문구는 빼서(include_closing=False) 상담 연결·하단 고지가
+    한 화면에 두 번 반복되지 않게 한다 — handwritten prepare와 동일한 처리."""
+    has_draft = _has_draft_text(payload)
+
+    reply = format_guide(
+        list(FORMAL_RECORDING_REQUIREMENT_IDS),
+        RECORDING_GUIDE_INTRO,
+        include_closing=not has_draft,
+    )
     data: dict[str, Any] = {
         "will_type": _RECORDING_WILL_TYPE,
         "intent": _PREPARE_INTENT,
         "guide": {rid: guide_payload(rid) for rid in FORMAL_RECORDING_REQUIREMENT_IDS},
     }
 
-    if _has_draft_text(payload):
+    if has_draft:
         review_output = _run_recording_pipeline(payload)
         reply = f"{reply}\n\n---\n\n**작성하신 대본을 점검한 결과입니다.**\n\n{review_output.reply}"
         data["review"] = review_output.data
