@@ -316,15 +316,25 @@ def format_guide_line(requirement_id: str) -> Optional[str]:
     return f"📝 {req['name']}: " + " ".join(parts)
 
 
-def format_guide(ordered_ids: list[str], intro: str) -> str:
-    """가이드 모드 전체 화면 문구를 조립한다: 안내 인트로 → 요건별 가이드 → 상담 연결 → 하단 고지."""
+def format_guide(
+    ordered_ids: list[str], intro: str, *, include_closing: bool = True
+) -> str:
+    """가이드 모드 전체 화면 문구를 조립한다: 안내 인트로 → 요건별 가이드 → 상담 연결 → 하단 고지.
+
+    include_closing=False 면 마무리 문구(§3-3 상담 연결 · §3-4 하단 고지)를 붙이지
+    않는다 — 가이드 뒤에 초안 점검 결과(format_result)가 이어 붙는 경우, 그쪽에서
+    이미 같은 두 줄을 붙이기 때문에 한 화면에 두 번 반복되는 것을 막기 위해서다.
+    가이드만 단독으로 보여줄 때는 기본값(True) 그대로 두어야 §3-3/§3-4가 모든 결과
+    화면에 들어간다는 스펙을 유지한다.
+    """
     sections = [intro]
     for requirement_id in ordered_ids:
         line = format_guide_line(requirement_id)
         if line:
             sections.append(line)
-    sections.append(_CONSULTATION_LINE)
-    sections.append(_FOOTER_NOTICE)
+    if include_closing:
+        sections.append(_CONSULTATION_LINE)
+        sections.append(_FOOTER_NOTICE)
     return "\n\n".join(sections)
 
 
