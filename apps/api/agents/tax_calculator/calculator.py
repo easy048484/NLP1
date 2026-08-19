@@ -241,6 +241,23 @@ def calculate_spouse_inheritance_deduction(
     )
 
 
+def calculate_inheritance_deduction_limit(
+    data: InheritanceTaxInput,
+    taxable_inheritance_value: int,
+) -> int:
+    """상속공제 적용 종합한도를 계산한다."""
+
+    deduction_limit_reductions = (
+        data.bequests_to_non_heirs
+        + data.next_rank_inheritance_due_to_renunciation
+        + data.prior_gift_tax_base_included_in_taxable_value
+    )
+
+    deduction_limit = taxable_inheritance_value - deduction_limit_reductions
+
+    return max(0, deduction_limit)
+
+
 def calculate_total_inheritance_deduction(
     data: InheritanceTaxInput,
     taxable_inheritance_value: int,
@@ -260,7 +277,12 @@ def calculate_total_inheritance_deduction(
         + data.cohabiting_home_deduction
     )
 
-    return min(requested_deduction, taxable_inheritance_value)
+    deduction_limit = calculate_inheritance_deduction_limit(
+        data,
+        taxable_inheritance_value,
+    )
+
+    return min(requested_deduction, deduction_limit)
 
 
 def build_calculation_warnings(
