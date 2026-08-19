@@ -365,7 +365,11 @@ def _confirm_options(requirement_id: str, req: dict[str, Any]) -> list[dict[str,
     label 문구는 rules/requirements.json 의 conditions[].label 을 그대로 쓴다 —
     여기서 문구를 새로 짓지 않는다.
     """
-    conditions = req["followup"]["conditions"] if requirement_id == "address" else req["conditions"]
+    conditions = (
+        req["followup"]["conditions"]
+        if requirement_id == "address"
+        else req["conditions"]
+    )
     return [
         {"label": cond["label"], "value": cond["id"]}
         for cond in conditions
@@ -433,7 +437,9 @@ def format_result(
     pending = pending_questions(results, formal_ids)
     if pending:
         sections.append(
-            "\n".join(f"- {item['requirement']}: {item['question']}" for item in pending)
+            "\n".join(
+                f"- {item['requirement']}: {item['question']}" for item in pending
+            )
         )
 
     for requirement_id in ordered_ids:

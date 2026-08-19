@@ -62,7 +62,9 @@ _NAME_BEFORE_SEAL_MARK_RE = re.compile(r"([가-힣]{2,4})\s*\(\s*(?:인|印)\s*\
 _NAME_STANDALONE_LINE_RE = re.compile(r"^[가-힣]{2,4}$")
 _NAME_STANDALONE_LINE_BLOCKLIST = {"유언장", "유언", "증인", "서명", "이상", "끝"}
 
-_MULTI_PAGE_RE = re.compile(r"\(\s*(\d+)\s*/\s*(\d+)\s*\)|(\d+)\s*페이지|총\s*(\d+)\s*장")
+_MULTI_PAGE_RE = re.compile(
+    r"\(\s*(\d+)\s*/\s*(\d+)\s*\)|(\d+)\s*페이지|총\s*(\d+)\s*장"
+)
 
 # 튜플(순서 있음)로 둔다 — validate_confirm_answers() 의 경고에 담기는 "allowed"
 # 목록이 rules/requirements.json 의 conditions 선언 순서와 그대로 일치해야 하므로.
@@ -134,7 +136,9 @@ def _build_result(
                 extracted=extracted,
             )
 
-    raise KeyError(f"{requirement_id}.{condition_id} 조건이 rules/requirements.json 에 없습니다.")
+    raise KeyError(
+        f"{requirement_id}.{condition_id} 조건이 rules/requirements.json 에 없습니다."
+    )
 
 
 def _build_address_result(
@@ -157,7 +161,10 @@ def _build_address_result(
     """
     req = _find_requirement(rules, "address")
     base = _build_result(
-        rules, "address", address_result.case, extracted={"raw_text": address_result.raw_text}
+        rules,
+        "address",
+        address_result.case,
+        extracted={"raw_text": address_result.raw_text},
     )
 
     followup = req.get("followup")
@@ -195,7 +202,9 @@ def _build_address_result(
             extracted={**base.extracted, "underlying_case": base.condition_id},
         )
 
-    raise KeyError(f"address.followup.{envelope_condition} 조건이 rules/requirements.json 에 없습니다.")
+    raise KeyError(
+        f"address.followup.{envelope_condition} 조건이 rules/requirements.json 에 없습니다."
+    )
 
 
 @dataclass(frozen=True)
@@ -207,7 +216,9 @@ class ExtractedText:
 def extract_address(text: str) -> ExtractedText:
     # 재산 목적물 소재지를 설명하는 줄은 유언자 주소 후보에서 제외한다.
     candidate_lines = [
-        line for line in text.splitlines() if not _ADDRESS_PROPERTY_CONTEXT_RE.search(line)
+        line
+        for line in text.splitlines()
+        if not _ADDRESS_PROPERTY_CONTEXT_RE.search(line)
     ]
 
     for line in candidate_lines:
@@ -228,7 +239,9 @@ def extract_name(text: str) -> ExtractedText:
     if alias_match:
         return ExtractedText(case="alias_or_pen_name", raw_text=alias_match.group(1))
 
-    label_match = _NAME_LABEL_WITH_COLON_RE.search(text) or _NAME_LABEL_LINE_START_RE.search(text)
+    label_match = _NAME_LABEL_WITH_COLON_RE.search(
+        text
+    ) or _NAME_LABEL_LINE_START_RE.search(text)
     if label_match:
         return ExtractedText(case="present", raw_text=label_match.group(1))
 
@@ -305,13 +318,13 @@ def validate_confirm_answers(
     }
 
     warnings: list[dict[str, Any]] = []
-    for field, value in provided.items():
+    for field_name, value in provided.items():
         if value is None:
             continue
-        allowed = _CONFIRM_FIELD_ALLOWED_VALUES[field]
+        allowed = _CONFIRM_FIELD_ALLOWED_VALUES[field_name]
         if value not in allowed:
             warnings.append(
-                {"field": field, "invalid_value": value, "allowed": list(allowed)}
+                {"field": field_name, "invalid_value": value, "allowed": list(allowed)}
             )
     return warnings
 
@@ -353,7 +366,9 @@ def check_requirements(
     )
 
     address_result = extract_address(text)
-    results["address"] = _build_address_result(rules, address_result, address_envelope_answer)
+    results["address"] = _build_address_result(
+        rules, address_result, address_envelope_answer
+    )
 
     name_result, name_extraction_method = extract_name_with_fallback(text)
     results["name"] = _build_result(
@@ -370,7 +385,10 @@ def check_requirements(
         handwriting_answer if handwriting_answer in _HANDWRITING_CONDITION_IDS else None
     )
     results["handwriting"] = _build_result(
-        rules, "handwriting", handwriting_condition, extracted={"answer": handwriting_answer}
+        rules,
+        "handwriting",
+        handwriting_condition,
+        extracted={"answer": handwriting_answer},
     )
 
     seal_condition = seal_answer if seal_answer in _SEAL_CONDITION_IDS else None
@@ -380,7 +398,10 @@ def check_requirements(
 
     interseal_result = detect_interseal(text)
     results["interseal"] = _build_result(
-        rules, "interseal", interseal_result.case, extracted={"raw_text": interseal_result.raw_text}
+        rules,
+        "interseal",
+        interseal_result.case,
+        extracted={"raw_text": interseal_result.raw_text},
     )
 
     return results

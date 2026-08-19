@@ -92,7 +92,9 @@ def extract_witness_accuracy(text: str) -> ExtractedText:
 
 
 def extract_witness_name(text: str) -> ExtractedText:
-    match = _WITNESS_NAME_WITH_COLON_RE.search(text) or _WITNESS_NAME_LINE_START_RE.search(text)
+    match = _WITNESS_NAME_WITH_COLON_RE.search(
+        text
+    ) or _WITNESS_NAME_LINE_START_RE.search(text)
     if match:
         return ExtractedText(case="present", raw_text=match.group(1))
     return ExtractedText(case="absent", raw_text=None)
@@ -166,7 +168,9 @@ def validate_recording_confirm_answers(
             continue
         allowed = _REC_CONFIRM_FIELD_ALLOWED_VALUES[field]
         if value not in allowed:
-            warnings.append({"field": field, "invalid_value": value, "allowed": list(allowed)})
+            warnings.append(
+                {"field": field, "invalid_value": value, "allowed": list(allowed)}
+            )
     return warnings
 
 
@@ -191,12 +195,17 @@ def check_recording_requirements(
     accuracy_regex = extract_witness_accuracy(text)
     witness_name_regex = extract_witness_name(text)
 
-    needs_llm = any(
-        r.case == "absent"
-        for r in (content_regex, name_regex, accuracy_regex, witness_name_regex)
-    ) or date_regex.case == "absent"
+    needs_llm = (
+        any(
+            r.case == "absent"
+            for r in (content_regex, name_regex, accuracy_regex, witness_name_regex)
+        )
+        or date_regex.case == "absent"
+    )
 
-    llm_fields: Optional[dict[str, Any]] = extract_recording_fields(mask_text(text)) if needs_llm else None
+    llm_fields: Optional[dict[str, Any]] = (
+        extract_recording_fields(mask_text(text)) if needs_llm else None
+    )
 
     content_final, content_method = _resolve_bool_field(
         content_regex, llm_fields.get("has_disposition_intent") if llm_fields else None
@@ -205,7 +214,10 @@ def check_recording_requirements(
         rules,
         "rec_content",
         content_final.case,
-        extracted={"raw_text": content_final.raw_text, "extraction_method": content_method},
+        extracted={
+            "raw_text": content_final.raw_text,
+            "extraction_method": content_method,
+        },
     )
 
     name_final, name_method = _resolve_text_field(
@@ -238,7 +250,10 @@ def check_recording_requirements(
         rules,
         "rec_witness_accuracy",
         accuracy_final.case,
-        extracted={"raw_text": accuracy_final.raw_text, "extraction_method": accuracy_method},
+        extracted={
+            "raw_text": accuracy_final.raw_text,
+            "extraction_method": accuracy_method,
+        },
     )
 
     witness_name_final, witness_name_method = _resolve_text_field(

@@ -34,7 +34,9 @@ def _ctx(**extra: str) -> dict[str, str]:
 
 
 def test_run_returns_contract_compliant_output() -> None:
-    payload = AgentInput(session_id="s1", user_message=_WILL_TEXT_COMPLETE, context=_ctx())
+    payload = AgentInput(
+        session_id="s1", user_message=_WILL_TEXT_COMPLETE, context=_ctx()
+    )
     output = decedent_estate.run(payload)
 
     assert output.agent == AgentName.DECEDENT_ESTATE
@@ -43,7 +45,9 @@ def test_run_returns_contract_compliant_output() -> None:
 
 def test_run_handwritten_without_confirm_answers_stays_pending() -> None:
     """will_type은 확정됐지만 자서·날인 확인 답변이 없으면 여전히 PENDING이어야 한다."""
-    payload = AgentInput(session_id="s1", user_message=_WILL_TEXT_COMPLETE, context=_ctx())
+    payload = AgentInput(
+        session_id="s1", user_message=_WILL_TEXT_COMPLETE, context=_ctx()
+    )
     output = decedent_estate.run(payload)
 
     assert output.next_action == NEXT_ACTION_AWAIT_USER
@@ -97,7 +101,9 @@ def test_run_confirmed_typed_will_has_no_handoff() -> None:
     payload = AgentInput(
         session_id="s1",
         user_message=_WILL_TEXT_COMPLETE,
-        context=_ctx(handwriting_answer="no_or_partial_typed", seal_answer="seal_or_fingerprint"),
+        context=_ctx(
+            handwriting_answer="no_or_partial_typed", seal_answer="seal_or_fingerprint"
+        ),
     )
     output = decedent_estate.run(payload)
 
@@ -126,7 +132,9 @@ def test_run_requirement_payload_covers_all_six_requirements() -> None:
 
 def test_run_no_confirm_answers_has_no_warnings() -> None:
     """확인 답변을 아예 안 준 것은 "잘못된 값"이 아니라 "미확인"이라 경고 대상이 아니다."""
-    payload = AgentInput(session_id="s1", user_message=_WILL_TEXT_COMPLETE, context=_ctx())
+    payload = AgentInput(
+        session_id="s1", user_message=_WILL_TEXT_COMPLETE, context=_ctx()
+    )
 
     output = decedent_estate.run(payload)
 
@@ -156,7 +164,9 @@ def test_run_invalid_seal_answer_produces_warning_but_stays_pending() -> None:
 
 def test_run_pending_question_includes_field_and_options() -> None:
     payload = AgentInput(
-        session_id="s1", user_message=_WILL_TEXT_COMPLETE, context=_ctx(handwriting_answer="yes")
+        session_id="s1",
+        user_message=_WILL_TEXT_COMPLETE,
+        context=_ctx(handwriting_answer="yes"),
     )
 
     output = decedent_estate.run(payload)

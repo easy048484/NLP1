@@ -19,8 +19,17 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 _KOREAN_DIGITS = {
-    "영": 0, "일": 1, "이": 2, "삼": 3, "사": 4,
-    "오": 5, "육": 6, "륙": 6, "칠": 7, "팔": 8, "구": 9,
+    "영": 0,
+    "일": 1,
+    "이": 2,
+    "삼": 3,
+    "사": 4,
+    "오": 5,
+    "육": 6,
+    "륙": 6,
+    "칠": 7,
+    "팔": 8,
+    "구": 9,
 }
 _KOREAN_PLACES = {"십": 10, "백": 100, "천": 1000}
 _KOREAN_NUM_CHARS = "".join(sorted(set(_KOREAN_DIGITS) | set(_KOREAN_PLACES)))
@@ -139,7 +148,13 @@ def parse_dates(text: str) -> DateParseResult:
             if year is None or month is None or day is None:
                 continue
             entries.append(
-                ParsedDate(year=year, month=month, day=day, raw_text=m.group(), case="all_present")
+                ParsedDate(
+                    year=year,
+                    month=month,
+                    day=day,
+                    raw_text=m.group(),
+                    case="all_present",
+                )
             )
             remaining = _mask(remaining, m.group())
 
@@ -149,13 +164,25 @@ def parse_dates(text: str) -> DateParseResult:
             if year is None or month is None:
                 continue
             entries.append(
-                ParsedDate(year=year, month=month, day=None, raw_text=m.group(), case="day_missing")
+                ParsedDate(
+                    year=year,
+                    month=month,
+                    day=None,
+                    raw_text=m.group(),
+                    case="day_missing",
+                )
             )
             remaining = _mask(remaining, m.group())
 
     for m in _VERBAL_DATE_RE.finditer(remaining):
         entries.append(
-            ParsedDate(year=None, month=None, day=None, raw_text=m.group(), case="verbal_specified")
+            ParsedDate(
+                year=None,
+                month=None,
+                day=None,
+                raw_text=m.group(),
+                case="verbal_specified",
+            )
         )
         remaining = _mask(remaining, m.group())
 

@@ -56,7 +56,9 @@ def _will_text(*lines: str) -> str:
 
 def test_case_a_all_green_summary() -> None:
     text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
-    results = check_requirements(text, handwriting_answer="yes", seal_answer="seal_or_fingerprint")
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
 
     assert summarize(results) == (
         "**형식 요건상 문제가 발견되지 않았습니다.** 자필증서 유언의 5가지 형식 요건"
@@ -100,7 +102,9 @@ def test_case_b_red_present_summary_and_card() -> None:
 
 def test_case_c_yellow_only_summary_and_two_cards() -> None:
     text = _will_text(_NAME_LINE, _ADDRESS_LINE, "아버지 칠순 기념일에")
-    results = check_requirements(text, handwriting_answer="yes", seal_answer="seal_or_fingerprint")
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
 
     assert summarize(results) == (
         "**전문가 확인이 필요한 부분이 있습니다.** 형식상 명확한 문제는 발견되지 않았으나, "
@@ -121,7 +125,9 @@ def test_case_c_yellow_only_summary_and_two_cards() -> None:
 
 def test_case_d_pending_summary_lists_question() -> None:
     text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
-    results = check_requirements(text, seal_answer="seal_or_fingerprint")  # handwriting만 미답변 → 1개
+    results = check_requirements(
+        text, seal_answer="seal_or_fingerprint"
+    )  # handwriting만 미답변 → 1개
 
     assert summarize(results) == (
         "**한 가지만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 항목입니다."
@@ -135,7 +141,10 @@ def test_case_d_pending_summary_lists_question() -> None:
             "question": "유언장 전체를 직접 손으로 쓰셨나요? (타이핑·워드 출력 아님)",
             "options": [
                 {"label": "직접 손으로 썼다", "value": "yes"},
-                {"label": "타이핑했거나 일부만 손으로 썼다", "value": "no_or_partial_typed"},
+                {
+                    "label": "타이핑했거나 일부만 손으로 썼다",
+                    "value": "no_or_partial_typed",
+                },
             ],
         }
     ]
@@ -165,7 +174,9 @@ def test_pending_question_options_for_seal() -> None:
 
 def test_pending_question_options_for_address_envelope() -> None:
     text = _will_text(_NAME_LINE, _DATE_LINE)  # 주소 없음(absent) → 봉투 확인 트리거
-    results = check_requirements(text, handwriting_answer="yes", seal_answer="seal_or_fingerprint")
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
 
     questions = pending_questions(results)
     assert questions == [
@@ -183,7 +194,9 @@ def test_pending_question_options_for_address_envelope() -> None:
 
 def test_pending_takes_priority_over_red() -> None:
     """PENDING 항목이 하나라도 있으면 RED가 섞여 있어도 D 요약이 우선한다."""
-    text = _will_text(_NAME_LINE, _DATE_LINE)  # 주소 없음(RED) + handwriting/seal 미답변 → 2개
+    text = _will_text(
+        _NAME_LINE, _DATE_LINE
+    )  # 주소 없음(RED) + handwriting/seal 미답변 → 2개
     results = check_requirements(text, address_envelope_answer="no_envelope")
 
     assert results["address"].grade == "RED"
@@ -196,7 +209,9 @@ def test_pending_takes_priority_over_red() -> None:
 
 def test_summary_pending_count_scales_with_three_pending_items() -> None:
     """주소 봉투 확인까지 겹치면 PENDING이 3개까지 늘어날 수 있다."""
-    text = _will_text(_NAME_LINE, _DATE_LINE)  # 주소 없음(RED, 봉투 미답변) + handwriting/seal 미답변
+    text = _will_text(
+        _NAME_LINE, _DATE_LINE
+    )  # 주소 없음(RED, 봉투 미답변) + handwriting/seal 미답변
 
     results = check_requirements(text)
 
@@ -230,7 +245,9 @@ def test_josa_selection_batchim_for_date_and_name_and_seal() -> None:
 def test_seal_red_shows_fingerprint_note_not_card() -> None:
     """날인 RED에서 fingerprint_seal_valid는 카드가 아니라 들여쓴 참고 문구여야 한다."""
     text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
-    results = check_requirements(text, handwriting_answer="yes", seal_answer="signature_only")
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="signature_only"
+    )
 
     line = format_requirement_line(results["seal"])
     assert "   ℹ️ 참고: 지장(손도장)도 날인으로 인정됩니다" in line
@@ -254,7 +271,9 @@ def test_red_lines_never_contain_removed_cta() -> None:
 
 def test_white_interseal_reference_line() -> None:
     text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE, "(1/2)")
-    results = check_requirements(text, handwriting_answer="yes", seal_answer="seal_or_fingerprint")
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
 
     assert results["interseal"].grade == "WHITE"
     line = format_requirement_line(results["interseal"])
@@ -266,7 +285,9 @@ def test_white_interseal_reference_line() -> None:
 
 def test_consultation_and_footer_lines_always_present() -> None:
     text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
-    results = check_requirements(text, handwriting_answer="yes", seal_answer="seal_or_fingerprint")
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
 
     output = format_result(results)
     assert (

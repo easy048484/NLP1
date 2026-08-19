@@ -66,7 +66,13 @@ def test_extract_witness_name_absent() -> None:
 
 
 def test_complete_transcript_all_text_derivable_requirements_green() -> None:
-    text = _transcript(_TESTATOR_LINE, _CONTENT_LINE, _DATE_LINE, _WITNESS_NAME_LINE, _WITNESS_ACCURACY_LINE)
+    text = _transcript(
+        _TESTATOR_LINE,
+        _CONTENT_LINE,
+        _DATE_LINE,
+        _WITNESS_NAME_LINE,
+        _WITNESS_ACCURACY_LINE,
+    )
 
     results = check_recording_requirements(text)
 
@@ -80,7 +86,13 @@ def test_complete_transcript_all_text_derivable_requirements_green() -> None:
 
 
 def test_date_day_missing_is_red_like_handwritten() -> None:
-    text = _transcript(_TESTATOR_LINE, _CONTENT_LINE, "2026년 5월", _WITNESS_NAME_LINE, _WITNESS_ACCURACY_LINE)
+    text = _transcript(
+        _TESTATOR_LINE,
+        _CONTENT_LINE,
+        "2026년 5월",
+        _WITNESS_NAME_LINE,
+        _WITNESS_ACCURACY_LINE,
+    )
 
     results = check_recording_requirements(text)
 
@@ -90,7 +102,9 @@ def test_date_day_missing_is_red_like_handwritten() -> None:
 
 
 def test_witness_name_missing_is_red() -> None:
-    text = _transcript(_TESTATOR_LINE, _CONTENT_LINE, _DATE_LINE, _WITNESS_ACCURACY_LINE)
+    text = _transcript(
+        _TESTATOR_LINE, _CONTENT_LINE, _DATE_LINE, _WITNESS_ACCURACY_LINE
+    )
 
     results = check_recording_requirements(text)
 
@@ -100,20 +114,35 @@ def test_witness_name_missing_is_red() -> None:
 
 
 def test_witness_present_and_eligible_default_to_pending() -> None:
-    text = _transcript(_TESTATOR_LINE, _CONTENT_LINE, _DATE_LINE, _WITNESS_NAME_LINE, _WITNESS_ACCURACY_LINE)
+    text = _transcript(
+        _TESTATOR_LINE,
+        _CONTENT_LINE,
+        _DATE_LINE,
+        _WITNESS_NAME_LINE,
+        _WITNESS_ACCURACY_LINE,
+    )
 
     results = check_recording_requirements(text)
 
     assert results["rec_witness_present"].condition_id is None
     assert results["rec_witness_present"].grade == "PENDING"
-    assert results["rec_witness_present"].followup_question == "녹음에 증인이 실제로 참여했나요?"
+    assert (
+        results["rec_witness_present"].followup_question
+        == "녹음에 증인이 실제로 참여했나요?"
+    )
 
     assert results["rec_witness_eligible"].condition_id is None
     assert results["rec_witness_eligible"].grade == "PENDING"
 
 
 def test_witness_present_yes_is_green() -> None:
-    text = _transcript(_TESTATOR_LINE, _CONTENT_LINE, _DATE_LINE, _WITNESS_NAME_LINE, _WITNESS_ACCURACY_LINE)
+    text = _transcript(
+        _TESTATOR_LINE,
+        _CONTENT_LINE,
+        _DATE_LINE,
+        _WITNESS_NAME_LINE,
+        _WITNESS_ACCURACY_LINE,
+    )
 
     results = check_recording_requirements(text, rec_witness_present_answer="yes")
 
@@ -122,7 +151,13 @@ def test_witness_present_yes_is_green() -> None:
 
 
 def test_witness_present_no_is_red() -> None:
-    text = _transcript(_TESTATOR_LINE, _CONTENT_LINE, _DATE_LINE, _WITNESS_NAME_LINE, _WITNESS_ACCURACY_LINE)
+    text = _transcript(
+        _TESTATOR_LINE,
+        _CONTENT_LINE,
+        _DATE_LINE,
+        _WITNESS_NAME_LINE,
+        _WITNESS_ACCURACY_LINE,
+    )
 
     results = check_recording_requirements(text, rec_witness_present_answer="no")
 
@@ -132,9 +167,17 @@ def test_witness_present_no_is_red() -> None:
 
 
 def test_witness_disqualified_is_red_with_both_precedents() -> None:
-    text = _transcript(_TESTATOR_LINE, _CONTENT_LINE, _DATE_LINE, _WITNESS_NAME_LINE, _WITNESS_ACCURACY_LINE)
+    text = _transcript(
+        _TESTATOR_LINE,
+        _CONTENT_LINE,
+        _DATE_LINE,
+        _WITNESS_NAME_LINE,
+        _WITNESS_ACCURACY_LINE,
+    )
 
-    results = check_recording_requirements(text, rec_witness_eligible_answer="disqualified")
+    results = check_recording_requirements(
+        text, rec_witness_eligible_answer="disqualified"
+    )
 
     assert results["rec_witness_eligible"].condition_id == "disqualified"
     assert results["rec_witness_eligible"].grade == "RED"
@@ -145,9 +188,17 @@ def test_witness_disqualified_is_red_with_both_precedents() -> None:
 
 
 def test_witness_not_disqualified_is_green() -> None:
-    text = _transcript(_TESTATOR_LINE, _CONTENT_LINE, _DATE_LINE, _WITNESS_NAME_LINE, _WITNESS_ACCURACY_LINE)
+    text = _transcript(
+        _TESTATOR_LINE,
+        _CONTENT_LINE,
+        _DATE_LINE,
+        _WITNESS_NAME_LINE,
+        _WITNESS_ACCURACY_LINE,
+    )
 
-    results = check_recording_requirements(text, rec_witness_eligible_answer="not_disqualified")
+    results = check_recording_requirements(
+        text, rec_witness_eligible_answer="not_disqualified"
+    )
 
     assert results["rec_witness_eligible"].condition_id == "not_disqualified"
     assert results["rec_witness_eligible"].grade == "GREEN"
@@ -159,7 +210,9 @@ def test_witness_not_disqualified_is_green() -> None:
 
 
 def test_validate_recording_confirm_answers_flags_wrong_field_value() -> None:
-    warnings = validate_recording_confirm_answers(rec_witness_present_answer="not_disqualified")
+    warnings = validate_recording_confirm_answers(
+        rec_witness_present_answer="not_disqualified"
+    )
 
     assert warnings == [
         {
@@ -190,7 +243,9 @@ _COLLOQUIAL_TRANSCRIPT = (
 )
 
 
-def test_regex_success_on_all_five_skips_llm_call(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_regex_success_on_all_five_skips_llm_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """5개 요건이 정규식으로 전부 잡히면 LLM은 아예 호출되지 않아야 한다."""
 
     def _fail_if_called(masked_text: str):
@@ -199,7 +254,11 @@ def test_regex_success_on_all_five_skips_llm_call(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(recording_checker, "extract_recording_fields", _fail_if_called)
 
     text = _transcript(
-        _TESTATOR_LINE, _CONTENT_LINE, _DATE_LINE, _WITNESS_NAME_LINE, _WITNESS_ACCURACY_LINE
+        _TESTATOR_LINE,
+        _CONTENT_LINE,
+        _DATE_LINE,
+        _WITNESS_NAME_LINE,
+        _WITNESS_ACCURACY_LINE,
     )
     results = check_recording_requirements(text)
 
@@ -210,7 +269,9 @@ def test_regex_success_on_all_five_skips_llm_call(monkeypatch: pytest.MonkeyPatc
     assert results["rec_witness_name"].extracted["extraction_method"] == "regex"
 
 
-def test_llm_fallback_resolves_colloquial_transcript(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_llm_fallback_resolves_colloquial_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """구어체 대본에서 정규식이 못 잡는 항목(취지/유언자 성명/증인 성명)이 LLM
     한 번의 호출로 함께 해결되는지 확인한다. 날짜·증인 정확함 확인은 이 대본에서
     이미 정규식으로 잡히므로 LLM 값이 있어도 무시돼야 한다."""
@@ -291,8 +352,12 @@ def test_llm_date_text_still_goes_through_date_parser_for_day_missing(
     assert results["rec_date"].extracted["extraction_method"] == "llm"
 
 
-def test_llm_failure_falls_back_to_absent_without_crash(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(recording_checker, "extract_recording_fields", lambda masked_text: None)
+def test_llm_failure_falls_back_to_absent_without_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        recording_checker, "extract_recording_fields", lambda masked_text: None
+    )
 
     results = check_recording_requirements(_COLLOQUIAL_TRANSCRIPT)
 

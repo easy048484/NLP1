@@ -11,7 +11,10 @@ recording(녹음, §1067)은 이제 handwritten과 마찬가지로 실제 요건
 """
 
 from agents import decedent_estate
-from agents.decedent_estate.agent import NEXT_ACTION_AWAIT_USER, NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+from agents.decedent_estate.agent import (
+    NEXT_ACTION_AWAIT_USER,
+    NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR,
+)
 from agents.decedent_estate.will_types import get_will_type
 from schemas import AgentInput
 
@@ -26,7 +29,9 @@ _WILL_TEXT_COMPLETE = (
 
 
 def test_missing_will_type_asks_the_selection_question() -> None:
-    payload = AgentInput(session_id="s1", user_message=_WILL_TEXT_COMPLETE)  # context 없음
+    payload = AgentInput(
+        session_id="s1", user_message=_WILL_TEXT_COMPLETE
+    )  # context 없음
 
     output = decedent_estate.run(payload)
 
@@ -37,7 +42,9 @@ def test_missing_will_type_asks_the_selection_question() -> None:
         "형식 요건 미비로 무효가 되는 사례가 많아 점검이 필요합니다."
     ) in output.reply
     assert output.data["warnings"] == []
-    assert "requirements" not in output.data  # 방식 확인 전이니 판정 파이프라인은 아직 안 돈다
+    assert (
+        "requirements" not in output.data
+    )  # 방식 확인 전이니 판정 파이프라인은 아직 안 돈다
 
     [question] = output.data["pending_questions"]
     assert question["field"] == "will_type"
@@ -52,7 +59,9 @@ def test_missing_will_type_asks_the_selection_question() -> None:
 
 def test_invalid_will_type_reasks_with_warning() -> None:
     payload = AgentInput(
-        session_id="s1", user_message=_WILL_TEXT_COMPLETE, context={"will_type": "typed"}
+        session_id="s1",
+        user_message=_WILL_TEXT_COMPLETE,
+        context={"will_type": "typed"},
     )
 
     output = decedent_estate.run(payload)
@@ -108,7 +117,9 @@ def test_unknown_defaults_to_handwritten_with_notice() -> None:
     output = decedent_estate.run(payload)
 
     assert output.reply.startswith("가장 널리 쓰이는 자필증서 기준으로 점검하겠습니다")
-    assert "형식 요건상 문제가 발견되지 않았습니다" in output.reply  # 파이프라인이 그대로 이어짐
+    assert (
+        "형식 요건상 문제가 발견되지 않았습니다" in output.reply
+    )  # 파이프라인이 그대로 이어짐
     assert output.data["will_type"] == "handwritten"
     assert "requirements" in output.data
     assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
@@ -116,7 +127,9 @@ def test_unknown_defaults_to_handwritten_with_notice() -> None:
 
 def test_notarial_gives_guidance_and_handoff_without_verification() -> None:
     payload = AgentInput(
-        session_id="s1", user_message=_WILL_TEXT_COMPLETE, context={"will_type": "notarial"}
+        session_id="s1",
+        user_message=_WILL_TEXT_COMPLETE,
+        context={"will_type": "notarial"},
     )
 
     output = decedent_estate.run(payload)
@@ -133,14 +146,19 @@ def test_notarial_gives_guidance_and_handoff_without_verification() -> None:
 
 def test_secret_gives_requirements_summary_and_unsupported_notice() -> None:
     payload = AgentInput(
-        session_id="s1", user_message=_WILL_TEXT_COMPLETE, context={"will_type": "secret"}
+        session_id="s1",
+        user_message=_WILL_TEXT_COMPLETE,
+        context={"will_type": "secret"},
     )
 
     output = decedent_estate.run(payload)
 
     assert "민법 제1069조" in output.reply
     assert "증인 2인 이상이 필요" in output.reply
-    assert "이 방식은 증인 2인 이상이 필요합니다. 현재 자동 점검을 지원하지 않으니 법률 전문가 확인을 권합니다." in output.reply
+    assert (
+        "이 방식은 증인 2인 이상이 필요합니다. 현재 자동 점검을 지원하지 않으니 법률 전문가 확인을 권합니다."
+        in output.reply
+    )
     assert output.next_action is None
     assert output.data["will_type"] == "secret"
 
@@ -154,7 +172,10 @@ def test_oral_gives_requirements_summary_and_unsupported_notice() -> None:
 
     assert "민법 제1070조" in output.reply
     assert "증인 2인 이상이 필요" in output.reply
-    assert "이 방식은 증인 2인 이상이 필요합니다. 현재 자동 점검을 지원하지 않으니 법률 전문가 확인을 권합니다." in output.reply
+    assert (
+        "이 방식은 증인 2인 이상이 필요합니다. 현재 자동 점검을 지원하지 않으니 법률 전문가 확인을 권합니다."
+        in output.reply
+    )
     assert output.next_action is None
     assert output.data["will_type"] == "oral"
 
@@ -162,7 +183,9 @@ def test_oral_gives_requirements_summary_and_unsupported_notice() -> None:
 def test_all_guidance_only_types_have_no_requirements_payload() -> None:
     for will_type in ("notarial", "secret", "oral"):
         payload = AgentInput(
-            session_id="s1", user_message=_WILL_TEXT_COMPLETE, context={"will_type": will_type}
+            session_id="s1",
+            user_message=_WILL_TEXT_COMPLETE,
+            context={"will_type": will_type},
         )
         output = decedent_estate.run(payload)
         assert "requirements" not in output.data, will_type
