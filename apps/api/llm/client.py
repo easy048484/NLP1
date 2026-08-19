@@ -15,7 +15,14 @@ Message = dict[str, str]
 
 
 def chat(messages: list[Message], *, provider: str | None = None) -> str:
-    name = (provider or os.getenv("LLM_PROVIDER", "upstage")).strip().lower()
+    name = (provider or os.getenv("LLM_PROVIDER", "claude")).strip().lower()
+    if name in {"claude", "anthropic"}:
+        # Claude만 공식 SDK를 씁니다 (llm/claude.py). 나머지는 OpenAI 호환 HTTP.
+        from . import claude
+
+        system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+        turns = [m for m in messages if m["role"] != "system"]
+        return claude.complete(system=system, messages=turns)
     if name == "upstage":
         return _openai_compatible(
             base_url=os.getenv("UPSTAGE_BASE_URL", "https://api.upstage.ai/v1"),
