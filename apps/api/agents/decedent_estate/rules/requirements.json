@@ -1,0 +1,492 @@
+{
+  "schema_version": "1.0",
+  "source": "apps/api/agents/decedent_estate/요건판정_문구_스펙_v1.md",
+  "legal_basis": "민법 제1066조 (자필증서에 의한 유언)",
+  "note": "판정은 룰 엔진이 수행한다. LLM은 텍스트에서 값 추출(날짜 문자열, 주소·성명 유무 등)만 담당하며 판례를 생성·인용하지 않는다.",
+
+  "grade_legend": {
+    "GREEN": { "label": "확인됨", "meaning": "요건 기재 확인", "precedent_status": "없음", "card_count": 0 },
+    "RED": { "label": "확인 안 됨", "meaning": "무효 방향 판례 확립", "precedent_status": "확립 판례 존재", "card_count": 1 },
+    "YELLOW": { "label": "쟁점 있음", "meaning": "사실관계 따라 갈림", "precedent_status": "판례 분기", "card_count": 2 },
+    "WHITE": { "label": "참고", "meaning": "법정 요건 아님", "precedent_status": "해당 없음", "card_count": 0 },
+    "PENDING": { "label": "확인 대기", "meaning": "텍스트로 판별 불가", "precedent_status": "없음", "card_count": 0 }
+  },
+
+  "requirements": [
+    {
+      "id": "date",
+      "name": "연월일",
+      "red_label": "날짜",
+      "will_type": "handwritten",
+      "order": 1,
+      "extraction_type": "text_derivable",
+      "extraction_note": "LLM은 날짜 문자열 추출만 수행하고, 판정은 룰 엔진이 수행한다.",
+      "guide": {
+        "instruction": "연월일을 쓰실 때는 반드시 일(日)까지 적어주세요.",
+        "mistake_sentence": "\"2026년 5월\"처럼 일이 빠지면 무효가 된 판례가 있습니다",
+        "mistake_precedent_id": "date_missing_day_invalid",
+        "extra_note": "\"칠순 잔치에\"처럼 날짜를 말로 표현해도 달력상 특정할 수 있다면 인정될 수 있지만, 가능하면 숫자로 명확히 적는 것이 안전합니다."
+      },
+      "conditions": [
+        {
+          "id": "all_present",
+          "description": "년·월·일 3요소 모두 기재",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "day_missing",
+          "description": "일(日) 누락 (예: \"2026년 5월\")",
+          "grade": "RED",
+          "precedent_ids": ["date_missing_day_invalid"]
+        },
+        {
+          "id": "absent",
+          "description": "연월일 전부 없음",
+          "grade": "RED",
+          "precedent_ids": ["date_missing_day_invalid"]
+        },
+        {
+          "id": "verbal_specified",
+          "description": "말로 특정 (예: \"칠순 기념일에\")",
+          "grade": "YELLOW",
+          "precedent_ids": ["date_missing_day_invalid", "date_specifiable_valid"]
+        },
+        {
+          "id": "multiple_dates_mixed",
+          "description": "날짜 복수 혼재",
+          "grade": "YELLOW",
+          "precedent_ids": []
+        }
+      ]
+    },
+    {
+      "id": "address",
+      "name": "주소",
+      "red_label": "유언자 주소",
+      "will_type": "handwritten",
+      "order": 2,
+      "extraction_type": "text_derivable",
+      "guide": {
+        "instruction": "주소는 번지나 동·호수까지 정확하게 적어주세요.",
+        "mistake_sentence": "\"서울 강남구\"처럼 구·동까지만 적으면 다른 곳과 구별되지 않아 무효가 된 판례가 있습니다",
+        "mistake_precedent_id": "address_missing_invalid",
+        "extra_note": "주소를 유언장 본문이 아니라 봉투에 적어도 유효로 본 판례가 있습니다."
+      },
+      "conditions": [
+        {
+          "id": "full_address",
+          "description": "번지/동·호수까지 기재",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "city_district_only",
+          "description": "시·구 수준까지만 기재 (동/구까지만, 지번 없음)",
+          "grade": "RED",
+          "precedent_ids": ["address_missing_invalid"],
+          "note": "다른 장소와 구별되는 정도의 표시를 갖추지 못한 것으로 보아 주소 누락과 동일하게 판단"
+        },
+        {
+          "id": "absent",
+          "description": "주소 아예 없음",
+          "grade": "RED",
+          "precedent_ids": ["address_missing_invalid"]
+        }
+      ],
+      "followup": {
+        "id": "address_envelope_check",
+        "confirm_field": "address_envelope_answer",
+        "trigger_conditions": ["absent"],
+        "extraction_type": "user_confirm",
+        "reason": "본문에 주소가 아예 없는 경우(absent)에만 물어본다 — 봉투에 적혀 있으면 유효로 본 판례가 있기 때문. city_district_only(불완전 기재)는 본문에 주소가 이미 있으므로 봉투 질문 자체가 성립하지 않아 대상에서 제외한다",
+        "question": "주소가 유언장 본문이 아니라 봉투에 적혀 있나요?",
+        "conditions": [
+          {
+            "id": "envelope_or_minor_discrepancy",
+            "description": "예 — 주소가 봉투에 기재되어 있음",
+            "label": "봉투에 적혀 있다",
+            "grade": "YELLOW",
+            "precedent_ids": ["fingerprint_seal_valid"],
+            "note": "97다38510 — 주소도 전문을 담은 봉투에 기재해도 무방하다는 판례 참조. 최종 유효 여부는 개별 판단 필요"
+          },
+          {
+            "id": "no_envelope",
+            "description": "아니오 — 봉투에도 기재되어 있지 않음",
+            "label": "봉투에도 없다",
+            "grade": null,
+            "precedent_ids": [],
+            "note": "본문 판정 결과(city_district_only 또는 absent)를 그대로 유지"
+          }
+        ]
+      }
+    },
+    {
+      "id": "name",
+      "name": "성명",
+      "red_label": "성명",
+      "will_type": "handwritten",
+      "order": 3,
+      "extraction_type": "text_derivable",
+      "guide": {
+        "instruction": "유언장에 본인 성명을 정확히 적어주세요. 성명이 없으면 민법 제1066조가 정한 요건을 갖추지 못해 무효가 될 수 있습니다.",
+        "mistake_sentence": null,
+        "mistake_precedent_id": null,
+        "extra_note": "호나 아호처럼 본명이 아닌 표기도 본인임을 알 수 있으면 유효로 보는 것이 일반적인 해석입니다."
+      },
+      "conditions": [
+        {
+          "id": "present",
+          "description": "성명 기재",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "absent",
+          "description": "성명 없음",
+          "grade": "RED",
+          "precedent_ids": [],
+          "note": "근거: §1066 조문. 판례 카드 없어도 무방"
+        },
+        {
+          "id": "alias_or_pen_name",
+          "description": "호·아호 등 이례 표기",
+          "grade": "YELLOW",
+          "precedent_ids": ["name_identity_dispute"],
+          "note": "동일성 인정 여부 쟁점"
+        }
+      ]
+    },
+    {
+      "id": "handwriting",
+      "name": "전문 자서",
+      "red_label": "자필 작성 여부",
+      "confirm_field": "handwriting_answer",
+      "will_type": "handwritten",
+      "order": 4,
+      "extraction_type": "user_confirm",
+      "reason": "텍스트 판별 불가 → 사용자 확인",
+      "question": "유언장 전체를 직접 손으로 쓰셨나요? (타이핑·워드 출력 아님)",
+      "default_grade": "PENDING",
+      "guide": {
+        "instruction": "유언장 전체를 반드시 본인이 직접 손으로 써주세요. 재산 목록 등 일부라도 컴퓨터로 작성하면 안 됩니다.",
+        "mistake_sentence": "컴퓨터로 작성하거나 복사한 유언장은 무효가 된 판례가 있습니다",
+        "mistake_precedent_id": "typed_will_invalid",
+        "extra_note": null
+      },
+      "conditions": [
+        {
+          "id": "yes",
+          "description": "예 (전문 자필)",
+          "label": "직접 손으로 썼다",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "no_or_partial_typed",
+          "description": "아니오 · 일부 타이핑",
+          "label": "타이핑했거나 일부만 손으로 썼다",
+          "grade": "RED",
+          "precedent_ids": ["typed_will_invalid"]
+        }
+      ]
+    },
+    {
+      "id": "seal",
+      "name": "날인",
+      "red_label": "도장·지장",
+      "confirm_field": "seal_answer",
+      "will_type": "handwritten",
+      "order": 5,
+      "extraction_type": "user_confirm",
+      "reason": "텍스트 판별 불가 → 사용자 확인",
+      "question": "도장 또는 지장(손도장)이 찍혀 있나요?",
+      "default_grade": "PENDING",
+      "guide": {
+        "instruction": "도장이나 지장을 반드시 찍어주세요.",
+        "mistake_sentence": "서명(사인)만으로는 인정되지 않습니다",
+        "mistake_precedent_id": "signature_only_insufficient",
+        "extra_note": "지장도 유효합니다."
+      },
+      "conditions": [
+        {
+          "id": "seal_or_fingerprint",
+          "description": "도장/지장",
+          "label": "도장 또는 지장이 있다",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "signature_only",
+          "description": "서명(사인)만",
+          "label": "서명만 있다",
+          "grade": "RED",
+          "precedent_ids": ["signature_only_insufficient", "fingerprint_seal_valid"],
+          "note": "서명만으로는 날인 불충족 판례와 함께, 지장(무인)은 날인으로 인정된다는 판례를 나란히 안내"
+        },
+        {
+          "id": "absent",
+          "description": "날인 없음",
+          "label": "아무것도 없다",
+          "grade": "RED",
+          "precedent_ids": ["signature_only_insufficient", "fingerprint_seal_valid"],
+          "note": "서명만으로는 날인 불충족 판례와 함께, 지장(무인)은 날인으로 인정된다는 판례를 나란히 안내"
+        }
+      ]
+    },
+    {
+      "id": "interseal",
+      "name": "간인",
+      "will_type": "handwritten",
+      "order": 6,
+      "extraction_type": "text_derivable",
+      "is_legal_requirement": false,
+      "note": "체크 항목(형식 요건 판정)에서 제외. 여러 장 감지 시 참고 문구만 표시.",
+      "conditions": [
+        {
+          "id": "single_page",
+          "description": "단일 장",
+          "grade": null,
+          "precedent_ids": [],
+          "note": "표시 없음"
+        },
+        {
+          "id": "multiple_pages",
+          "description": "여러 장 감지",
+          "grade": "WHITE",
+          "precedent_ids": [],
+          "note": "간인은 법정 요건이 아니지만, 여러 장일 경우 위조 다툼 예방에 도움이 됩니다"
+        }
+      ]
+    },
+    {
+      "id": "rec_content",
+      "name": "유언 취지",
+      "red_label": "유언 취지 구술",
+      "will_type": "recording",
+      "order": 1,
+      "extraction_type": "text_derivable",
+      "extraction_note": "재산 처분 의사 표현(상속한다/증여한다/물려준다 등) 유무만 규칙으로 추출한다.",
+      "guide": {
+        "instruction": "녹음할 때 재산을 \"누구에게 무엇을 준다\"는 처분 의사를 명확한 말로 구술해주세요.",
+        "mistake_sentence": "취지를 구술하지 않으면 요건을 갖추지 못합니다",
+        "mistake_precedent_id": "recording_requirements",
+        "extra_note": null
+      },
+      "conditions": [
+        {
+          "id": "present",
+          "description": "재산 처분 의사 표현 있음",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "absent",
+          "description": "재산 처분 의사 표현 없음",
+          "grade": "RED",
+          "precedent_ids": ["recording_requirements"]
+        }
+      ]
+    },
+    {
+      "id": "rec_testator_name",
+      "name": "유언자 성명",
+      "red_label": "유언자 성명 구술",
+      "will_type": "recording",
+      "order": 2,
+      "extraction_type": "text_derivable",
+      "extraction_note": "requirement_checker.extract_name_with_fallback 재사용 (정규식 우선, 못 찾으면 LLM 폴백).",
+      "guide": {
+        "instruction": "본인 성명을 또렷하게 말해주세요.",
+        "mistake_sentence": "유언자 성명을 구술하지 않으면 요건을 갖추지 못합니다",
+        "mistake_precedent_id": "recording_requirements",
+        "extra_note": null
+      },
+      "conditions": [
+        {
+          "id": "present",
+          "description": "유언자 성명 구술 확인",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "absent",
+          "description": "유언자 성명 구술 없음",
+          "grade": "RED",
+          "precedent_ids": ["recording_requirements"]
+        }
+      ]
+    },
+    {
+      "id": "rec_date",
+      "name": "연월일",
+      "red_label": "구술 연월일",
+      "will_type": "recording",
+      "order": 3,
+      "extraction_type": "text_derivable",
+      "extraction_note": "date_parser.parse_dates 재사용 — 자필증서 date 요건과 동일한 조건 구조를 그대로 쓴다.",
+      "guide": {
+        "instruction": "연월일을 구술할 때는 반드시 일(日)까지 말해주세요.",
+        "mistake_sentence": "\"2026년 5월\"처럼 일이 빠지면 무효가 된 판례가 있습니다",
+        "mistake_precedent_id": "date_missing_day_invalid",
+        "extra_note": null
+      },
+      "conditions": [
+        {
+          "id": "all_present",
+          "description": "년·월·일 3요소 모두 구술",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "day_missing",
+          "description": "일(日) 누락 (예: \"2026년 5월\")",
+          "grade": "RED",
+          "precedent_ids": ["date_missing_day_invalid"]
+        },
+        {
+          "id": "absent",
+          "description": "연월일 전부 없음",
+          "grade": "RED",
+          "precedent_ids": ["date_missing_day_invalid"]
+        },
+        {
+          "id": "verbal_specified",
+          "description": "말로 특정 (예: \"칠순 기념일에\")",
+          "grade": "YELLOW",
+          "precedent_ids": ["date_missing_day_invalid", "date_specifiable_valid"]
+        },
+        {
+          "id": "multiple_dates_mixed",
+          "description": "날짜 복수 혼재",
+          "grade": "YELLOW",
+          "precedent_ids": []
+        }
+      ]
+    },
+    {
+      "id": "rec_witness_accuracy",
+      "name": "증인의 정확함 확인",
+      "red_label": "증인의 정확함 구술",
+      "will_type": "recording",
+      "order": 4,
+      "extraction_type": "text_derivable",
+      "guide": {
+        "instruction": "증인이 유언 내용을 듣고 \"정확합니다\"처럼 정확함을 확인하는 말을 하도록 해주세요.",
+        "mistake_sentence": "증인의 정확함 확인 구술이 없으면 요건을 갖추지 못합니다",
+        "mistake_precedent_id": "recording_requirements",
+        "extra_note": null
+      },
+      "conditions": [
+        {
+          "id": "present",
+          "description": "증인이 유언의 정확함을 구술함",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "absent",
+          "description": "증인의 정확함 구술 없음",
+          "grade": "RED",
+          "precedent_ids": ["recording_requirements"]
+        }
+      ]
+    },
+    {
+      "id": "rec_witness_name",
+      "name": "증인 성명",
+      "red_label": "증인 성명 구술",
+      "will_type": "recording",
+      "order": 5,
+      "extraction_type": "text_derivable",
+      "guide": {
+        "instruction": "증인도 자신의 성명을 또렷하게 말하도록 해주세요.",
+        "mistake_sentence": "증인 성명을 구술하지 않으면 요건을 갖추지 못합니다",
+        "mistake_precedent_id": "recording_requirements",
+        "extra_note": null
+      },
+      "conditions": [
+        {
+          "id": "present",
+          "description": "증인 성명 구술 확인",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "absent",
+          "description": "증인 성명 구술 없음",
+          "grade": "RED",
+          "precedent_ids": ["recording_requirements"]
+        }
+      ]
+    },
+    {
+      "id": "rec_witness_present",
+      "name": "증인 참여",
+      "red_label": "증인 참여 여부",
+      "will_type": "recording",
+      "order": 6,
+      "extraction_type": "user_confirm",
+      "reason": "대본만으로는 실제 참여 여부를 알 수 없음 → 사용자 확인",
+      "confirm_field": "rec_witness_present_answer",
+      "question": "녹음에 증인이 실제로 참여했나요?",
+      "default_grade": "PENDING",
+      "guide": {
+        "instruction": "녹음하는 동안 증인 1인 이상이 실제로 함께 참여해야 합니다.",
+        "mistake_sentence": "증인이 참여하지 않으면 요건을 갖추지 못합니다",
+        "mistake_precedent_id": "recording_requirements",
+        "extra_note": null
+      },
+      "conditions": [
+        {
+          "id": "yes",
+          "description": "증인이 실제로 참여함",
+          "label": "네, 증인이 참여했습니다",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "no",
+          "description": "증인이 참여하지 않음",
+          "label": "아니오, 증인이 없었습니다",
+          "grade": "RED",
+          "precedent_ids": ["recording_requirements"]
+        }
+      ]
+    },
+    {
+      "id": "rec_witness_eligible",
+      "name": "증인 결격 여부",
+      "red_label": "증인 결격 사유",
+      "will_type": "recording",
+      "order": 7,
+      "extraction_type": "user_confirm",
+      "reason": "텍스트로 판별 불가 → 사용자 확인",
+      "confirm_field": "rec_witness_eligible_answer",
+      "question": "증인이 아래에 해당하지 않나요?\n① 미성년자\n② 피성년후견인·피한정후견인\n③ 이 유언으로 재산을 받는 사람과 그 배우자·직계혈족",
+      "default_grade": "PENDING",
+      "guide": {
+        "instruction": "증인은 미성년자, 피성년후견인·피한정후견인, 그리고 이 유언으로 재산을 받는 사람과 그 배우자·직계혈족이 아니어야 합니다.",
+        "mistake_sentence": "결격 사유가 있는 사람을 증인으로 세우면 요건을 갖추지 못합니다",
+        "mistake_precedent_id": "witness_disqualification",
+        "extra_note": "유언집행자라는 사정만으로는 증인 결격이 아니라고 본 판례가 있습니다."
+      },
+      "conditions": [
+        {
+          "id": "not_disqualified",
+          "description": "해당하지 않음 (결격 사유 없음)",
+          "label": "해당하지 않습니다",
+          "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "disqualified",
+          "description": "해당함 (결격 사유 있음)",
+          "label": "해당합니다",
+          "grade": "RED",
+          "precedent_ids": ["witness_disqualification", "executor_not_disqualified"]
+        }
+      ]
+    }
+  ]
+}
