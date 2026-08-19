@@ -9,11 +9,15 @@ LangGraph StateGraph로 재작성한 버전입니다 (2단계 뼈대였던 키�
 
 - load_session: session_id로 이전 턴까지의 상태(SessionState)를 불러옵니다.
 - resolve_target: 이번 턴을 받을 에이전트를 정합니다. 우선순위는
-  (1) 직전 턴이 지정한 핸드오프 대상 (2) 같은 에이전트와 대화를 이어가는 중이면
-  그 에이전트 (3) 키워드 매칭 (4) 기본 에이전트(heir_navigator) 입니다.
-  (1)이 없을 때 (2)를 키워드보다 먼저 보는 이유: decedent_estate/heir_navigator의
-  "네/아니오로 답해주세요" 같은 후속 질문에는 키워드가 안 들어있는 경우가
-  대부분이라, 키워드를 먼저 보면 답변이 엉뚱한 에이전트(기본값)로 새버립니다.
+  (1) 직전 턴이 지정한 핸드오프 대상 (2) 이번 메시지에 키워드가 있으면 그
+  키워드가 가리키는 에이전트 (3) 같은 에이전트와 대화를 이어가는 중이면 그
+  에이전트 (4) 기본 에이전트(heir_navigator) 입니다.
+  (2)를 (3)보다 먼저 보는 이유: 대화 중간에 사용자가 새 주제 키워드("상속세
+  얼마나 나와요?" 등)를 꺼내면 직전 에이전트가 아니라 그 주제를 다루는
+  에이전트로 넘어가야 합니다. 키워드가 없는 "네/아니오" 같은 짧은 후속
+  답변은 (2)에서 그냥 통과되어 (3)에서 직전 에이전트로 자연히 이어집니다 —
+  즉 이 순서를 바꿔도 후속 질문 처리는 그대로 유지되면서, 새 키워드가 있을
+  때만 더 정확히 라우팅됩니다.
 - build_context / persist_session: 각 에이전트가 정보를 주고받는 형태(네임스페이스
   규약, 핸드오프 신호 형식)는 handoff.py에 정의돼 있습니다 — 새 에이전트를
   붙이거나 기존 에이전트를 고칠 때는 그 문서를 먼저 보세요.
@@ -29,7 +33,7 @@ LangGraph StateGraph로 재작성한 버전입니다 (2단계 뼈대였던 키�
 from __future__ import annotations
 
 import logging
-from typing import Callable, TypedDict
+from typing import Callable, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -69,11 +73,12 @@ class GraphState(TypedDict, total=False):
     output: AgentOutput
 
 
-def _keyword_route(user_message: str) -> AgentName:
+def _keyword_route(user_message: str) -> Optional[AgentName]:
+    """메시지에 라우팅 키워드가 있으면 그 에이전트를, 없으면 None을 돌려줍니다."""
     for keyword, agent in _KEYWORD_ROUTES.items():
         if keyword in user_message:
             return agent
-    return _DEFAULT_AGENT
+    return None
 
 
 # ------------------------------------------------------------------- 노드
@@ -88,12 +93,16 @@ def node_resolve_target(state: GraphState) -> GraphState:
     session = state["session"]
     payload = state["payload"]
 
+    keyword_target = _keyword_route(payload.user_message)
+
     if session.pending_handoff is not None:
         target = session.pending_handoff
+    elif keyword_target is not None:
+        target = keyword_target
     elif session.last_agent is not None:
         target = session.last_agent
     else:
-        target = _keyword_route(payload.user_message)
+        target = _DEFAULT_AGENT
 
     return {"target": target}
 
