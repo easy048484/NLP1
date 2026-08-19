@@ -221,7 +221,6 @@ class InheritanceTaxResult(BaseModel):
     estimated_tax_due: int
 
     rule_version: str
-    warnings: list[str] = Field(default_factory=list)
     estimated_filing_deadline: date | None = Field(
         default=None,
         description=(

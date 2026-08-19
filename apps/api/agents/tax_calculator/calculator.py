@@ -446,30 +446,15 @@ def calculate_inheritance_tax(
         - filing_tax_credit
         + data.penalties,
     )
-    estimated_tax_due = max(0, estimated_tax_due)
 
-    warnings = [
-        (
-            "현재 결과는 피상속인이 거주자인 일반 사례를 "
-            "전제로 한 참고용 예상세액입니다."
-        ),
-        (
-            "상속공제액·세액공제·할증세액·가산세는 입력된 "
-            "금액을 사용하며 적용 요건을 자동 판정하지 않습니다."
-        ),
-    ]
-    estimated_filing_deadline = None
     warnings = build_calculation_warnings(data)
-    if data.inheritance_commencement_date is not None:
-        estimated_filing_deadline = calculate_filing_deadline(
-            data.inheritance_commencement_date
-        )
-        estimated_filing_deadline = None
+    estimated_filing_deadline = None
 
     if data.inheritance_commencement_date is not None:
         estimated_filing_deadline = calculate_filing_deadline(
             data.inheritance_commencement_date
         )
+
     return InheritanceTaxResult(
         total_inherited_property=total_inherited_property,
         deductible_expenses=deductible_expenses,
