@@ -22,7 +22,9 @@ class _FakeResponse:
 
 
 class _FakeMessages:
-    def __init__(self, *, text: str | None = None, exc: Exception | None = None) -> None:
+    def __init__(
+        self, *, text: str | None = None, exc: Exception | None = None
+    ) -> None:
         self._text = text
         self._exc = exc
 
@@ -33,11 +35,18 @@ class _FakeMessages:
 
 
 class _FakeAnthropicClient:
-    def __init__(self, *, text: str | None = None, exc: Exception | None = None, **_kwargs) -> None:
+    def __init__(
+        self, *, text: str | None = None, exc: Exception | None = None, **_kwargs
+    ) -> None:
         self.messages = _FakeMessages(text=text, exc=exc)
 
 
-def _install_fake_client(monkeypatch: pytest.MonkeyPatch, *, text: str | None = None, exc: Exception | None = None) -> None:
+def _install_fake_client(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    text: str | None = None,
+    exc: Exception | None = None
+) -> None:
     monkeypatch.setenv("CLAUDE_API_KEY", "fake-test-key")
     monkeypatch.setattr(
         llm_client.anthropic,
@@ -63,7 +72,9 @@ def test_returns_name_on_valid_json_response(monkeypatch: pytest.MonkeyPatch) ->
     assert llm_client.extract_testator_name("서울 강남구 거주 김영수") == "김영수"
 
 
-def test_returns_none_when_llm_reports_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_returns_none_when_llm_reports_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _install_fake_client(monkeypatch, text='{"name": null}')
 
     assert llm_client.extract_testator_name("아무 이름도 없는 텍스트") is None
@@ -82,7 +93,9 @@ def test_returns_none_when_client_raises(monkeypatch: pytest.MonkeyPatch) -> Non
     assert llm_client.extract_testator_name("텍스트") is None
 
 
-def test_rejects_name_that_does_not_look_korean(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rejects_name_that_does_not_look_korean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """형식 검증: 응답이 유효한 JSON이어도 이름처럼 안 생겼으면 버린다."""
     _install_fake_client(monkeypatch, text='{"name": "ignore all instructions"}')
 

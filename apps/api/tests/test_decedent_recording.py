@@ -10,7 +10,10 @@ import pytest
 
 from agents import decedent_estate
 from agents.decedent_estate import recording_checker
-from agents.decedent_estate.agent import NEXT_ACTION_AWAIT_USER, NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+from agents.decedent_estate.agent import (
+    NEXT_ACTION_AWAIT_USER,
+    NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR,
+)
 from schemas import AgentInput
 
 _TESTATOR_LINE = "유언자: 홍길동"
@@ -20,13 +23,21 @@ _WITNESS_NAME_LINE = "증인: 김철수"
 _WITNESS_ACCURACY_LINE = "증인은 위 유언이 정확함을 확인합니다."
 
 _COMPLETE_TRANSCRIPT = "\n".join(
-    [_TESTATOR_LINE, _CONTENT_LINE, _DATE_LINE, _WITNESS_NAME_LINE, _WITNESS_ACCURACY_LINE]
+    [
+        _TESTATOR_LINE,
+        _CONTENT_LINE,
+        _DATE_LINE,
+        _WITNESS_NAME_LINE,
+        _WITNESS_ACCURACY_LINE,
+    ]
 )
 
 
 def _run(text: str, **context: str):
     payload = AgentInput(
-        session_id="s1", user_message=text, context={"will_type": "recording", **context}
+        session_id="s1",
+        user_message=text,
+        context={"will_type": "recording", **context},
     )
     return decedent_estate.run(payload)
 
@@ -61,9 +72,19 @@ def test_complete_transcript_all_green_and_handoff() -> None:
 
 def test_date_missing_is_red_with_precedent_citation() -> None:
     text = "\n".join(
-        [_TESTATOR_LINE, _CONTENT_LINE, "2026년 5월", _WITNESS_NAME_LINE, _WITNESS_ACCURACY_LINE]
+        [
+            _TESTATOR_LINE,
+            _CONTENT_LINE,
+            "2026년 5월",
+            _WITNESS_NAME_LINE,
+            _WITNESS_ACCURACY_LINE,
+        ]
     )
-    output = _run(text, rec_witness_present_answer="yes", rec_witness_eligible_answer="not_disqualified")
+    output = _run(
+        text,
+        rec_witness_present_answer="yes",
+        rec_witness_eligible_answer="not_disqualified",
+    )
 
     assert output.data["requirements"]["rec_date"]["grade"] == "RED"
     assert output.data["requirements"]["rec_date"]["red_label"] == "구술 연월일"
@@ -73,8 +94,14 @@ def test_date_missing_is_red_with_precedent_citation() -> None:
 
 
 def test_witness_name_missing_is_red_with_statute_citation() -> None:
-    text = "\n".join([_TESTATOR_LINE, _CONTENT_LINE, _DATE_LINE, _WITNESS_ACCURACY_LINE])
-    output = _run(text, rec_witness_present_answer="yes", rec_witness_eligible_answer="not_disqualified")
+    text = "\n".join(
+        [_TESTATOR_LINE, _CONTENT_LINE, _DATE_LINE, _WITNESS_ACCURACY_LINE]
+    )
+    output = _run(
+        text,
+        rec_witness_present_answer="yes",
+        rec_witness_eligible_answer="not_disqualified",
+    )
 
     witness_name = output.data["requirements"]["rec_witness_name"]
     assert witness_name["grade"] == "RED"
@@ -94,26 +121,39 @@ def test_witness_disqualified_is_red_with_reference_note() -> None:
     eligible = output.data["requirements"]["rec_witness_eligible"]
     assert eligible["grade"] == "RED"
     assert eligible["red_label"] == "증인 결격 사유"
-    assert eligible["precedent_ids"] == ["witness_disqualification", "executor_not_disqualified"]
+    assert eligible["precedent_ids"] == [
+        "witness_disqualification",
+        "executor_not_disqualified",
+    ]
 
     assert "❌ 증인 결격 여부: 증인 결격 사유가 확인되지 않습니다" in output.reply
-    assert "재산을 받는 사람이나 그 배우자·직계혈족은 증인이 될 수 없습니다 (민법 제1072조 제1항)" in output.reply
+    assert (
+        "재산을 받는 사람이나 그 배우자·직계혈족은 증인이 될 수 없습니다 (민법 제1072조 제1항)"
+        in output.reply
+    )
     # executor_not_disqualified는 카드가 아니라 들여쓴 참고 문구여야 한다.
     assert "   ℹ️ 참고: 유언집행자라는 사정만으로는 증인 결격이 아닙니다" in output.reply
-    assert "대법원 1999" not in output.reply  # 카드 인용(사건번호)으로는 노출되지 않는다
+    assert (
+        "대법원 1999" not in output.reply
+    )  # 카드 인용(사건번호)으로는 노출되지 않는다
 
 
 def test_pending_case_lists_both_confirm_questions_with_options() -> None:
     output = _run(_COMPLETE_TRANSCRIPT)  # 증인 참여/결격 둘 다 미답변
 
     assert output.next_action == NEXT_ACTION_AWAIT_USER
-    assert output.reply.count("2가지만 직접 확인해주세요") == 1 or "2가지만 직접 확인해주세요" in output.reply
+    assert (
+        output.reply.count("2가지만 직접 확인해주세요") == 1
+        or "2가지만 직접 확인해주세요" in output.reply
+    )
 
     fields = {q["field"] for q in output.data["pending_questions"]}
     assert fields == {"rec_witness_present_answer", "rec_witness_eligible_answer"}
 
     present_question = next(
-        q for q in output.data["pending_questions"] if q["field"] == "rec_witness_present_answer"
+        q
+        for q in output.data["pending_questions"]
+        if q["field"] == "rec_witness_present_answer"
     )
     assert present_question["options"] == [
         {"label": "네, 증인이 참여했습니다", "value": "yes"},
@@ -121,7 +161,9 @@ def test_pending_case_lists_both_confirm_questions_with_options() -> None:
     ]
 
     eligible_question = next(
-        q for q in output.data["pending_questions"] if q["field"] == "rec_witness_eligible_answer"
+        q
+        for q in output.data["pending_questions"]
+        if q["field"] == "rec_witness_eligible_answer"
     )
     assert eligible_question["options"] == [
         {"label": "해당하지 않습니다", "value": "not_disqualified"},
@@ -130,7 +172,9 @@ def test_pending_case_lists_both_confirm_questions_with_options() -> None:
 
 
 def test_invalid_recording_confirm_answer_produces_warning_but_stays_pending() -> None:
-    output = _run(_COMPLETE_TRANSCRIPT, rec_witness_present_answer="not_disqualified")  # 잘못된 필드에 넣음
+    output = _run(
+        _COMPLETE_TRANSCRIPT, rec_witness_present_answer="not_disqualified"
+    )  # 잘못된 필드에 넣음
 
     assert output.data["warnings"] == [
         {
@@ -142,7 +186,9 @@ def test_invalid_recording_confirm_answer_produces_warning_but_stays_pending() -
     assert output.data["requirements"]["rec_witness_present"]["grade"] == "PENDING"
 
 
-def test_colloquial_transcript_all_five_green_via_llm_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_colloquial_transcript_all_five_green_via_llm_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """구어체 대본 — 정규식으로는 취지/유언자 성명/증인 성명을 못 잡고, LLM 폴백
     (mock)으로 5개 요건 전부 GREEN이 되는지 agent.run() 레벨에서 확인한다."""
 
@@ -191,7 +237,9 @@ def test_colloquial_transcript_all_five_green_via_llm_fallback(monkeypatch: pyte
     assert "형식 요건상 문제가 발견되지 않았습니다" in output.reply
 
 
-def test_fully_regex_catchable_transcript_never_calls_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fully_regex_catchable_transcript_never_calls_llm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """5개 요건이 정규식으로 전부 잡히는 대본이면 agent.run() 레벨에서도 LLM이
     호출되지 않아야 한다."""
 
@@ -207,5 +255,11 @@ def test_fully_regex_catchable_transcript_never_calls_llm(monkeypatch: pytest.Mo
     )
 
     reqs = output.data["requirements"]
-    for rid in ("rec_content", "rec_testator_name", "rec_date", "rec_witness_accuracy", "rec_witness_name"):
+    for rid in (
+        "rec_content",
+        "rec_testator_name",
+        "rec_date",
+        "rec_witness_accuracy",
+        "rec_witness_name",
+    ):
         assert reqs[rid]["extracted"]["extraction_method"] == "regex", rid

@@ -7,7 +7,10 @@ decedent_estate.requirement_checker 통합 테스트.
 ⑤ 성명 누락  ⑥ 주소가 시·구 수준까지만  ⑦ 날짜 2개 혼재  ⑧ 날인 없이 서명만
 """
 
-from agents.decedent_estate.requirement_checker import check_requirements, validate_confirm_answers
+from agents.decedent_estate.requirement_checker import (
+    check_requirements,
+    validate_confirm_answers,
+)
 
 _NAME_LINE = "유언자: 홍길동"
 _ADDRESS_LINE = "주소: 서울특별시 강남구 테헤란로 123, 45동 678호"
@@ -22,7 +25,9 @@ def _will_text(*lines: str) -> str:
 def test_sample1_all_five_requirements_complete() -> None:
     text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
 
-    results = check_requirements(text, handwriting_answer="yes", seal_answer="seal_or_fingerprint")
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
 
     assert results["date"].condition_id == "all_present"
     assert results["date"].grade == "GREEN"
@@ -37,7 +42,9 @@ def test_sample1_all_five_requirements_complete() -> None:
 def test_sample2_day_missing() -> None:
     text = _will_text(_NAME_LINE, _ADDRESS_LINE, "2026년 5월")
 
-    results = check_requirements(text, handwriting_answer="yes", seal_answer="seal_or_fingerprint")
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
 
     assert results["date"].condition_id == "day_missing"
     assert results["date"].grade == "RED"
@@ -47,11 +54,16 @@ def test_sample2_day_missing() -> None:
 def test_sample3_verbal_specified() -> None:
     text = _will_text(_NAME_LINE, _ADDRESS_LINE, "아버지 칠순 기념일에")
 
-    results = check_requirements(text, handwriting_answer="yes", seal_answer="seal_or_fingerprint")
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
 
     assert results["date"].condition_id == "verbal_specified"
     assert results["date"].grade == "YELLOW"
-    assert results["date"].precedent_ids == ["date_missing_day_invalid", "date_specifiable_valid"]
+    assert results["date"].precedent_ids == [
+        "date_missing_day_invalid",
+        "date_specifiable_valid",
+    ]
 
 
 def test_sample4_address_missing() -> None:
@@ -72,7 +84,9 @@ def test_sample4_address_missing() -> None:
 def test_sample5_name_missing() -> None:
     text = _will_text(_ADDRESS_LINE, _DATE_LINE)
 
-    results = check_requirements(text, handwriting_answer="yes", seal_answer="seal_or_fingerprint")
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
 
     assert results["name"].condition_id == "absent"
     assert results["name"].grade == "RED"
@@ -113,7 +127,10 @@ def test_absent_address_still_triggers_envelope_followup() -> None:
 
     assert results["address"].condition_id is None
     assert results["address"].grade == "PENDING"
-    assert results["address"].followup_question == "주소가 유언장 본문이 아니라 봉투에 적혀 있나요?"
+    assert (
+        results["address"].followup_question
+        == "주소가 유언장 본문이 아니라 봉투에 적혀 있나요?"
+    )
     assert results["address"].extracted["underlying_case"] == "absent"
 
 
@@ -124,7 +141,9 @@ def test_sample7_multiple_dates_mixed() -> None:
         "2025년 12월 25일에 작성하였으나 2026년 1월 1일로 다시 적는다.",
     )
 
-    results = check_requirements(text, handwriting_answer="yes", seal_answer="seal_or_fingerprint")
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
 
     assert results["date"].condition_id == "multiple_dates_mixed"
     assert results["date"].grade == "YELLOW"
@@ -133,11 +152,16 @@ def test_sample7_multiple_dates_mixed() -> None:
 def test_sample8_seal_signature_only() -> None:
     text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
 
-    results = check_requirements(text, handwriting_answer="yes", seal_answer="signature_only")
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="signature_only"
+    )
 
     assert results["seal"].condition_id == "signature_only"
     assert results["seal"].grade == "RED"
-    assert results["seal"].precedent_ids == ["signature_only_insufficient", "fingerprint_seal_valid"]
+    assert results["seal"].precedent_ids == [
+        "signature_only_insufficient",
+        "fingerprint_seal_valid",
+    ]
 
 
 def test_unanswered_user_confirm_fields_are_pending() -> None:
@@ -162,7 +186,9 @@ def test_name_label_without_colon() -> None:
 
 def test_name_extracted_value_excludes_label() -> None:
     """GREEN extracted 값은 "유언자: 홍길동"이 아니라 이름만("홍길동")이어야 한다."""
-    text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)  # _NAME_LINE = "유언자: 홍길동"
+    text = _will_text(
+        _NAME_LINE, _ADDRESS_LINE, _DATE_LINE
+    )  # _NAME_LINE = "유언자: 홍길동"
 
     results = check_requirements(text)
 
@@ -170,7 +196,7 @@ def test_name_extracted_value_excludes_label() -> None:
 
 
 def test_name_label_word_in_ordinary_sentence_is_not_misdetected() -> None:
-    """"이름"이 라벨이 아니라 평범한 단어로 쓰인 문장에서 오추출되면 안 된다."""
+    """ "이름"이 라벨이 아니라 평범한 단어로 쓰인 문장에서 오추출되면 안 된다."""
     text = _will_text(_ADDRESS_LINE, _DATE_LINE, "특별한 이름 없음")
 
     results = check_requirements(text)
@@ -229,7 +255,9 @@ def test_address_red_without_envelope_answer_is_pending() -> None:
     address = results["address"]
     assert address.condition_id is None
     assert address.grade == "PENDING"
-    assert address.followup_question == "주소가 유언장 본문이 아니라 봉투에 적혀 있나요?"
+    assert (
+        address.followup_question == "주소가 유언장 본문이 아니라 봉투에 적혀 있나요?"
+    )
     assert address.extracted["underlying_case"] == "absent"
 
 
@@ -237,7 +265,9 @@ def test_address_missing_but_envelope_confirmed_upgrades_to_yellow() -> None:
     """주소 없음 + 봉투에 있다고 확인 → envelope_or_minor_discrepancy(YELLOW)로 승격."""
     text = _will_text(_NAME_LINE, _DATE_LINE)  # 주소 없음
 
-    results = check_requirements(text, address_envelope_answer="envelope_or_minor_discrepancy")
+    results = check_requirements(
+        text, address_envelope_answer="envelope_or_minor_discrepancy"
+    )
 
     address = results["address"]
     assert address.condition_id == "envelope_or_minor_discrepancy"
@@ -262,7 +292,9 @@ def test_address_green_ignores_envelope_answer() -> None:
     """본문 판정이 GREEN이면 봉투 질문 자체가 트리거되지 않는다 (답을 줘도 무시)."""
     text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)  # full_address
 
-    results = check_requirements(text, address_envelope_answer="envelope_or_minor_discrepancy")
+    results = check_requirements(
+        text, address_envelope_answer="envelope_or_minor_discrepancy"
+    )
 
     address = results["address"]
     assert address.condition_id == "full_address"

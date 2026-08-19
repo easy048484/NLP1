@@ -38,7 +38,11 @@ from .recording_checker import (
     check_recording_requirements,
     validate_recording_confirm_answers,
 )
-from .requirement_checker import RequirementResult, check_requirements, validate_confirm_answers
+from .requirement_checker import (
+    RequirementResult,
+    check_requirements,
+    validate_confirm_answers,
+)
 from .result_formatter import (
     HANDWRITTEN_GUIDE_INTRO,
     RECORDING_GUIDE_INTRO,
@@ -71,7 +75,11 @@ _NOTARIAL_WILL_TYPE = "notarial"
 _REVIEW_INTENT = "review"
 _PREPARE_INTENT = "prepare"
 _INTENT_VALUES = (_REVIEW_INTENT, _PREPARE_INTENT)
-_FULL_SUPPORT_WILL_TYPES = (_HANDWRITTEN_WILL_TYPE, _UNKNOWN_WILL_TYPE, _RECORDING_WILL_TYPE)
+_FULL_SUPPORT_WILL_TYPES = (
+    _HANDWRITTEN_WILL_TYPE,
+    _UNKNOWN_WILL_TYPE,
+    _RECORDING_WILL_TYPE,
+)
 
 _RECORDING_TRANSCRIPT_NOTICE = (
     "📼 녹음하신 내용을 그대로 적어주세요. 아직 녹음 전이라면, 예정된 대본으로 "
@@ -105,7 +113,13 @@ def _resolve_intent(payload: AgentInput) -> tuple[Optional[str], list[dict[str, 
     if intent is None:
         return _REVIEW_INTENT, []
     if intent not in _INTENT_VALUES:
-        return None, [{"field": "intent", "invalid_value": intent, "allowed": list(_INTENT_VALUES)}]
+        return None, [
+            {
+                "field": "intent",
+                "invalid_value": intent,
+                "allowed": list(_INTENT_VALUES),
+            }
+        ]
     return intent, []
 
 
@@ -152,7 +166,9 @@ def _requirement_payload(result: RequirementResult) -> dict[str, Any]:
         "name": result.name,
         "grade": result.grade,
         "condition_id": result.condition_id,
-        "red_label": red_label(result.requirement_id) if result.grade == "RED" else None,
+        "red_label": (
+            red_label(result.requirement_id) if result.grade == "RED" else None
+        ),
         "precedent_ids": result.precedent_ids,
         "extracted": result.extracted,
         "followup_question": result.followup_question,
@@ -161,7 +177,9 @@ def _requirement_payload(result: RequirementResult) -> dict[str, Any]:
 
 def _next_action(results: dict[str, RequirementResult]) -> Optional[str]:
     """PENDING이 남아 있으면 되묻고, 전부 확정+자필증서로 확인되면 heir_navigator로 넘긴다."""
-    has_pending = any(results[rid].grade == "PENDING" for rid in _FORMAL_REQUIREMENT_IDS)
+    has_pending = any(
+        results[rid].grade == "PENDING" for rid in _FORMAL_REQUIREMENT_IDS
+    )
     if has_pending:
         return NEXT_ACTION_AWAIT_USER
 
@@ -185,7 +203,9 @@ def _next_action_recording(results: dict[str, RequirementResult]) -> Optional[st
     return None
 
 
-def _will_type_question_output(warnings: Optional[list[dict[str, Any]]] = None) -> AgentOutput:
+def _will_type_question_output(
+    warnings: Optional[list[dict[str, Any]]] = None
+) -> AgentOutput:
     q = selection_question()
     reply = f"{q['question']}\n\n{q['promotion_notice']}"
     return AgentOutput(
@@ -300,9 +320,12 @@ def _run_recording_pipeline(payload: AgentInput) -> AgentOutput:
     data: dict[str, Any] = {
         "will_type": _RECORDING_WILL_TYPE,
         "requirements": {
-            rid: _requirement_payload(results[rid]) for rid in FORMAL_RECORDING_REQUIREMENT_IDS
+            rid: _requirement_payload(results[rid])
+            for rid in FORMAL_RECORDING_REQUIREMENT_IDS
         },
-        "pending_questions": pending_questions(results, FORMAL_RECORDING_REQUIREMENT_IDS),
+        "pending_questions": pending_questions(
+            results, FORMAL_RECORDING_REQUIREMENT_IDS
+        ),
         "warnings": validate_recording_confirm_answers(
             rec_witness_present_answer=rec_witness_present_answer,
             rec_witness_eligible_answer=rec_witness_eligible_answer,
@@ -327,9 +350,7 @@ def _run_recording_pipeline(payload: AgentInput) -> AgentOutput:
     )
 
 
-_PREPARE_DRAFT_INVITE = (
-    "작성하신 초안(또는 대본)이 있다면 그대로 보내주세요. 위 요건 기준으로 바로 점검해 드립니다."
-)
+_PREPARE_DRAFT_INVITE = "작성하신 초안(또는 대본)이 있다면 그대로 보내주세요. 위 요건 기준으로 바로 점검해 드립니다."
 
 
 def _run_handwritten_prepare_pipeline(
@@ -364,7 +385,9 @@ def _run_handwritten_prepare_pipeline(
         )
 
     reply = f"{reply}\n\n{_PREPARE_DRAFT_INVITE}"
-    return AgentOutput(agent=AgentName.DECEDENT_ESTATE, reply=reply, next_action=None, data=data)
+    return AgentOutput(
+        agent=AgentName.DECEDENT_ESTATE, reply=reply, next_action=None, data=data
+    )
 
 
 def _run_recording_prepare_pipeline(payload: AgentInput) -> AgentOutput:
@@ -389,7 +412,9 @@ def _run_recording_prepare_pipeline(payload: AgentInput) -> AgentOutput:
         )
 
     reply = f"{reply}\n\n{_PREPARE_DRAFT_INVITE}"
-    return AgentOutput(agent=AgentName.DECEDENT_ESTATE, reply=reply, next_action=None, data=data)
+    return AgentOutput(
+        agent=AgentName.DECEDENT_ESTATE, reply=reply, next_action=None, data=data
+    )
 
 
 def run(payload: AgentInput) -> AgentOutput:
@@ -422,7 +447,9 @@ def run(payload: AgentInput) -> AgentOutput:
         if will_type == _UNKNOWN_WILL_TYPE:
             default = unknown_default()
             if intent == _PREPARE_INTENT:
-                return _run_handwritten_prepare_pipeline(payload, prefix_notice=default["notice"])
+                return _run_handwritten_prepare_pipeline(
+                    payload, prefix_notice=default["notice"]
+                )
             return _run_handwritten_pipeline(payload, prefix_notice=default["notice"])
 
         # will_type == _RECORDING_WILL_TYPE

@@ -28,7 +28,7 @@ def selection_question() -> dict[str, Any]:
 
 
 def unknown_default() -> dict[str, Any]:
-    """"그 외·모르겠음" 선택 시 기본으로 삼을 방식과 안내 문구."""
+    """ "그 외·모르겠음" 선택 시 기본으로 삼을 방식과 안내 문구."""
     return _load()["unknown_default"]
 
 

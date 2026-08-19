@@ -26,7 +26,13 @@ from agents.decedent_estate.requirement_checker import (  # noqa: E402
     check_requirements,
 )
 
-_GRADE_ICON = {"GREEN": "🟢", "YELLOW": "🟡", "RED": "🔴", "WHITE": "⚪", "PENDING": "❓"}
+_GRADE_ICON = {
+    "GREEN": "🟢",
+    "YELLOW": "🟡",
+    "RED": "🔴",
+    "WHITE": "⚪",
+    "PENDING": "❓",
+}
 _ORDER = ["date", "address", "name", "handwriting", "seal", "interseal"]
 
 
@@ -50,20 +56,30 @@ def main() -> None:
         sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(description="유언장 텍스트 요건 판정 결과 확인")
-    parser.add_argument("file", nargs="?", help="유언장 텍스트 파일 경로 (생략 시 표준입력)")
     parser.add_argument(
-        "--handwriting", choices=["yes", "no_or_partial_typed"], default=None,
+        "file", nargs="?", help="유언장 텍스트 파일 경로 (생략 시 표준입력)"
+    )
+    parser.add_argument(
+        "--handwriting",
+        choices=["yes", "no_or_partial_typed"],
+        default=None,
         help="전문 자서 여부 사용자 확인 답변 (생략 시 미확인=PENDING)",
     )
     parser.add_argument(
-        "--seal", choices=["seal_or_fingerprint", "signature_only", "absent"], default=None,
+        "--seal",
+        choices=["seal_or_fingerprint", "signature_only", "absent"],
+        default=None,
         help="날인 여부 사용자 확인 답변 (생략 시 미확인=PENDING)",
     )
     args = parser.parse_args()
 
-    text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
+    text = (
+        Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
+    )
 
-    results = check_requirements(text, handwriting_answer=args.handwriting, seal_answer=args.seal)
+    results = check_requirements(
+        text, handwriting_answer=args.handwriting, seal_answer=args.seal
+    )
     print(format_results(results))
 
 

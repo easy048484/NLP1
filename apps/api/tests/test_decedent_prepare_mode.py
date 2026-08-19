@@ -103,7 +103,11 @@ def test_invalid_intent_reasks_with_warning() -> None:
     assert "지금 필요하신 게 어떤 건가요?" in output.reply
     assert output.data["will_type"] == "handwritten"
     assert output.data["warnings"] == [
-        {"field": "intent", "invalid_value": "whatever", "allowed": ["review", "prepare"]}
+        {
+            "field": "intent",
+            "invalid_value": "whatever",
+            "allowed": ["review", "prepare"],
+        }
     ]
     [question] = output.data["pending_questions"]
     assert question["field"] == "intent"
@@ -155,7 +159,7 @@ def test_prepare_handwritten_without_draft_returns_guide_only() -> None:
 
     date_citation = _citation("date_missing_day_invalid")
     assert (
-        f'📝 연월일: 연월일을 쓰실 때는 반드시 일(日)까지 적어주세요. '
+        f"📝 연월일: 연월일을 쓰실 때는 반드시 일(日)까지 적어주세요. "
         f'"2026년 5월"처럼 일이 빠지면 무효가 된 판례가 있습니다 {date_citation}.'
     ) in output.reply
 
@@ -206,7 +210,7 @@ def test_prepare_recording_without_draft_returns_guide_only() -> None:
 
     date_citation = _citation("date_missing_day_invalid")
     assert (
-        f'📝 연월일: 연월일을 구술할 때는 반드시 일(日)까지 말해주세요. '
+        f"📝 연월일: 연월일을 구술할 때는 반드시 일(日)까지 말해주세요. "
         f'"2026년 5월"처럼 일이 빠지면 무효가 된 판례가 있습니다 {date_citation}.'
     ) in output.reply
 
@@ -283,7 +287,9 @@ def test_prepare_recording_with_draft_also_includes_review_result() -> None:
 
 def test_prepare_has_draft_context_flag_overrides_heuristic() -> None:
     """has_draft=False를 명시하면 user_message에 내용이 있어도 가이드만 준다."""
-    output = _run(_WILL_TEXT_COMPLETE, will_type="handwritten", intent="prepare", has_draft=False)
+    output = _run(
+        _WILL_TEXT_COMPLETE, will_type="handwritten", intent="prepare", has_draft=False
+    )
 
     assert "review" not in output.data
     assert "requirements" not in output.data
