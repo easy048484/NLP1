@@ -442,3 +442,57 @@ def test_calculation_warnings_include_special_deduction() -> None:
     warnings = build_calculation_warnings(data)
 
     assert any("법적 요건은 판단하지 않았습니다" in warning for warning in warnings)
+
+
+def test_non_heir_bequest_reduces_inheritance_deduction_limit() -> None:
+    """비상속인 유증액을 상속공제 종합한도에서 차감한다."""
+
+    data = InheritanceTaxInput(
+        original_inherited_property=1_000_000_000,
+        bequests_to_non_heirs=800_000_000,
+        filing_within_deadline=True,
+    )
+
+    result = calculate_inheritance_tax(data)
+
+    assert result.taxable_inheritance_value == 995_000_000
+    assert result.total_inheritance_deduction == 195_000_000
+    assert result.inheritance_tax_base == 800_000_000
+    assert result.calculated_inheritance_tax == 180_000_000
+    assert result.filing_tax_credit == 5_400_000
+    assert result.estimated_tax_due == 174_600_000
+
+
+def test_next_rank_inheritance_reduces_deduction_limit() -> None:
+    """상속포기로 후순위 상속인이 받은 재산을 종합한도에서 차감한다."""
+
+    data = InheritanceTaxInput(
+        original_inherited_property=1_000_000_000,
+        next_rank_inheritance_due_to_renunciation=800_000_000,
+        filing_within_deadline=True,
+    )
+
+    result = calculate_inheritance_tax(data)
+
+    assert result.taxable_inheritance_value == 995_000_000
+    assert result.total_inheritance_deduction == 195_000_000
+    assert result.inheritance_tax_base == 800_000_000
+    assert result.estimated_tax_due == 174_600_000
+
+
+def test_prior_gift_tax_base_reduces_deduction_limit() -> None:
+    """과세가액에 포함된 사전증여 과세표준을 종합한도에서 차감한다."""
+
+    data = InheritanceTaxInput(
+        original_inherited_property=100_000_000,
+        prior_gifts_to_heirs=800_000_000,
+        prior_gift_tax_base_included_in_taxable_value=800_000_000,
+        filing_within_deadline=True,
+    )
+
+    result = calculate_inheritance_tax(data)
+
+    assert result.taxable_inheritance_value == 895_000_000
+    assert result.total_inheritance_deduction == 95_000_000
+    assert result.inheritance_tax_base == 800_000_000
+    assert result.estimated_tax_due == 174_600_000

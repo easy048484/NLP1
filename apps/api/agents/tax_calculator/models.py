@@ -63,6 +63,11 @@ class InheritanceTaxInput(BaseModel):
         ge=0,
         description=("상속인이 아닌 수유자가 유증·사인증여받은 재산가액(원)"),
     )
+    next_rank_inheritance_due_to_renunciation: int = Field(
+        default=0,
+        ge=0,
+        description=("상속인의 상속포기로 다음 순위 상속인이 받은 재산가액(원)"),
+    )
     # 금융재산 상속공제 계산 정보
     financial_assets: int = Field(
         default=0,
@@ -119,7 +124,13 @@ class InheritanceTaxInput(BaseModel):
         ge=0,
         description="5년 이내 상속인이 아닌 자에게 증여한 재산가액(원)",
     )
-
+    prior_gift_tax_base_included_in_taxable_value: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "상속세 과세가액에 가산된 사전증여재산의 " "증여세 과세표준 합계(원)"
+        ),
+    )
     # 5. 상속공제
     basic_or_lump_sum_deduction: int | None = Field(
         default=None,
@@ -182,6 +193,10 @@ class InheritanceTaxInput(BaseModel):
 class InheritanceTaxResult(BaseModel):
     """상속세 계산 과정과 예상 납부세액."""
 
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="계산 결과와 함께 표시할 주의사항",
+    )
     filing_tax_credit: int = Field(
         default=0,
         ge=0,
