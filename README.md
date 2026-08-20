@@ -37,11 +37,25 @@ pip install -r requirements.txt
 uvicorn main:app --reload
 ```
 
+`.env`에 `DATABASE_URL`을 채워 세션/가족관계 저장을 Postgres로 쓰려면, 서버를
+띄우기 전에 한 번 마이그레이션을 적용해야 합니다.
+
+```bash
+alembic upgrade head
+```
+
+(DATABASE_URL이 비어 있으면 세션은 그냥 인메모리로 동작하고, 이 단계는
+필요 없습니다.)
+
 또는 DB까지 함께 띄우려면 루트에서:
 
 ```bash
 docker compose -f infra/docker-compose.yml up
 ```
+
+이 경우 컨테이너가 시작할 때 `alembic upgrade head`를 자동으로 실행하므로
+따로 마이그레이션을 적용할 필요가 없습니다 (`infra/Dockerfile.api`의 CMD
+참고).
 
 ### 프론트엔드 (React)
 

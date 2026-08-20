@@ -8,4 +8,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY apps/api/ .
 
 EXPOSE 8000
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# DATABASE_URL이 설정돼 있으면(Railway/도커컴포즈 등) 서버를 띄우기 전에
+# 항상 최신 스키마로 마이그레이션합니다 — 새 DB에 배포했는데 마이그레이션을
+# 깜빡 잊어서 sessions/family_graphs 테이블이 없어 500이 나는 사고를 막기
+# 위함입니다. DATABASE_URL이 없으면(로컬에서 DB 없이 mock만 돌릴 때) 그냥
+# 건너뜁니다 — main.py가 그 경우 InMemorySessionStore를 쓰는 것과 같은 분기.
+CMD ["sh", "-c", "if [ -n \"$DATABASE_URL\" ]; then alembic upgrade head; fi && uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
