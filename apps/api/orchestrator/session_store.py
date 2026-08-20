@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from threading import Lock
 from typing import Any, Optional
 
-from db.base import session_scope
+from db.base import mask_sensitive_id, session_scope
 from family_graph.models import FamilyGraph
 from schemas import AgentName
 
@@ -152,7 +152,7 @@ class PostgresSessionStore(SessionStore):
                 # 알 수 없는 id에 조용히 None을 돌려주는 것과 같은 원칙).
                 logger.warning(
                     "family_graph_id=%s가 family_graphs에 없어 세션에서 비웁니다.",
-                    family_graph_id,
+                    mask_sensitive_id(family_graph_id),
                 )
                 family_graph_id = None
 

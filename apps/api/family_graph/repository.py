@@ -14,10 +14,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
+from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.base import DatabaseNotConfigured, session_scope
+from db.base import DatabaseNotConfigured, mask_sensitive_id, session_scope
 
 from .models import FamilyGraph, FamilyMember, RelationType
 
@@ -29,6 +31,21 @@ def create_family_graph(db: Session) -> FamilyGraph:
     db.add(graph)
     db.flush()
     return graph
+
+
+def touch_family_graph(db: Session, family_graph_id: str) -> None:
+    """family_graphs.last_accessed_at을 지금 시각으로 갱신합니다.
+
+    조회/구성원 추가처럼 "이 family_graph가 실제로 쓰이고 있다"는 신호가
+    있을 때마다 호출합니다. 나중에 붙일 장기 미사용 자동 파기 배치
+    (개발_배포_파이프라인_계획.md 10절)가 이 컬럼을 기준으로 삼기로 했으므로,
+    갱신을 빼먹으면 계속 쓰이는 family_graph가 생성일 기준으로 잘못
+    파기될 수 있습니다. 대상이 없으면 조용히 아무 것도 하지 않습니다 —
+    호출부가 존재 여부를 매번 따로 확인할 필요 없게 하기 위해서입니다.
+    """
+    graph = db.get(FamilyGraph, family_graph_id)
+    if graph is not None:
+        graph.last_accessed_at = datetime.now(timezone.utc)
 
 
 def add_member(
@@ -48,6 +65,7 @@ def add_member(
         is_minor=is_minor,
     )
     db.add(member)
+    touch_family_graph(db, family_graph_id)
     db.flush()
     return member
 
@@ -84,12 +102,14 @@ def get_heirs_dict(family_graph_id: Optional[str]) -> Optional[dict[str, Any]]:
     try:
         with session_scope() as db:
             members = list_members(db, family_graph_id)
+            if members:
+                touch_family_graph(db, family_graph_id)
     except DatabaseNotConfigured:
         return None
     except Exception:  # noqa: BLE001 — DB 조회 실패로 요청 전체를 죽이지 않음
         logger.warning(
             "family_graph_id=%s 조회 실패, family_graph 없이 진행합니다.",
-            family_graph_id,
+            mask_sensitive_id(family_graph_id),
             exc_info=True,
         )
         return None
