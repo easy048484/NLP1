@@ -13,10 +13,13 @@ test_decedent_agent.py / test_decedent_recording.py / test_decedent_will_type.py
 import json
 from pathlib import Path
 
+import pytest
+
 from agents import decedent_estate
 from agents.decedent_estate.agent import (
     NEXT_ACTION_AWAIT_USER,
     NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR,
+    _looks_like_draft,
 )
 from agents.decedent_estate.recording_checker import FORMAL_RECORDING_REQUIREMENT_IDS
 from schemas import AgentInput
@@ -178,7 +181,10 @@ def test_prepare_handwritten_without_draft_returns_guide_only() -> None:
         f"{seal_citation}. 지장도 유효합니다."
     ) in output.reply
 
-    assert "작성하신 초안(또는 대본)이 있다면 그대로 보내주세요" in output.reply
+    assert (
+        "초안을 작성하신 뒤 그 내용을 보내주시면 형식 요건을 점검해드릴게요."
+        in output.reply
+    )
 
 
 def test_prepare_guide_payload_structure_for_seal() -> None:
@@ -401,3 +407,86 @@ def test_namespaced_prepare_with_draft_runs_review_too() -> None:
     assert "**자필증서 유언 작성 가이드입니다.**" in output.reply
     assert "작성하신 초안을 점검한 결과입니다." in output.reply
     assert "review" in output.data
+
+
+# ---------------------------------------------------------------------------
+# 초안 판별 (_looks_like_draft)
+#
+# user_message가 비어 있지 않다는 것만으로 초안이라고 보면 "유언장을 준비하려고요"
+# 같은 요청 문장까지 초안으로 오인해, 아직 쓰지도 않은 사용자에게 "❌ 날짜가
+# 확인되지 않습니다"를 보여주게 된다. 재산 처분 의사 / 날짜 / 제목줄+내용 중
+# 하나 이상이 있을 때만 초안으로 본다.
+# ---------------------------------------------------------------------------
+
+_NOT_DRAFT_MESSAGES = [
+    "유언장을 준비하려고요",
+    "유언장 쓰고 싶어요",
+    "유언장 쓰려는데 어떻게 해요?",
+    "유언장 어떻게 써요",
+    "상속 준비를 하고 싶어요",
+    "내년에 유언장 준비하려고 합니다",
+    "유언장",  # 제목만 있고 내용이 없음
+    "",
+    "   ",
+]
+
+_DRAFT_MESSAGES = [
+    "나의 전 재산을 배우자에게 상속한다.",  # 재산 처분 의사
+    "내 통장 돈은 모두 딸에게 준다",  # 처분 의사(구어체 어미)
+    "제 모든 재산을 장남에게 물려주고자 합니다",  # 처분 의사(녹음 대본체)
+    "2026년 5월 3일",  # 날짜 표기
+    "유언장\n나는 아래와 같이 정한다",  # 제목 줄 + 내용
+]
+
+
+@pytest.mark.parametrize("message", _NOT_DRAFT_MESSAGES)
+def test_request_sentences_are_not_treated_as_draft(message: str) -> None:
+    assert _looks_like_draft(message) is False
+
+
+@pytest.mark.parametrize("message", _DRAFT_MESSAGES)
+def test_will_like_text_is_treated_as_draft(message: str) -> None:
+    assert _looks_like_draft(message) is True
+
+
+def test_prepare_with_request_sentence_shows_guide_only() -> None:
+    """버그 재현 케이스 — "유언장을 준비하려고요"에 점검 결과가 붙으면 안 된다."""
+    output = _run("유언장을 준비하려고요", will_type="handwritten", intent="prepare")
+
+    assert "review" not in output.data
+    assert "requirements" not in output.data
+    assert output.next_action is None
+    # 아직 쓰지도 않은 사람에게 "확인되지 않습니다" ❌ 를 보여주면 안 된다.
+    assert "❌" not in output.reply
+    assert "확인되지 않습니다" not in output.reply
+    # 가이드는 정상적으로 나오고, 초안 요청 안내로 끝난다.
+    assert "**자필증서 유언 작성 가이드입니다.**" in output.reply
+    assert output.reply.rstrip().endswith(
+        "초안을 작성하신 뒤 그 내용을 보내주시면 형식 요건을 점검해드릴게요."
+    )
+
+
+def test_prepare_with_real_draft_still_shows_both_guide_and_review() -> None:
+    """실제 유언장 텍스트는 그대로 초안으로 인식돼 점검 결과까지 나와야 한다."""
+    output = _run(
+        _WILL_TEXT_COMPLETE,
+        will_type="handwritten",
+        intent="prepare",
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+    )
+
+    assert "**자필증서 유언 작성 가이드입니다.**" in output.reply
+    assert "작성하신 초안을 점검한 결과입니다." in output.reply
+    assert "review" in output.data
+
+
+def test_prepare_recording_with_request_sentence_shows_guide_only() -> None:
+    """녹음 prepare도 같은 판별을 쓴다."""
+    output = _run(
+        "녹음으로 유언 남기고 싶어요", will_type="recording", intent="prepare"
+    )
+
+    assert "review" not in output.data
+    assert "❌" not in output.reply
+    assert "**녹음 유언 작성 가이드입니다.**" in output.reply

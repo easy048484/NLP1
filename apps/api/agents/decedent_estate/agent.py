@@ -35,9 +35,12 @@ requirements[].guide, CLAUDE.md 빌드 순서 5단계).
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 from schemas import AgentInput, AgentName, AgentOutput
+
+from .date_parser import parse_dates
 
 from .recording_checker import (
     FORMAL_RECORDING_REQUIREMENT_IDS,
@@ -181,16 +184,70 @@ def _intent_question_output(
     )
 
 
+# prepare 모드에서 "이 텍스트가 유언장 초안인가"를 판별하는 신호들.
+#
+# 단순히 user_message 가 비어 있지 않다는 것만으로 초안이라고 보면, "유언장을
+# 준비하려고요" 같은 요청 문장까지 초안으로 오인해 아직 쓰지도 않은 사용자에게
+# "❌ 날짜가 확인되지 않습니다"를 들이밀게 된다. 그래서 아래 신호 중 하나 이상이
+# 있을 때만 초안으로 본다.
+#
+# 1) 재산 처분 의사 표현 — "~에게 상속한다/물려준다/준다" 처럼 처분을 선언하는
+#    서술형. 명사 "상속"만으로는 인정하지 않는다("상속 준비를 하고 싶어요"가
+#    초안으로 잡히면 안 되기 때문). recording_checker._DISPOSITION_INTENT_RE 와
+#    목적이 비슷하지만, 그쪽은 "요건 충족 여부" 판정용이라 더 좁고 여기는
+#    "초안인가" 판별용이라 구어체 어미까지 넓게 잡는다.
+_DRAFT_DISPOSITION_RE = re.compile(
+    r"(?:상속|증여|유증|양도)(?:한다|하며|하고|합니다|하겠|시킨다|시키며)"
+    r"|물려주(?:다|고|며|겠|었|기)"
+    r"|(?:준다|줍니다|드린다|드립니다|넘긴다|남긴다|남깁니다|맡긴다)"
+)
+
+# 3) "유언장"/"유언" 만으로 이루어진 제목 줄 (그 아래에 내용이 더 있어야 초안).
+#    "유언장을 준비하려고요"처럼 문장 속에 들어간 경우는 제목이 아니라 요청이다.
+_DRAFT_TITLE_LINE_RE = re.compile(r"^\s*(?:유언장|유언)\s*$")
+
+
+def _looks_like_draft(text: str) -> bool:
+    """유언장 초안(또는 녹음 대본)으로 볼 만한 신호가 있는지 판별한다.
+
+    아래 셋 중 하나라도 있으면 초안으로 본다:
+    1) 재산 처분 의사 표현
+    2) 날짜 표기 (date_parser 가 무엇이든 잡아냄 — 일부만 있어도 초안 신호)
+    3) "유언장"/"유언" 제목 줄 + 그 아래 내용
+
+    셋 다 없으면 "유언장 쓰고 싶어요" 같은 요청 문장으로 보고 초안이 아니라고
+    판단한다.
+    """
+    if not text or not text.strip():
+        return False
+
+    if _DRAFT_DISPOSITION_RE.search(text):
+        return True
+
+    if parse_dates(text).case != "absent":
+        return True
+
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if not _DRAFT_TITLE_LINE_RE.match(line):
+            continue
+        # 제목 줄 아래에 실제 내용이 있어야 초안이다 (제목만 덜렁 보낸 것은 아님).
+        if any(rest.strip() for rest in lines[index + 1 :]):
+            return True
+
+    return False
+
+
 def _has_draft_text(payload: AgentInput, state: DecedentState) -> bool:
     """prepare 모드에서 "이미 초안(텍스트)을 갖고 있는지" 판단한다.
 
-    has_draft 를 명시적으로 보내면 그 값을 그대로 쓰고, 없으면 user_message에
-    내용이 있는지로 유추한다(가이드만 원하는 경우 프론트가 user_message를 비워
-    보내는 것을 전제).
+    has_draft 를 명시적으로 보내면(네임스페이스든 평면 키든 state 가 이미
+    합쳐서 들고 있다) 그 값을 그대로 쓰고, 없으면 user_message 를
+    _looks_like_draft 로 판별한다.
     """
     if state.has_draft is not None:
         return bool(state.has_draft)
-    return bool(payload.user_message and payload.user_message.strip())
+    return _looks_like_draft(payload.user_message)
 
 
 def _requirement_payload(result: RequirementResult) -> dict[str, Any]:
@@ -418,7 +475,9 @@ def _run_recording_pipeline(
     )
 
 
-_PREPARE_DRAFT_INVITE = "작성하신 초안(또는 대본)이 있다면 그대로 보내주세요. 위 요건 기준으로 바로 점검해 드립니다."
+_PREPARE_DRAFT_INVITE = (
+    "초안을 작성하신 뒤 그 내용을 보내주시면 형식 요건을 점검해드릴게요."
+)
 
 
 def _run_handwritten_prepare_pipeline(
