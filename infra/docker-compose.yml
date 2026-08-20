@@ -8,8 +8,12 @@ services:
     env_file:
       - path: ../.env
         required: false   # .env를 아직 안 만들었어도 mock API는 기동은 되도록 (진짜 키가 필요한 기능을 쓸 때만 채워 넣으면 됨)
-    # 지금은 mock API가 DB를 전혀 쓰지 않으므로(3단계 전) db에 종속시키지 않습니다.
-    # Alembic/세션 저장이 붙는 3단계부터 `depends_on: [db]`를 다시 추가하세요.
+    environment:
+      # family_graph/세션 저장이 Postgres를 쓰므로 db 컨테이너를 가리킵니다.
+      # .env에 DATABASE_URL을 따로 정의해두면 그 값이 우선합니다.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:devpass@db:5432/family_assets}
+    depends_on:
+      - db
 
   db:
     image: postgres:16

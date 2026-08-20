@@ -7,7 +7,10 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import orchestrator
+from family_graph import router as family_graph_router
 from orchestrator import route
+from orchestrator.session_store import PostgresSessionStore
 from schemas import AgentInput, AgentOutput
 
 _parents = Path(__file__).resolve().parents
@@ -24,6 +27,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# DATABASE_URL이 있으면 세션 저장소를 Postgres 기반으로 교체합니다. 없는
+# 환경(로컬에서 DB 없이 mock만 돌릴 때, 지금 CI)에서는 기본값인
+# InMemorySessionStore가 그대로 쓰입니다 — 이 분기 자체가 없어도 동작은
+# 이전과 같습니다.
+if os.getenv("DATABASE_URL"):
+    orchestrator.configure_session_store(PostgresSessionStore())
+
+app.include_router(family_graph_router)
 
 
 @app.get("/health")
