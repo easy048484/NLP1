@@ -27,6 +27,17 @@ class AgentInput(BaseModel):
     family_graph: Optional[dict[str, Any]] = Field(
         default=None, description="가족관계 그래프 엔진이 계산한 현재 상태"
     )
+    family_graph_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "DB에 저장된 family_graph의 식별자. 오케스트레이터가 이 값으로 "
+            "family_graph 테이블을 조회해서 위 family_graph 필드를 채웁니다 — "
+            "family_graph를 직접 채워 보내면(테스트/레거시 클라이언트) 그 값이 "
+            "우선합니다. 프론트는 이 값을 세션과 별도로 (localStorage 등에) "
+            "저장해뒀다가 매 요청에 실어 보내야 재방문 시 가족관계를 다시 "
+            "입력하지 않아도 됩니다."
+        ),
+    )
     context: dict[str, Any] = Field(default_factory=dict)
 
 
