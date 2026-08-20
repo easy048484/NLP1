@@ -19,6 +19,11 @@ from agents.tax_calculator.calculator import (
     build_calculation_warnings,
 )
 from agents.tax_calculator.models import InheritanceTaxInput
+from agents.tax_calculator.rules import (
+    RULE_AS_OF_DATE,
+    RULE_SOURCE_URLS,
+    RULE_VERSION,
+)
 
 
 @pytest.mark.parametrize(
@@ -100,6 +105,8 @@ def test_taxable_inheritance_value_rejects_non_resident() -> None:
 
 def test_calculate_inheritance_tax_base() -> None:
     data = InheritanceTaxInput(
+        spouse_exists=True,
+        children_count=2,
         original_inherited_property=1_500_000_000,
         debts=100_000_000,
         basic_or_lump_sum_deduction=500_000_000,
@@ -140,6 +147,8 @@ def test_inheritance_deduction_does_not_exceed_taxable_value() -> None:
 
 def test_calculate_inheritance_tax_full_flow() -> None:
     data = InheritanceTaxInput(
+        spouse_exists=True,
+        children_count=2,
         original_inherited_property=1_500_000_000,
         debts=100_000_000,
         basic_or_lump_sum_deduction=500_000_000,
@@ -229,6 +238,8 @@ def test_calculate_financial_asset_deduction(
     expected_deduction: int,
 ) -> None:
     data = InheritanceTaxInput(
+        original_inherited_property=financial_assets,
+        debts=financial_debts,
         financial_assets=financial_assets,
         financial_debts=financial_debts,
     )
@@ -496,3 +507,154 @@ def test_prior_gift_tax_base_reduces_deduction_limit() -> None:
     assert result.total_inheritance_deduction == 95_000_000
     assert result.inheritance_tax_base == 800_000_000
     assert result.estimated_tax_due == 174_600_000
+
+
+def test_input_rejects_spouse_amount_without_spouse() -> None:
+    """배우자가 없으면 배우자 상속액을 입력할 수 없다."""
+
+    with pytest.raises(ValueError, match="배우자"):
+        InheritanceTaxInput(
+            spouse_exists=False,
+            spouse_actual_inheritance=100_000_000,
+        )
+
+
+def test_input_rejects_financial_assets_over_total_property() -> None:
+    """금융재산은 총상속재산보다 클 수 없다."""
+
+    with pytest.raises(ValueError, match="금융재산"):
+        InheritanceTaxInput(
+            original_inherited_property=100_000_000,
+            financial_assets=200_000_000,
+        )
+
+
+def test_input_rejects_financial_debts_over_total_debts() -> None:
+    """금융채무는 전체 채무보다 클 수 없다."""
+
+    with pytest.raises(ValueError, match="금융채무"):
+        InheritanceTaxInput(
+            debts=100_000_000,
+            financial_debts=200_000_000,
+        )
+
+
+def test_input_rejects_excluded_amounts_over_total_property() -> None:
+    """비과세·불산입 재산 합계는 총상속재산보다 클 수 없다."""
+
+    with pytest.raises(ValueError, match="비과세"):
+        InheritanceTaxInput(
+            original_inherited_property=100_000_000,
+            non_taxable_property=60_000_000,
+            excluded_property=50_000_000,
+        )
+
+
+def test_input_rejects_bequests_and_next_rank_over_total_property() -> None:
+    """유증·후순위 상속 재산 합계는 총상속재산보다 클 수 없다."""
+
+    with pytest.raises(ValueError, match="유증"):
+        InheritanceTaxInput(
+            original_inherited_property=100_000_000,
+            bequests_to_non_heirs=60_000_000,
+            next_rank_inheritance_due_to_renunciation=50_000_000,
+        )
+
+
+def test_input_rejects_prior_gift_tax_base_over_prior_gifts() -> None:
+    """사전증여 과세표준은 사전증여재산 합계보다 클 수 없다."""
+
+    with pytest.raises(ValueError, match="사전증여"):
+        InheritanceTaxInput(
+            prior_gifts_to_heirs=100_000_000,
+            prior_gift_tax_base_included_in_taxable_value=200_000_000,
+        )
+
+
+def test_input_rejects_children_when_spouse_is_sole_heir() -> None:
+    """배우자 단독상속과 자녀 공동상속을 동시에 입력할 수 없다."""
+
+    with pytest.raises(ValueError, match="단독상속"):
+        InheritanceTaxInput(
+            spouse_exists=True,
+            spouse_is_sole_heir=True,
+            children_count=1,
+        )
+
+
+def test_result_includes_inheritance_deduction_breakdown() -> None:
+    """계산 결과에 공제별 금액과 종합한도를 포함한다."""
+
+    data = InheritanceTaxInput(
+        original_inherited_property=1_000_000_000,
+        financial_assets=100_000_000,
+    )
+
+    result = calculate_inheritance_tax(data)
+
+    assert result.basic_or_lump_sum_deduction == 500_000_000
+    assert result.business_or_farming_deduction == 0
+    assert result.spouse_inheritance_deduction == 0
+    assert result.financial_asset_deduction == 20_000_000
+    assert result.disaster_loss_deduction == 0
+    assert result.cohabiting_home_deduction == 0
+
+    assert result.requested_inheritance_deduction == 520_000_000
+    assert result.inheritance_deduction_limit == 995_000_000
+    assert result.total_inheritance_deduction == 520_000_000
+
+
+def test_nts_rate_table_golden_case_tax_base_400m() -> None:
+    """국세청 세율표 기준 과세표준 4억원의 산출세액을 검증한다."""
+
+    # 출처:
+    # https://nts.go.kr/nts/cm/cntnts/cntntsView.do
+    # ?cntntsId=7720&mi=2326
+    result = calculate_base_tax(400_000_000)
+
+    assert result.inheritance_tax_base == 400_000_000
+    assert result.tax_rate_percent == 20
+    assert result.progressive_deduction == 10_000_000
+    assert result.calculated_inheritance_tax == 70_000_000
+
+
+def test_hometax_comparison_baseline_case() -> None:
+    """홈택스 비교용 단순 거주자 사례를 고정한다."""
+
+    data = InheritanceTaxInput(
+        original_inherited_property=1_000_000_000,
+        children_count=1,
+        filing_within_deadline=True,
+    )
+
+    result = calculate_inheritance_tax(data)
+
+    assert result.total_inherited_property == 1_000_000_000
+    assert result.deductible_expenses == 5_000_000
+    assert result.taxable_inheritance_value == 995_000_000
+
+    assert result.basic_or_lump_sum_deduction == 500_000_000
+    assert result.total_inheritance_deduction == 500_000_000
+    assert result.inheritance_tax_base == 495_000_000
+
+    assert result.calculated_inheritance_tax == 89_000_000
+    assert result.filing_tax_credit == 2_670_000
+    assert result.estimated_tax_due == 86_330_000
+
+
+def test_results_include_tax_rule_metadata() -> None:
+    """계산 결과에 규칙 버전·검토 기준일·출처를 표시한다."""
+
+    inheritance_result = calculate_inheritance_tax(
+        InheritanceTaxInput(
+            original_inherited_property=1_000_000_000,
+            children_count=1,
+        )
+    )
+    base_tax_result = calculate_base_tax(400_000_000)
+
+    for result in (inheritance_result, base_tax_result):
+        assert result.rule_version == RULE_VERSION
+        assert result.rule_as_of_date == RULE_AS_OF_DATE
+        assert tuple(result.rule_source_urls) == RULE_SOURCE_URLS
+        assert len(result.rule_source_urls) == 3

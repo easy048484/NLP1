@@ -1,7 +1,9 @@
 """상속세 계산 엔진 전용 입출력 계약."""
 
-from pydantic import BaseModel, Field
 from datetime import date
+from typing import Self
+
+from pydantic import BaseModel, Field, model_validator
 
 
 class InheritanceTaxInput(BaseModel):
@@ -189,6 +191,68 @@ class InheritanceTaxInput(BaseModel):
         description="신고불성실·납부지연 가산세 합계(원)",
     )
 
+    @model_validator(mode="after")
+    def validate_consistent_values(self) -> Self:
+        """서로 모순되는 상속세 입력값을 거부한다."""
+
+        total_inherited_property = (
+            self.original_inherited_property
+            + self.deemed_inherited_property
+            + self.estimated_inherited_property
+        )
+
+        if not self.spouse_exists:
+            spouse_related_amount = (
+                self.spouse_actual_inheritance
+                + self.spouse_prior_gift_tax_base
+                + (self.spouse_inheritance_deduction or 0)
+            )
+
+            if self.spouse_is_sole_heir or spouse_related_amount > 0:
+                raise ValueError(
+                    "배우자가 없으면 배우자 단독상속, "
+                    "배우자 상속액 또는 배우자공제를 입력할 수 없습니다."
+                )
+
+        if self.spouse_is_sole_heir and self.children_count > 0:
+            raise ValueError(
+                "배우자 단독상속과 자녀 공동상속을 동시에 입력할 수 없습니다."
+            )
+
+        if self.financial_assets > total_inherited_property:
+            raise ValueError("금융재산가액은 총상속재산가액보다 클 수 없습니다.")
+
+        if self.financial_debts > self.debts:
+            raise ValueError("금융채무가액은 전체 채무가액보다 클 수 없습니다.")
+
+        excluded_amount = self.non_taxable_property + self.excluded_property
+
+        if excluded_amount > total_inherited_property:
+            raise ValueError(
+                "비과세재산과 과세가액 불산입 재산의 합계는 "
+                "총상속재산가액보다 클 수 없습니다."
+            )
+
+        deduction_limit_property = (
+            self.bequests_to_non_heirs + self.next_rank_inheritance_due_to_renunciation
+        )
+
+        if deduction_limit_property > total_inherited_property:
+            raise ValueError(
+                "비상속인 유증액과 후순위 상속재산의 합계는 "
+                "총상속재산가액보다 클 수 없습니다."
+            )
+
+        prior_gifts = self.prior_gifts_to_heirs + self.prior_gifts_to_non_heirs
+
+        if self.prior_gift_tax_base_included_in_taxable_value > prior_gifts:
+            raise ValueError(
+                "사전증여재산의 증여세 과세표준은 "
+                "사전증여재산 합계보다 클 수 없습니다."
+            )
+
+        return self
+
 
 class InheritanceTaxResult(BaseModel):
     """상속세 계산 과정과 예상 납부세액."""
@@ -207,7 +271,17 @@ class InheritanceTaxResult(BaseModel):
     prior_gifts: int
     taxable_inheritance_value: int
 
+    basic_or_lump_sum_deduction: int
+    business_or_farming_deduction: int
+    spouse_inheritance_deduction: int
+    financial_asset_deduction: int
+    disaster_loss_deduction: int
+    cohabiting_home_deduction: int
+
+    requested_inheritance_deduction: int
+    inheritance_deduction_limit: int
     total_inheritance_deduction: int
+
     appraisal_fees: int
     inheritance_tax_base: int
 
@@ -221,6 +295,8 @@ class InheritanceTaxResult(BaseModel):
     estimated_tax_due: int
 
     rule_version: str
+    rule_as_of_date: date
+    rule_source_urls: list[str]
     estimated_filing_deadline: date | None = Field(
         default=None,
         description=(
@@ -237,3 +313,5 @@ class BaseTaxResult(BaseModel):
     progressive_deduction: int
     calculated_inheritance_tax: int
     rule_version: str
+    rule_as_of_date: date
+    rule_source_urls: list[str]

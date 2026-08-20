@@ -16,6 +16,8 @@ from .rules import (
     FINANCIAL_DEDUCTION_PERCENT_LIMIT,
     FINANCIAL_DEDUCTION_RATE_PERCENT,
     LUMP_SUM_DEDUCTION,
+    RULE_AS_OF_DATE,
+    RULE_SOURCE_URLS,
     RULE_VERSION,
     SPOUSE_DEDUCTION_CAP,
     SPOUSE_MINIMUM_DEDUCTION,
@@ -407,6 +409,8 @@ def calculate_base_tax(tax_base: int) -> BaseTaxResult:
         progressive_deduction=bracket.progressive_deduction,
         calculated_inheritance_tax=calculated_tax,
         rule_version=RULE_VERSION,
+        rule_as_of_date=RULE_AS_OF_DATE,
+        rule_source_urls=list(RULE_SOURCE_URLS),
     )
 
 
@@ -424,6 +428,27 @@ def calculate_inheritance_tax(
     prior_gifts = calculate_prior_gifts(data)
 
     taxable_inheritance_value = calculate_taxable_inheritance_value(data)
+
+    basic_or_lump_sum_deduction = calculate_basic_or_lump_sum_deduction(data)
+    business_or_farming_deduction = data.business_or_farming_deduction
+    spouse_inheritance_deduction = calculate_spouse_inheritance_deduction(data)
+    financial_asset_deduction = calculate_financial_asset_deduction(data)
+    disaster_loss_deduction = data.disaster_loss_deduction
+    cohabiting_home_deduction = data.cohabiting_home_deduction
+
+    requested_inheritance_deduction = (
+        basic_or_lump_sum_deduction
+        + business_or_farming_deduction
+        + spouse_inheritance_deduction
+        + financial_asset_deduction
+        + disaster_loss_deduction
+        + cohabiting_home_deduction
+    )
+
+    inheritance_deduction_limit = calculate_inheritance_deduction_limit(
+        data,
+        taxable_inheritance_value,
+    )
 
     total_inheritance_deduction = calculate_total_inheritance_deduction(
         data,
@@ -460,7 +485,15 @@ def calculate_inheritance_tax(
         deductible_expenses=deductible_expenses,
         prior_gifts=prior_gifts,
         taxable_inheritance_value=taxable_inheritance_value,
-        total_inheritance_deduction=total_inheritance_deduction,
+        basic_or_lump_sum_deduction=(basic_or_lump_sum_deduction),
+        business_or_farming_deduction=(business_or_farming_deduction),
+        spouse_inheritance_deduction=(spouse_inheritance_deduction),
+        financial_asset_deduction=financial_asset_deduction,
+        disaster_loss_deduction=disaster_loss_deduction,
+        cohabiting_home_deduction=cohabiting_home_deduction,
+        requested_inheritance_deduction=(requested_inheritance_deduction),
+        inheritance_deduction_limit=(inheritance_deduction_limit),
+        total_inheritance_deduction=(total_inheritance_deduction),
         appraisal_fees=data.appraisal_fees,
         inheritance_tax_base=inheritance_tax_base,
         tax_rate_percent=base_tax_result.tax_rate_percent,
@@ -471,6 +504,8 @@ def calculate_inheritance_tax(
         penalties=data.penalties,
         estimated_tax_due=estimated_tax_due,
         rule_version=RULE_VERSION,
+        rule_as_of_date=RULE_AS_OF_DATE,
+        rule_source_urls=list(RULE_SOURCE_URLS),
         warnings=warnings,
         estimated_filing_deadline=estimated_filing_deadline,
         filing_tax_credit=filing_tax_credit,
