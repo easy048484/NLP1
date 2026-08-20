@@ -99,3 +99,27 @@ def test_unknown_family_graph_id_falls_back_to_payload_family_graph(
     )
 
     assert fake.captured[0].family_graph == {"spouse_alive": True, "num_children": 1}
+
+
+def test_explicit_family_graph_overrides_valid_family_graph_id(monkeypatch, with_db):
+    """family_graph_id가 DB에서 정상적으로 풀려도, 이번 요청이 family_graph를
+    직접 채워 보냈으면 그 값이 우선해야 합니다 (schemas/agent_io.py의
+    AgentInput.family_graph_id docstring이 명시하는 우선순위)."""
+    with session_scope() as db:
+        graph = create_family_graph(db)
+        graph_id = graph.id
+        add_member(db, graph_id, name="배우자", relation=RelationType.SPOUSE)
+
+    fake = _fake_agent(AgentName.HEIR_NAVIGATOR)
+    monkeypatch.setitem(router._AGENT_RUNNERS, AgentName.HEIR_NAVIGATOR, fake)
+
+    router.route(
+        AgentInput(
+            session_id="fg-session-4",
+            user_message="도와주세요",
+            family_graph_id=graph_id,
+            family_graph={"spouse_alive": True, "num_children": 1},
+        )
+    )
+
+    assert fake.captured[0].family_graph == {"spouse_alive": True, "num_children": 1}

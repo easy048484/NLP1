@@ -21,11 +21,14 @@ LangGraph StateGraph로 재작성한 버전입니다 (2단계 뼈대였던 키�
 - build_context / persist_session: 각 에이전트가 정보를 주고받는 형태(네임스페이스
   규약, 핸드오프 신호 형식)는 handoff.py에 정의돼 있습니다 — 새 에이전트를
   붙이거나 기존 에이전트를 고칠 때는 그 문서를 먼저 보세요.
-  build_context는 family_graph_id(요청에 있으면 그 값, 없으면 세션에 저장된
-  값)로 family_graph.get_heirs_dict()를 호출해 AgentInput.family_graph를
-  채웁니다. DB 조회가 안 되거나(DATABASE_URL 없음 등) 결과가 없으면 요청에
-  직접 담겨온 family_graph 값으로 조용히 폴백합니다 — family_graph_id 하나
-  잘못 보냈다고 요청 전체가 실패하지 않습니다.
+  build_context의 family_graph 우선순위는 (1) 이번 요청에 family_graph가
+  직접 담겨 있으면 그 값 (테스트/레거시 클라이언트가 명시적으로 override하는
+  경우 — schemas/agent_io.py의 AgentInput.family_graph_id 필드 설명과 동일한
+  우선순위입니다) (2) 없으면 family_graph_id(요청에 있으면 그 값, 없으면
+  세션에 저장된 값)로 family_graph.get_heirs_dict()를 호출한 결과입니다. DB
+  조회가 안 되거나(DATABASE_URL 없음 등) 결과가 없으면 family_graph는
+  비웁니다 — family_graph_id 하나 잘못 보냈다고 요청 전체가 실패하지
+  않습니다.
 
 알려진 한계 (다음 반복에서 다룰 것):
 - "대화 주제를 완전히 바꾸고 싶을 때" 되돌아갈 방법이 아직 없습니다. 핸드오프
@@ -137,12 +140,15 @@ def node_build_context(state: GraphState) -> GraphState:
     family_graph_id = payload.family_graph_id or session.family_graph_id
     session.family_graph_id = family_graph_id
 
-    resolved_family_graph = get_heirs_dict(family_graph_id)
-    family_graph = (
-        resolved_family_graph
-        if resolved_family_graph is not None
-        else payload.family_graph
-    )
+    # 이번 요청이 family_graph를 직접 채워 보냈으면 그 값이 최우선입니다
+    # (스키마 설명대로 — agent_io.py의 AgentInput.family_graph_id docstring
+    # 참고). family_graph_id만으로는 세션이 기억하고 있던 예전 그래프를
+    # 계속 가리킬 수 있으므로, 이번 턴에 한해 명시적으로 override하고 싶은
+    # 테스트/레거시 클라이언트가 이 값으로 그렇게 할 수 있어야 합니다.
+    if payload.family_graph is not None:
+        family_graph = payload.family_graph
+    else:
+        family_graph = get_heirs_dict(family_graph_id)
 
     stored = session.context_for(target)
     context = build_agent_context(target, stored, payload.context or {})
