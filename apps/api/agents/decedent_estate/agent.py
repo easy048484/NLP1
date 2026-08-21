@@ -56,6 +56,7 @@ from .result_formatter import (
     HANDWRITTEN_GUIDE_INTRO,
     RECORDING_GUIDE_INTRO,
     RECORDING_SUMMARY_MESSAGES,
+    closing_lines,
     format_guide,
     format_result,
     guide_payload,
@@ -67,6 +68,7 @@ from .will_types import (
     get_will_type,
     intent_question,
     known_will_type_ids,
+    no_will_guidance,
     selection_question,
     unknown_default,
 )
@@ -78,6 +80,10 @@ _UNKNOWN_WILL_TYPE = "unknown"
 _HANDWRITTEN_WILL_TYPE = "handwritten"
 _RECORDING_WILL_TYPE = "recording"
 _NOTARIAL_WILL_TYPE = "notarial"
+# "유언장이 없거나 찾지 못했다" — unknown과 마찬가지로 민법 5방식이 아니라 UI
+# sentinel이다. unknown이 "방식을 모르겠다"(유언장은 있음)인 반면 이쪽은 "유언장
+# 자체가 확인되지 않는다"라, 요건 판정을 아예 돌지 않고 법정상속 안내로 넘긴다.
+_NO_WILL_TYPE = "none"
 
 # intent(이용 목적): "review"(기본, 이미 있는 유언장/대본 점검) | "prepare"(아직
 # 작성 전, 준비 가이드). full 지원 방식(handwritten/unknown/recording)에서만 의미가
@@ -103,9 +109,9 @@ NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR = "handoff:heir_navigator"
 
 
 def _valid_will_type_values() -> tuple[str, ...]:
-    """민법 5방식 id + UI의 "모르겠음" sentinel. context.will_type 이 이 안에
-    없으면(None 포함) 방식을 다시 물어본다."""
-    return (*known_will_type_ids(), _UNKNOWN_WILL_TYPE)
+    """민법 5방식 id + UI sentinel 2개("모르겠음"/"없음"). context.will_type 이
+    이 안에 없으면(None 포함) 방식을 다시 물어본다."""
+    return (*known_will_type_ids(), _UNKNOWN_WILL_TYPE, _NO_WILL_TYPE)
 
 
 def _namespaced(
@@ -334,6 +340,50 @@ def _will_type_question_output(
             will_type=None,
             pending_questions=pending,
         ),
+    )
+
+
+def _run_no_will_pipeline() -> AgentOutput:
+    """유언장이 없거나 찾지 못한 경우 — 요건 판정을 아예 돌지 않고 안내만 한다.
+
+    범위를 의도적으로 좁게 잡았다:
+    - **유언장 탐색 안내는 하지 않는다** (어디에 뒀는지 찾는 법 등). 유일한
+      예외가 공정증서 고지인데, 이것도 "장소를 뒤져보라"는 탐색 조언이 아니라
+      "아직 확인되지 않은 경로가 하나 있다"는 사실 고지다 — 공정증서는 원본이
+      공증사무소에 보관되어 고인이 정본을 갖고 있지 않아도 존재할 수 있다.
+    - **상속인 범위·지분·유류분은 여기서 답하지 않는다.** heir_navigator 영역이라
+      침범하면 두 에이전트가 서로 다른 답을 할 위험이 있다. "법정상속 절차를
+      따릅니다"까지만 말하고 넘긴다.
+    - CLAUDE.md 절대 원칙 2(무단정)를 그대로 적용한다 — "유언장이 없으니
+      법정상속입니다" 같은 단정 대신 "확인된 유언장이 없는 경우 일반적으로 ~
+      따릅니다" 패턴을 쓴다. 문구는 rules/will_types.json 의 no_will 에 있다.
+    """
+    guidance = no_will_guidance()
+
+    reply = "\n\n".join(
+        [
+            guidance["legal_succession_guidance"],
+            guidance["notarial_notice"],
+            *closing_lines(),
+        ]
+    )
+
+    return AgentOutput(
+        agent=AgentName.DECEDENT_ESTATE,
+        reply=reply,
+        # 포맷은 handoff.py 규약 2번("handoff:<에이전트이름>")으로 확립돼 있어
+        # notarial 분기와 같은 상수를 그대로 쓴다.
+        # TODO(팀 협의 대기): heir_navigator 쪽 실제 연결은 정민님 담당이다.
+        # 지금은 신호만 내보내는 스텁이라, 넘겨받은 heir_navigator 가 "유언장
+        # 없음"을 어떻게 초기 상태로 반영할지(예: will_exists="no" 슬롯 채우기)는
+        # 아직 합의되지 않았다. 합의되면 이 함수의 data 에 그 필드를 추가하면
+        # 되도록 핸드오프 관련 값을 여기 한곳에 모아 두었다.
+        next_action=NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR,
+        data={
+            "will_type": _NO_WILL_TYPE,
+            "handoff_reason": guidance["handoff_reason"],
+            "warnings": [],
+        },
     )
 
 
@@ -636,6 +686,11 @@ def run(payload: AgentInput) -> AgentOutput:
                 }
             ],
         )
+
+    # "유언장이 없다/못 찾았다" — 요건 판정 대상이 아예 없으므로 intent 게이트보다
+    # 먼저 갈라낸다 (review/prepare 구분이 의미 없다).
+    if will_type == _NO_WILL_TYPE:
+        return _run_no_will_pipeline()
 
     if will_type in _FULL_SUPPORT_WILL_TYPES:
         intent, intent_warnings = _resolve_intent(state)
