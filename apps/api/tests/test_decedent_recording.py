@@ -132,10 +132,15 @@ def test_witness_disqualified_is_red_with_reference_note() -> None:
         in output.reply
     )
     # executor_not_disqualified는 카드가 아니라 들여쓴 참고 문구여야 한다.
-    assert "   ℹ️ 참고: 유언집행자라는 사정만으로는 증인 결격이 아닙니다" in output.reply
     assert (
-        "대법원 1999" not in output.reply
-    )  # 카드 인용(사건번호)으로는 노출되지 않는다
+        "   ℹ️ 참고: 조문상 유언집행자는 증인 결격사유로 열거되어 있지 않습니다"
+        in output.reply
+    )
+    # 판례가 아니라 조문 근거이므로 "판례가 있습니다" 식으로 표현되면 안 된다.
+    assert "유언집행자" in output.reply
+    assert (
+        "유언집행자라는 사정만으로는 증인 결격이 아니라고 본 판례" not in output.reply
+    )
 
 
 def test_pending_case_lists_both_confirm_questions_with_options() -> None:
