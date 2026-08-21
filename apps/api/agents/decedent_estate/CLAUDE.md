@@ -17,10 +17,11 @@
    성명·주소·날짜는 요건 판정에 실제로 필요한 값이라 마스킹 대상에서 제외한다
    (masking.py 참조 — 판정에 불필요한 정보만 최소한으로 제거).
 5. 상세 판정 정책과 화면 문구는 docs/요건판정_문구_스펙_v1.md 를 따른다.
-6. 이 에이전트는 유언장 본문·추출값을 자체적으로 저장하지 않는다.
-   요청 처리 중 메모리에서만 다루고 응답 반환 후 폐기한다.
-   로깅 시에도 유언장 본문을 남기지 않는다.
-   (세션 연속성은 오케스트레이터 계층의 책임 — docs/privacy_notes.md 참조)
+6. 이 에이전트는 자체적으로 저장하지 않으며, 오케스트레이터 세션에는
+   판정 결과와 확인 답변만 전달한다. 유언장 원문은 전달하지 않는다.
+   요청 처리 중 메모리에서만 다루고 응답 반환 후 폐기하며, 로깅 시에도
+   유언장 본문을 남기지 않는다.
+   (C안 확정 — docs/privacy_notes.md, 구현은 state.py)
 
 ## 계약
 - 입출력: apps/api/schemas/agent_io.py 의 AgentInput/AgentOutput 준수
@@ -75,3 +76,21 @@
     붙인다 — 판정 로직 자체는 절대 중복 구현하지 않고 재사용만 한다. 응답
     data에는 "guide"(요건별 가이드 payload)와, 초안이 있을 때만 "review"
     (기존 review 파이프라인의 data 그대로) 두 키가 함께 담긴다.
+6) **네임스페이스 규약 전환**(orchestrator/handoff.py 규약 1번)이 완료됨:
+   상태를 `context["decedent_estate"]` 에서 읽고 `data["decedent_estate"]` 에
+   써서 돌려준다 (state.py 의 `DecedentState`/`load_state`/`dump_state` —
+   heir_navigator/state.py 의 STATE_KEY 패턴을 그대로 따랐다).
+  - 이 전환으로 `handoff.LEGACY_FLAT_CONTEXT_AGENTS` 에서 빠졌고, 이제
+    오케스트레이터가 세션에 상태를 저장·복원해준다(TTL 2시간). 그전에는
+    저장이 아예 없어서 매 턴 프론트가 전체 context를 재전송해야 했다.
+  - **저장 정책은 C안**(docs/privacy_notes.md): will_type·intent·확인 답변·
+    요건별 판정 결과·pending_questions 만 담고 **유언장 원문은 담지 않는다.**
+    `DecedentState` 에 원문 필드 자체를 두지 않아 구조적으로 막았다.
+  - 전환기 안전망으로 평면 키(context 최상위의 will_type 등)도 계속 읽는다.
+    우선순위는 **평면 키(이번 턴 입력) > 네임스페이스(지난 턴 상태)** 다 —
+    사용자가 답을 바꿔 다시 보냈을 때 지난 턴 값이 이기면 안 되기 때문
+    (handoff.build_agent_context 의 "이번 턴에 명시적으로 답한 값이 우선"과
+    동일한 원칙). 응답 data 에도 기존 평면 키를 당분간 함께 내보낸다.
+  - ⚠️ 아직 안 한 것: 원문 없이 **저장된 판정 결과에 새 확인 답변만 병합하는
+    경로**는 미구현이다. 지금은 매 턴 원문이 다시 오는 것을 전제로 평면 폴백이
+    받쳐주고 있다. 프론트가 원문 재전송을 멈추면 이 경로가 필요해진다.

@@ -30,7 +30,13 @@ _WILL_TEXT_ADDRESS_MISSING = (
 
 
 def _ctx(**extra: str) -> dict[str, str]:
+    """평면 키 context (전환기 폴백 경로). 기존 테스트는 이 경로를 계속 검증한다."""
     return {"will_type": "handwritten", **extra}
+
+
+def _ns_ctx(**extra: str) -> dict[str, object]:
+    """네임스페이스 규약 context — 같은 값을 context["decedent_estate"] 로 넣는다."""
+    return {"decedent_estate": {"will_type": "handwritten", **extra}}
 
 
 def test_run_returns_contract_compliant_output() -> None:
@@ -183,3 +189,47 @@ def test_run_pending_question_includes_field_and_options() -> None:
             ],
         }
     ]
+
+
+# ---------------------------------------------------------------------------
+# 네임스페이스 규약 (orchestrator/handoff.py 1번)
+#
+# 위 테스트들은 전부 평면 키(_ctx)로 돌아 전환기 폴백 경로를 검증한다. 여기서는
+# 같은 시나리오를 네임스페이스(_ns_ctx)로 돌려 두 경로가 같은 결과를 내는지 본다.
+# 상태 저장 정책(C안) 자체는 test_decedent_state.py 에서 따로 다룬다.
+# ---------------------------------------------------------------------------
+
+
+def test_namespaced_context_produces_same_result_as_flat() -> None:
+    answers = {"handwriting_answer": "yes", "seal_answer": "seal_or_fingerprint"}
+
+    flat = decedent_estate.run(
+        AgentInput(
+            session_id="s1", user_message=_WILL_TEXT_COMPLETE, context=_ctx(**answers)
+        )
+    )
+    namespaced = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message=_WILL_TEXT_COMPLETE,
+            context=_ns_ctx(**answers),
+        )
+    )
+
+    assert flat.reply == namespaced.reply
+    assert flat.next_action == namespaced.next_action
+    assert flat.data["decedent_estate"] == namespaced.data["decedent_estate"]
+
+
+def test_namespaced_context_reads_confirm_answers() -> None:
+    payload = AgentInput(
+        session_id="s1",
+        user_message=_WILL_TEXT_COMPLETE,
+        context=_ns_ctx(handwriting_answer="no_or_partial_typed", seal_answer="absent"),
+    )
+
+    output = decedent_estate.run(payload)
+
+    assert output.data["requirements"]["handwriting"]["grade"] == "RED"
+    assert output.data["requirements"]["seal"]["grade"] == "RED"
+    assert output.next_action is None

@@ -34,10 +34,21 @@ _COMPLETE_TRANSCRIPT = "\n".join(
 
 
 def _run(text: str, **context: str):
+    """평면 키 context (전환기 폴백 경로)."""
     payload = AgentInput(
         session_id="s1",
         user_message=text,
         context={"will_type": "recording", **context},
+    )
+    return decedent_estate.run(payload)
+
+
+def _run_namespaced(text: str, **context: str):
+    """네임스페이스 규약 context — 같은 값을 context["decedent_estate"] 로 넣는다."""
+    payload = AgentInput(
+        session_id="s1",
+        user_message=text,
+        context={"decedent_estate": {"will_type": "recording", **context}},
     )
     return decedent_estate.run(payload)
 
@@ -263,3 +274,28 @@ def test_fully_regex_catchable_transcript_never_calls_llm(
         "rec_witness_name",
     ):
         assert reqs[rid]["extracted"]["extraction_method"] == "regex", rid
+
+
+def test_namespaced_context_produces_same_result_as_flat() -> None:
+    """네임스페이스 규약으로 보낸 context도 평면 키와 동일하게 동작해야 한다."""
+    answers = {
+        "rec_witness_present_answer": "yes",
+        "rec_witness_eligible_answer": "not_disqualified",
+    }
+
+    flat = _run(_COMPLETE_TRANSCRIPT, **answers)
+    namespaced = _run_namespaced(_COMPLETE_TRANSCRIPT, **answers)
+
+    assert flat.reply == namespaced.reply
+    assert flat.next_action == namespaced.next_action
+    assert flat.data["decedent_estate"] == namespaced.data["decedent_estate"]
+
+
+def test_namespaced_context_reads_witness_answers() -> None:
+    output = _run_namespaced(
+        _COMPLETE_TRANSCRIPT,
+        rec_witness_present_answer="yes",
+        rec_witness_eligible_answer="disqualified",
+    )
+
+    assert output.data["requirements"]["rec_witness_eligible"]["grade"] == "RED"
