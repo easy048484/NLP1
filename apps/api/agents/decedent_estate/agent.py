@@ -19,8 +19,14 @@ prepare 모드에서도 초안 텍스트가 있으면(has_draft_text) 가이드 
 review 파이프라인 결과를 그대로 이어붙인다(rules/requirements.json 의
 requirements[].guide, CLAUDE.md 빌드 순서 5단계).
 
-사용자 확인 답변은 AgentInput.context 에서 읽는다 (자서/날인/주소 봉투는
-handwritten, 증인 참여/증인 결격은 recording).
+상태(will_type/intent/확인 답변/판정 결과)는 orchestrator/handoff.py 규약 1번에
+따라 ``context["decedent_estate"]`` 에서 읽고 ``data["decedent_estate"]`` 에 써서
+돌려준다 (state.py). 전환기 안전망으로 평면 키(context 최상위의 will_type 등)도
+계속 읽으며, 이번 턴에 평면 키가 왔으면 그 값이 우선한다. 응답 data 에도 기존
+평면 키를 당분간 함께 내보낸다.
+
+⚠️ 세션에 담는 것은 판정 결과와 확인 답변뿐이다 — 유언장 원문은 담지 않는다
+   (C안, docs/privacy_notes.md).
 
 ⚠️ CLAUDE.md 절대 원칙 4: 마스킹 이전의 원본 텍스트를 LLM API에 보내지 않는다.
    (성명 요건에 한해 llm_client.py 로 연결됨 — masking.py 를 거친 텍스트만 전송.
@@ -53,6 +59,7 @@ from .result_formatter import (
     pending_questions,
     red_label,
 )
+from .state import STATE_KEY, DecedentState, dump_state, load_state
 from .will_types import (
     get_will_type,
     intent_question,
@@ -98,8 +105,26 @@ def _valid_will_type_values() -> tuple[str, ...]:
     return (*known_will_type_ids(), _UNKNOWN_WILL_TYPE)
 
 
-def _resolve_intent(payload: AgentInput) -> tuple[Optional[str], list[dict[str, Any]]]:
-    """context.intent 를 review/prepare 로 정리한다.
+def _namespaced(
+    state: DecedentState, data: dict[str, Any], **updates: Any
+) -> dict[str, Any]:
+    """data 에 네임스페이스 상태(data["decedent_estate"])를 얹어 돌려준다.
+
+    기존 평면 키(will_type/requirements/pending_questions/warnings)는 당분간
+    그대로 둔다 — 아직 평면 응답을 읽는 프론트가 있을 수 있어서, 전환기에는
+    둘 다 내보낸다(handoff.py 에서 LEGACY 목록을 빼도 응답 호환은 유지).
+
+    ⚠️ 여기 담기는 것은 DecedentState 필드뿐이라 유언장 원문은 구조적으로
+    들어갈 수 없다 (state.py 참고 — C안).
+    """
+    persisted = state.model_copy(update=updates)
+    return {**data, STATE_KEY: dump_state(persisted)}
+
+
+def _resolve_intent(
+    state: DecedentState,
+) -> tuple[Optional[str], list[dict[str, Any]]]:
+    """상태의 intent 를 review/prepare 로 정리한다.
 
     will_type 게이트와 같은 패턴을 쓰되(잘못된 값이면 재질문), "미지정"의 취급만
     다르다 — will_type은 기본값이 없어 None이면 무조건 되묻지만, intent는
@@ -109,7 +134,7 @@ def _resolve_intent(payload: AgentInput) -> tuple[Optional[str], list[dict[str, 
     화이트리스트 밖이면(오타 등) will_type과 동일하게 None을 돌려줘 호출부가
     재질문(_intent_question_output)하게 한다.
     """
-    intent = payload.context.get("intent")
+    intent = state.intent
     if intent is None:
         return _REVIEW_INTENT, []
     if intent not in _INTENT_VALUES:
@@ -124,38 +149,47 @@ def _resolve_intent(payload: AgentInput) -> tuple[Optional[str], list[dict[str, 
 
 
 def _intent_question_output(
-    will_type_id: str, warnings: Optional[list[dict[str, Any]]] = None
+    state: DecedentState,
+    will_type_id: str,
+    warnings: Optional[list[dict[str, Any]]] = None,
 ) -> AgentOutput:
     q = intent_question()
+    pending = [
+        {
+            "requirement": "이용 목적",
+            "field": q["confirm_field"],
+            "question": q["question"],
+            "options": q["options"],
+        }
+    ]
     return AgentOutput(
         agent=AgentName.DECEDENT_ESTATE,
         reply=q["question"],
         next_action=NEXT_ACTION_AWAIT_USER,
-        data={
-            "will_type": will_type_id,
-            "pending_questions": [
-                {
-                    "requirement": "이용 목적",
-                    "field": q["confirm_field"],
-                    "question": q["question"],
-                    "options": q["options"],
-                }
-            ],
-            "warnings": warnings or [],
-        },
+        data=_namespaced(
+            state,
+            {
+                "will_type": will_type_id,
+                "pending_questions": pending,
+                "warnings": warnings or [],
+            },
+            will_type=will_type_id,
+            # 잘못된 intent 값은 저장하지 않는다 — 다음 턴에 또 재질문하게 된다.
+            intent=None,
+            pending_questions=pending,
+        ),
     )
 
 
-def _has_draft_text(payload: AgentInput) -> bool:
+def _has_draft_text(payload: AgentInput, state: DecedentState) -> bool:
     """prepare 모드에서 "이미 초안(텍스트)을 갖고 있는지" 판단한다.
 
-    context.has_draft 를 명시적으로 보내면 그 값을 그대로 쓰고, 없으면
-    user_message에 내용이 있는지로 유추한다(가이드만 원하는 경우 프론트가
-    user_message를 비워 보내는 것을 전제).
+    has_draft 를 명시적으로 보내면 그 값을 그대로 쓰고, 없으면 user_message에
+    내용이 있는지로 유추한다(가이드만 원하는 경우 프론트가 user_message를 비워
+    보내는 것을 전제).
     """
-    context_flag = payload.context.get("has_draft")
-    if context_flag is not None:
-        return bool(context_flag)
+    if state.has_draft is not None:
+        return bool(state.has_draft)
     return bool(payload.user_message and payload.user_message.strip())
 
 
@@ -204,29 +238,34 @@ def _next_action_recording(results: dict[str, RequirementResult]) -> Optional[st
 
 
 def _will_type_question_output(
-    warnings: Optional[list[dict[str, Any]]] = None
+    state: DecedentState, warnings: Optional[list[dict[str, Any]]] = None
 ) -> AgentOutput:
     q = selection_question()
     reply = f"{q['question']}\n\n{q['promotion_notice']}"
+    pending = [
+        {
+            "requirement": "유언 방식",
+            "field": q["confirm_field"],
+            "question": q["question"],
+            "options": q["options"],
+        }
+    ]
     return AgentOutput(
         agent=AgentName.DECEDENT_ESTATE,
         reply=reply,
         next_action=NEXT_ACTION_AWAIT_USER,
-        data={
-            "pending_questions": [
-                {
-                    "requirement": "유언 방식",
-                    "field": q["confirm_field"],
-                    "question": q["question"],
-                    "options": q["options"],
-                }
-            ],
-            "warnings": warnings or [],
-        },
+        data=_namespaced(
+            state,
+            {"pending_questions": pending, "warnings": warnings or []},
+            # 잘못된 will_type 값은 저장하지 않는다 — 다음 턴에 또 재질문하게 된다.
+            will_type=None,
+            pending_questions=pending,
+        ),
     )
 
 
 def _guidance_only_output(
+    state: DecedentState,
     will_type_info: dict[str, Any],
     *,
     include_requirements_summary: bool = True,
@@ -251,19 +290,29 @@ def _guidance_only_output(
         agent=AgentName.DECEDENT_ESTATE,
         reply="\n\n".join(parts),
         next_action=next_action,
-        data=data,
+        data=_namespaced(
+            state, data, will_type=will_type_info["id"], pending_questions=[]
+        ),
     )
 
 
 def _run_handwritten_pipeline(
-    payload: AgentInput, *, prefix_notice: Optional[str] = None
+    payload: AgentInput,
+    state: DecedentState,
+    *,
+    prefix_notice: Optional[str] = None,
+    intent: str = _REVIEW_INTENT,
 ) -> AgentOutput:
     """자필증서 요건 판정 파이프라인. handwritten 직접 선택과 unknown(기본값 적용)
-    둘 다 여기로 온다."""
-    context = payload.context
-    handwriting_answer = context.get("handwriting_answer")
-    seal_answer = context.get("seal_answer")
-    address_envelope_answer = context.get("address_envelope_answer")
+    둘 다 여기로 온다.
+
+    intent 는 _resolve_intent 가 정리한 "확정된" 값을 저장하기 위한 것이다 —
+    클라이언트가 intent 를 아예 안 보냈을 때도 세션에는 review 로 남겨야
+    "intent 미지정 == review" 가 다음 턴까지 그대로 유지된다.
+    """
+    handwriting_answer = state.handwriting_answer
+    seal_answer = state.seal_answer
+    address_envelope_answer = state.address_envelope_answer
 
     results = check_requirements(
         payload.user_message,
@@ -274,12 +323,15 @@ def _run_handwritten_pipeline(
 
     next_action = _next_action(results)
 
+    requirements = {
+        rid: _requirement_payload(results[rid]) for rid in _ALL_REQUIREMENT_IDS
+    }
+    pending = pending_questions(results)
+
     data: dict[str, Any] = {
         "will_type": _HANDWRITTEN_WILL_TYPE,
-        "requirements": {
-            rid: _requirement_payload(results[rid]) for rid in _ALL_REQUIREMENT_IDS
-        },
-        "pending_questions": pending_questions(results),
+        "requirements": requirements,
+        "pending_questions": pending,
         # 화이트리스트에 없는 답변값이 와도 판정은 그대로 PENDING 유지(위 check_requirements
         # 호출과 동일 입력) — 여기서는 그 "조용한 무시"를 호출자가 알아채도록만 알려준다.
         "warnings": validate_confirm_answers(
@@ -299,15 +351,23 @@ def _run_handwritten_pipeline(
         agent=AgentName.DECEDENT_ESTATE,
         reply=reply,
         next_action=next_action,
-        data=data,
+        data=_namespaced(
+            state,
+            data,
+            will_type=_HANDWRITTEN_WILL_TYPE,
+            intent=intent,
+            requirements=requirements,
+            pending_questions=pending,
+        ),
     )
 
 
-def _run_recording_pipeline(payload: AgentInput) -> AgentOutput:
+def _run_recording_pipeline(
+    payload: AgentInput, state: DecedentState, *, intent: str = _REVIEW_INTENT
+) -> AgentOutput:
     """녹음 유언(§1067) 대본 요건 판정 파이프라인."""
-    context = payload.context
-    rec_witness_present_answer = context.get("rec_witness_present_answer")
-    rec_witness_eligible_answer = context.get("rec_witness_eligible_answer")
+    rec_witness_present_answer = state.rec_witness_present_answer
+    rec_witness_eligible_answer = state.rec_witness_eligible_answer
 
     results = check_recording_requirements(
         payload.user_message,
@@ -317,15 +377,16 @@ def _run_recording_pipeline(payload: AgentInput) -> AgentOutput:
 
     next_action = _next_action_recording(results)
 
+    requirements = {
+        rid: _requirement_payload(results[rid])
+        for rid in FORMAL_RECORDING_REQUIREMENT_IDS
+    }
+    pending = pending_questions(results, FORMAL_RECORDING_REQUIREMENT_IDS)
+
     data: dict[str, Any] = {
         "will_type": _RECORDING_WILL_TYPE,
-        "requirements": {
-            rid: _requirement_payload(results[rid])
-            for rid in FORMAL_RECORDING_REQUIREMENT_IDS
-        },
-        "pending_questions": pending_questions(
-            results, FORMAL_RECORDING_REQUIREMENT_IDS
-        ),
+        "requirements": requirements,
+        "pending_questions": pending,
         "warnings": validate_recording_confirm_answers(
             rec_witness_present_answer=rec_witness_present_answer,
             rec_witness_eligible_answer=rec_witness_eligible_answer,
@@ -346,7 +407,14 @@ def _run_recording_pipeline(payload: AgentInput) -> AgentOutput:
         agent=AgentName.DECEDENT_ESTATE,
         reply=reply,
         next_action=next_action,
-        data=data,
+        data=_namespaced(
+            state,
+            data,
+            will_type=_RECORDING_WILL_TYPE,
+            intent=intent,
+            requirements=requirements,
+            pending_questions=pending,
+        ),
     )
 
 
@@ -354,7 +422,7 @@ _PREPARE_DRAFT_INVITE = "작성하신 초안(또는 대본)이 있다면 그대�
 
 
 def _run_handwritten_prepare_pipeline(
-    payload: AgentInput, *, prefix_notice: Optional[str] = None
+    payload: AgentInput, state: DecedentState, *, prefix_notice: Optional[str] = None
 ) -> AgentOutput:
     """자필증서 준비 가이드(intent == "prepare"). handwritten 직접 선택과 unknown
     (기본값 적용) 둘 다 여기로 온다 — review 파이프라인과 동일한 분기 구조.
@@ -365,7 +433,7 @@ def _run_handwritten_prepare_pipeline(
     빼고(include_closing=False) 이어 붙는 점검 결과 쪽 것만 남긴다 — 한 화면에
     같은 두 줄이 두 번 반복되지 않게 하기 위해서다.
     """
-    has_draft = _has_draft_text(payload)
+    has_draft = _has_draft_text(payload, state)
 
     reply = format_guide(
         list(_FORMAL_REQUIREMENT_IDS),
@@ -382,28 +450,50 @@ def _run_handwritten_prepare_pipeline(
         reply = f"{prefix_notice}\n\n{reply}"
 
     if has_draft:
-        review_output = _run_handwritten_pipeline(payload)
+        review_output = _run_handwritten_pipeline(payload, state)
         reply = f"{reply}\n\n---\n\n**작성하신 초안을 점검한 결과입니다.**\n\n{review_output.reply}"
-        data["review"] = review_output.data
+        # review_output.data 에는 이미 네임스페이스 키가 들어 있다. 중첩 저장을
+        # 피하려고 빼고 담고, 상태는 아래에서 한 번만 최상위에 붙인다.
+        review_data = {k: v for k, v in review_output.data.items() if k != STATE_KEY}
+        data["review"] = review_data
         return AgentOutput(
             agent=AgentName.DECEDENT_ESTATE,
             reply=reply,
             next_action=review_output.next_action,
-            data=data,
+            data=_namespaced(
+                state,
+                data,
+                will_type=_HANDWRITTEN_WILL_TYPE,
+                intent=_PREPARE_INTENT,
+                requirements=review_data.get("requirements", {}),
+                pending_questions=review_data.get("pending_questions", []),
+            ),
         )
 
     reply = f"{reply}\n\n{_PREPARE_DRAFT_INVITE}"
     return AgentOutput(
-        agent=AgentName.DECEDENT_ESTATE, reply=reply, next_action=None, data=data
+        agent=AgentName.DECEDENT_ESTATE,
+        reply=reply,
+        next_action=None,
+        data=_namespaced(
+            state,
+            data,
+            will_type=_HANDWRITTEN_WILL_TYPE,
+            intent=_PREPARE_INTENT,
+            requirements={},
+            pending_questions=[],
+        ),
     )
 
 
-def _run_recording_prepare_pipeline(payload: AgentInput) -> AgentOutput:
+def _run_recording_prepare_pipeline(
+    payload: AgentInput, state: DecedentState
+) -> AgentOutput:
     """녹음 유언(§1067) 준비 가이드(intent == "prepare"). 이미 대본이 있으면
     가이드 뒤에 기존 review 파이프라인(_run_recording_pipeline) 결과를 이어붙이고,
     이때 가이드 쪽 마무리 문구는 빼서(include_closing=False) 상담 연결·하단 고지가
     한 화면에 두 번 반복되지 않게 한다 — handwritten prepare와 동일한 처리."""
-    has_draft = _has_draft_text(payload)
+    has_draft = _has_draft_text(payload, state)
 
     reply = format_guide(
         list(FORMAL_RECORDING_REQUIREMENT_IDS),
@@ -417,66 +507,91 @@ def _run_recording_prepare_pipeline(payload: AgentInput) -> AgentOutput:
     }
 
     if has_draft:
-        review_output = _run_recording_pipeline(payload)
+        review_output = _run_recording_pipeline(payload, state)
         reply = f"{reply}\n\n---\n\n**작성하신 대본을 점검한 결과입니다.**\n\n{review_output.reply}"
-        data["review"] = review_output.data
+        review_data = {k: v for k, v in review_output.data.items() if k != STATE_KEY}
+        data["review"] = review_data
         return AgentOutput(
             agent=AgentName.DECEDENT_ESTATE,
             reply=reply,
             next_action=review_output.next_action,
-            data=data,
+            data=_namespaced(
+                state,
+                data,
+                will_type=_RECORDING_WILL_TYPE,
+                intent=_PREPARE_INTENT,
+                requirements=review_data.get("requirements", {}),
+                pending_questions=review_data.get("pending_questions", []),
+            ),
         )
 
     reply = f"{reply}\n\n{_PREPARE_DRAFT_INVITE}"
     return AgentOutput(
-        agent=AgentName.DECEDENT_ESTATE, reply=reply, next_action=None, data=data
+        agent=AgentName.DECEDENT_ESTATE,
+        reply=reply,
+        next_action=None,
+        data=_namespaced(
+            state,
+            data,
+            will_type=_RECORDING_WILL_TYPE,
+            intent=_PREPARE_INTENT,
+            requirements={},
+            pending_questions=[],
+        ),
     )
 
 
 def run(payload: AgentInput) -> AgentOutput:
-    will_type = payload.context.get("will_type")
+    # 상태는 네임스페이스(context["decedent_estate"])에서 읽고, 이번 턴에 평면
+    # 키가 왔으면 그 값을 우선한다 (state.load_state — 전환기 안전망).
+    state = load_state(payload.context)
+    will_type = state.will_type
 
     if will_type is None:
-        return _will_type_question_output()
+        return _will_type_question_output(state)
 
     if will_type not in _valid_will_type_values():
         return _will_type_question_output(
+            state,
             warnings=[
                 {
                     "field": "will_type",
                     "invalid_value": will_type,
                     "allowed": list(_valid_will_type_values()),
                 }
-            ]
+            ],
         )
 
     if will_type in _FULL_SUPPORT_WILL_TYPES:
-        intent, intent_warnings = _resolve_intent(payload)
+        intent, intent_warnings = _resolve_intent(state)
         if intent is None:  # 화이트리스트 밖 값 — will_type 게이트와 동일하게 재질문
-            return _intent_question_output(will_type, warnings=intent_warnings)
+            return _intent_question_output(state, will_type, warnings=intent_warnings)
 
         if will_type == _HANDWRITTEN_WILL_TYPE:
             if intent == _PREPARE_INTENT:
-                return _run_handwritten_prepare_pipeline(payload)
-            return _run_handwritten_pipeline(payload)
+                return _run_handwritten_prepare_pipeline(payload, state)
+            return _run_handwritten_pipeline(payload, state)
 
         if will_type == _UNKNOWN_WILL_TYPE:
             default = unknown_default()
             if intent == _PREPARE_INTENT:
                 return _run_handwritten_prepare_pipeline(
-                    payload, prefix_notice=default["notice"]
+                    payload, state, prefix_notice=default["notice"]
                 )
-            return _run_handwritten_pipeline(payload, prefix_notice=default["notice"])
+            return _run_handwritten_pipeline(
+                payload, state, prefix_notice=default["notice"]
+            )
 
         # will_type == _RECORDING_WILL_TYPE
         if intent == _PREPARE_INTENT:
-            return _run_recording_prepare_pipeline(payload)
-        return _run_recording_pipeline(payload)
+            return _run_recording_prepare_pipeline(payload, state)
+        return _run_recording_pipeline(payload, state)
 
     will_type_info = get_will_type(will_type)  # notarial / secret / oral
 
     if will_type == _NOTARIAL_WILL_TYPE:
         return _guidance_only_output(
+            state,
             will_type_info,
             include_requirements_summary=False,
             next_action=NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR,
@@ -484,4 +599,4 @@ def run(payload: AgentInput) -> AgentOutput:
         )
 
     # secret / oral: 요건 요약 + "자동 점검 미지원" 안내만 하고 종료.
-    return _guidance_only_output(will_type_info)
+    return _guidance_only_output(state, will_type_info)

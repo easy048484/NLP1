@@ -53,7 +53,16 @@ def _citation(precedent_id: str) -> str:
 
 
 def _run(text: str, **context):
+    """평면 키 context (전환기 폴백 경로)."""
     payload = AgentInput(session_id="s1", user_message=text, context=context)
+    return decedent_estate.run(payload)
+
+
+def _run_namespaced(text: str, **context):
+    """네임스페이스 규약 context — 같은 값을 context["decedent_estate"] 로 넣는다."""
+    payload = AgentInput(
+        session_id="s1", user_message=text, context={"decedent_estate": context}
+    )
     return decedent_estate.run(payload)
 
 
@@ -369,3 +378,26 @@ def test_review_mode_closing_unaffected() -> None:
     )
 
     _assert_closing_appears_once(output.reply)
+
+
+def test_namespaced_context_produces_same_prepare_guide_as_flat() -> None:
+    """prepare 모드도 네임스페이스 규약으로 동일하게 동작해야 한다."""
+    flat = _run("", will_type="handwritten", intent="prepare")
+    namespaced = _run_namespaced("", will_type="handwritten", intent="prepare")
+
+    assert flat.reply == namespaced.reply
+    assert flat.data["decedent_estate"] == namespaced.data["decedent_estate"]
+
+
+def test_namespaced_prepare_with_draft_runs_review_too() -> None:
+    output = _run_namespaced(
+        _WILL_TEXT_COMPLETE,
+        will_type="handwritten",
+        intent="prepare",
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+    )
+
+    assert "**자필증서 유언 작성 가이드입니다.**" in output.reply
+    assert "작성하신 초안을 점검한 결과입니다." in output.reply
+    assert "review" in output.data
