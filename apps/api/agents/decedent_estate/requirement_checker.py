@@ -352,12 +352,19 @@ def check_requirements(
         "date",
         date_result.case,
         extracted={
+            # ⚠️ ParsedDate.raw_text(매칭된 원문 조각)는 의도적으로 담지 않는다
+            # (CLAUDE.md 절대 원칙 4). extracted 는 API 응답과 세션 저장까지
+            # 그대로 흘러가는 경계라, 날짜 오탐이 생기면 원문 조각이 그대로
+            # 밖으로 나간다. 실제로 주민등록번호가 연월로 오탐되던 시절
+            # "1231-12"(생년월일+성별 식별 숫자)가 이 경로로 노출됐다.
+            # 정규식 가드(date_parser._NO_DIGIT_BEFORE/_AFTER)로 근본 원인을
+            # 막았지만, 다른 오탐이 생겨도 원문이 새지 않도록 여기서도 막는다.
+            # 화면 표시(result_formatter)는 year/month/day 만 쓰므로 손실 없다.
             "entries": [
                 {
                     "year": e.year,
                     "month": e.month,
                     "day": e.day,
-                    "raw_text": e.raw_text,
                     "case": e.case,
                 }
                 for e in date_result.entries

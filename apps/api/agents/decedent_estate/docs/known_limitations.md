@@ -133,6 +133,57 @@
 
 - **분류: LLM 추출 단계에서 해결 예정**
 
+### 3-5. 주민등록번호·전화번호가 날짜로 오탐 → 개인정보 부분 노출 — ✅ 수정 완료
+
+**정확도 측면 (최초 발견 시 분류)**
+
+`_YEAR_MONTH_ONLY_PATTERNS`의 `(\d{4})-(\d{1,2})` 패턴은 앞뒤 문맥과 무관하게
+"4자리 숫자 + 하이픈 + 1~2자리 숫자"만 있으면 매치했다. 주민등록번호
+(`"901231-1234567"`, 6자리-7자리)와 전화번호(`"010-1234-5678"`)는 둘 다 이
+형태를 우연히 포함하고 있어(하이픈 앞뒤 6~7자리 숫자열 중 일부가 우연히
+4+1~2자리로 잘림), 실제로는 날짜가 아닌데도 `day_missing`으로 오판됐다.
+
+**→ 개인정보 노출 문제로 재분류 (CLAUDE.md 절대 원칙 4 위반)**
+
+최초에는 "정확도 오탐, `date_parser` 결함"으로만 분류했으나, 노출 경로를
+추적해보니 **판정 정확도만의 문제가 아니었다.** 오탐으로 만들어진
+`ParsedDate`가 매칭된 원문 조각을 그대로 담아 밖으로 내보내고 있었다:
+
+```
+parse_dates()  →  ParsedDate.raw_text = "1231-12"
+  →  requirement_checker.check_requirements()  "raw_text": e.raw_text
+  →  RequirementResult.extracted
+  →  agent._requirement_payload()
+  →  AgentOutput.data["requirements"]["date"]["extracted"]["entries"][0]
+```
+
+노출되던 값은 `"1231-12"` — 주민번호 앞자리의 **생년월일(12월 31일)** 과
+뒷자리 첫 숫자(**성별·세기 식별 숫자**)다. 전체 주민번호는 아니지만
+생년월일+성별은 그 자체로 개인정보다. 전화번호도 같은 방식으로 `"1234-56"`이
+새어나갔다.
+
+`masking.mask_text()`로는 막히지 않는 경로였다 — 마스킹은 **LLM 호출 직전에만**
+돌고, 이 유출은 LLM과 무관한 판정 결과 반환 경로에서 일어났기 때문이다.
+화면 문구(`reply`)에는 나오지 않지만 API 응답 JSON에는 실렸고, 세션 저장
+(네임스페이스 규약 도입 후 `DecedentState.requirements`)까지 흘러갈 수 있었다.
+
+**수정 (두 겹)**
+
+1. **근본 원인** — `date_parser`의 숫자 날짜 패턴 앞뒤에
+   `_NO_DIGIT_BEFORE`(`(?<!\d)`) / `_NO_DIGIT_AFTER`(`(?!\d)`) 가드를 붙여
+   "네 자리 연도가 더 긴 숫자열의 일부이면 날짜가 아니다"를 강제했다.
+   주민번호·전화번호·구분자 없는 긴 숫자열이 전부 매칭되지 않는다.
+   정상 표기(`"2026-05"`, `"2026. 5"`, `"2026년 5월"`, 전체 날짜)는 앞뒤가
+   숫자가 아니므로 그대로 매칭된다.
+2. **2차 방어** — 날짜 `entries` 페이로드에서 `raw_text`(매칭된 원문 조각)를
+   아예 제외했다(`requirement_checker` / `recording_checker` 양쪽). 다른
+   오탐이 새로 생기더라도 원문 조각 자체는 경계를 넘지 않는다. 화면 표시는
+   `year`/`month`/`day`만 쓰므로 기능 손실이 없다.
+
+**회귀 방지**: `test_decedent_date_parser.py`의 PII 파라미터 테스트 +
+`test_decedent_pii_not_in_result.py`(응답·`extracted` 전체를 문자열로 훑어
+조각 노출 여부 확인 — `test_*_excludes_will_text` 계열과 같은 성격).
+
 ---
 
 ## 4. 간인 (`detect_interseal`)
