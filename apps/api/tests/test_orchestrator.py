@@ -121,13 +121,22 @@ def test_namespaced_state_round_trips_through_session(monkeypatch):
     assert captured_inputs[1]["heir_navigator"] == {"turns": 1}
 
 
-def test_legacy_flat_context_agent_is_not_namespaced(monkeypatch):
+def test_decedent_estate_is_namespaced_like_other_agents(monkeypatch):
+    """decedent_estate도 네임스페이스 규약을 따르므로 다른 에이전트와 동일하게
+    context["decedent_estate"]가 채워지고, 세션에도 상태가 저장돼야 한다.
+
+    (예전에는 LEGACY_FLAT_CONTEXT_AGENTS에 들어 있어서 평면 context가 그대로
+    통과하고 세션 저장은 아예 없었다 — 그 동작을 검증하던 테스트를 갱신한 것.)
+    """
     captured_inputs = []
 
     def _run(payload: AgentInput) -> AgentOutput:
         captured_inputs.append(payload.context)
         return AgentOutput(
-            agent=AgentName.DECEDENT_ESTATE, reply="ok", next_action=None, data={}
+            agent=AgentName.DECEDENT_ESTATE,
+            reply="ok",
+            next_action=None,
+            data={"decedent_estate": {"will_type": "handwritten"}},
         )
 
     monkeypatch.setitem(router._AGENT_RUNNERS, AgentName.DECEDENT_ESTATE, _run)
@@ -140,5 +149,18 @@ def test_legacy_flat_context_agent_is_not_namespaced(monkeypatch):
         )
     )
 
+    # 네임스페이스 키가 생기고(첫 턴이라 비어 있음), 평면 키는 클라이언트가 보낸
+    # 그대로 함께 전달된다 — 옛 클라이언트 호환은 이제 에이전트 쪽 안전망이 맡는다.
+    assert captured_inputs[0]["decedent_estate"] == {}
     assert captured_inputs[0]["will_type"] == "handwritten"
-    assert "decedent_estate" not in captured_inputs[0]
+
+    # 두 번째 턴: 지난 턴 data["decedent_estate"]가 세션을 거쳐 되돌아와야 한다.
+    router.route(AgentInput(session_id="s6", user_message="네", context={}))
+    assert captured_inputs[1]["decedent_estate"] == {"will_type": "handwritten"}
+
+
+def test_legacy_flat_context_set_is_empty():
+    """세 에이전트 모두 규약을 따르므로 이 집합은 비어 있어야 한다."""
+    from orchestrator.handoff import LEGACY_FLAT_CONTEXT_AGENTS
+
+    assert LEGACY_FLAT_CONTEXT_AGENTS == set()
