@@ -21,7 +21,7 @@
 
 - **분류: LLM 추출 단계에서 해결 예정 → 해결됨** (`requirement_checker.extract_name_with_fallback`)
 - 정규식이 `absent`를 반환했을 때만 `masking.mask_text()`를 거쳐 `llm_client.extract_testator_name()`
-  을 호출해 유언자 본인 성명만 뽑는다. `.env`에 `CLAUDE_API_KEY`가 없거나 호출이 실패하면 조용히
+  을 호출해 유언자 본인 성명만 뽑는다. `.env`에 `ANTHROPIC_API_KEY`가 없거나 호출이 실패하면 조용히
   `absent`로 되돌아간다(에이전트가 죽지 않음). 어느 경로로 값이 왔는지는
   `extracted["extraction_method"]`(`"regex"|"llm"|"none"`)로 노출된다.
 - 참고: 샘플 C(`서울 강남구 거주 김영수`)와 `test_decedent_name_llm_fallback.py`로 검증됨.
@@ -185,7 +185,7 @@
   **한 번만** 호출해 5개를 함께 받는다 — 항목별로 따로 호출하지 않는다(비용/지연 절감).
   이미 정규식으로 찾은 항목은 LLM 값이 와도 그대로 유지한다(정규식 우선). 연월일은
   LLM이 돌려준 `date_text`도 `date_parser.parse_dates`를 다시 거쳐 일(日) 누락 등 기존
-  등급 조건을 그대로 적용한다. `.env`에 `CLAUDE_API_KEY`가 없거나 호출이 실패하면 조용히
+  등급 조건을 그대로 적용한다. `.env`에 `ANTHROPIC_API_KEY`가 없거나 호출이 실패하면 조용히
   각 항목의 정규식 결과(`absent`)로 되돌아간다. 어느 경로로 값이 왔는지는 항목마다
   `extracted["extraction_method"]`(`"regex"|"llm"|"none"`)로 노출된다.
 - 참고: `test_decedent_recording_checker.py`의 LLM 폴백 테스트들과
