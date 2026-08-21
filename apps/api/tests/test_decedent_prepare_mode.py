@@ -219,8 +219,8 @@ def test_prepare_recording_without_draft_returns_guide_only() -> None:
         f"📝 증인 결격 여부: 증인은 미성년자, 피성년후견인·피한정후견인, 그리고 이 "
         f"유언으로 재산을 받는 사람과 그 배우자·직계혈족이 아니어야 합니다. "
         f"결격 사유가 있는 사람을 증인으로 세우면 요건을 갖추지 못합니다 "
-        f"{eligible_citation}. 유언집행자라는 사정만으로는 증인 결격이 아니라고 "
-        f"본 판례가 있습니다."
+        f"{eligible_citation}. 조문상 유언집행자는 증인 결격사유로 열거되어 "
+        f"있지 않습니다."
     ) in output.reply
 
 
