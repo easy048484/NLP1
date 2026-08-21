@@ -82,18 +82,42 @@ class DateParseResult:
 
 _Extractor = Callable[[re.Match[str]], tuple]
 
+# ⚠️ 개인정보 보호 가드 (CLAUDE.md 절대 원칙 4)
+#
+# 숫자 날짜 패턴은 앞뒤에 이 두 가드를 반드시 붙인다 — "네 자리 연도가 더 긴
+# 숫자열의 일부이면 날짜가 아니다"라는 뜻이다.
+#
+# 없으면 주민등록번호("901231-1234567")의 중간 조각 "1231-12"가 연월 표기로
+# 오탐된다. 그 조각은 생년월일(12월 31일)과 성별 식별 숫자를 담고 있는데,
+# 판정 결과(ParsedDate.raw_text/year/month)에 실려 API 응답과 세션 저장까지
+# 흘러가 마스킹(masking.mask_text)을 우회한다 — mask_text 는 LLM 호출 직전에만
+# 돌기 때문에 이 경로를 막지 못한다. 전화번호("010-1234-5678" → "1234-56")도
+# 같은 방식으로 새어나갔다.
+#
+# 정상 표기("2026-05", "2026. 5", "2026년 5월")는 앞뒤가 숫자가 아니므로
+# 그대로 매칭된다.
+_NO_DIGIT_BEFORE = r"(?<!\d)"
+_NO_DIGIT_AFTER = r"(?!\d)"
+
 # 년-월-일 모두 있는 표기들. 우선순위 없이 전부 시도하고 겹치지 않게 마스킹한다.
 _FULL_DATE_PATTERNS: list[tuple[re.Pattern[str], _Extractor]] = [
     (
-        re.compile(r"(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일"),
+        re.compile(
+            rf"{_NO_DIGIT_BEFORE}(\d{{4}})\s*년\s*(\d{{1,2}})\s*월\s*(\d{{1,2}})\s*일"
+        ),
         lambda m: (_num(m.group(1)), _num(m.group(2)), _num(m.group(3))),
     ),
     (
-        re.compile(r"(\d{4})\s*\.\s*(\d{1,2})\s*\.\s*(\d{1,2})\s*\.?"),
+        re.compile(
+            rf"{_NO_DIGIT_BEFORE}(\d{{4}})\s*\.\s*(\d{{1,2}})\s*\.\s*(\d{{1,2}})"
+            rf"{_NO_DIGIT_AFTER}\s*\.?"
+        ),
         lambda m: (_num(m.group(1)), _num(m.group(2)), _num(m.group(3))),
     ),
     (
-        re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})"),
+        re.compile(
+            rf"{_NO_DIGIT_BEFORE}(\d{{4}})-(\d{{1,2}})-(\d{{1,2}}){_NO_DIGIT_AFTER}"
+        ),
         lambda m: (_num(m.group(1)), _num(m.group(2)), _num(m.group(3))),
     ),
     (
@@ -111,15 +135,17 @@ _FULL_DATE_PATTERNS: list[tuple[re.Pattern[str], _Extractor]] = [
 # 년-월만 있는 표기들(일 누락). 위 FULL 매칭으로 이미 마스킹된 나머지 텍스트에서 찾는다.
 _YEAR_MONTH_ONLY_PATTERNS: list[tuple[re.Pattern[str], _Extractor]] = [
     (
-        re.compile(r"(\d{4})\s*년\s*(\d{1,2})\s*월"),
+        re.compile(rf"{_NO_DIGIT_BEFORE}(\d{{4}})\s*년\s*(\d{{1,2}})\s*월"),
         lambda m: (_num(m.group(1)), _num(m.group(2))),
     ),
     (
-        re.compile(r"(\d{4})\s*\.\s*(\d{1,2})\s*\.?"),
+        re.compile(
+            rf"{_NO_DIGIT_BEFORE}(\d{{4}})\s*\.\s*(\d{{1,2}}){_NO_DIGIT_AFTER}\s*\.?"
+        ),
         lambda m: (_num(m.group(1)), _num(m.group(2))),
     ),
     (
-        re.compile(r"(\d{4})-(\d{1,2})"),
+        re.compile(rf"{_NO_DIGIT_BEFORE}(\d{{4}})-(\d{{1,2}}){_NO_DIGIT_AFTER}"),
         lambda m: (_num(m.group(1)), _num(m.group(2))),
     ),
     (
