@@ -159,8 +159,14 @@ def test_decedent_estate_is_namespaced_like_other_agents(monkeypatch):
     assert captured_inputs[1]["decedent_estate"] == {"will_type": "handwritten"}
 
 
-def test_legacy_flat_context_set_is_empty():
-    """세 에이전트 모두 규약을 따르므로 이 집합은 비어 있어야 한다."""
-    from orchestrator.handoff import LEGACY_FLAT_CONTEXT_AGENTS
-
-    assert LEGACY_FLAT_CONTEXT_AGENTS == set()
+# (삭제됨) test_legacy_flat_context_set_is_empty
+#
+# LEGACY_FLAT_CONTEXT_AGENTS 가 빈 집합인지를 그대로 단언하던 테스트를 지웠다.
+# 동작이 아니라 상수 값을 확인하는 테스트라 정보량이 적고, 같은 회귀는 바로 위
+# test_decedent_estate_is_namespaced_like_other_agents 가 이미 잡는다 —
+# decedent_estate 를 다시 집합에 넣으면 네임스페이스 키가 만들어지지 않아
+# KeyError 로 실패한다.
+#
+# 더 중요하게는, 네 번째 에이전트를 규약 적용 전까지 임시로 이 집합에 등록하는
+# 정당한 사용(handoff.py 가 상수를 확장점으로 남겨둔 이유)에서 이 테스트가
+# 실패해 설계 결정과 모순됐다.
