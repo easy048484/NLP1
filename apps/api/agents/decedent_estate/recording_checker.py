@@ -138,12 +138,14 @@ def _resolve_date_field(
 
 
 def _date_entries_payload(date_result: DateParseResult) -> list[dict[str, Any]]:
+    # ⚠️ raw_text(매칭된 원문 조각)는 의도적으로 담지 않는다 — 자세한 이유는
+    # requirement_checker.check_requirements 의 같은 자리 주석 참고
+    # (CLAUDE.md 절대 원칙 4, 오탐 시 원문 조각이 응답·세션으로 새는 것을 막음).
     return [
         {
             "year": e.year,
             "month": e.month,
             "day": e.day,
-            "raw_text": e.raw_text,
             "case": e.case,
         }
         for e in date_result.entries
