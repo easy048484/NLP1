@@ -104,6 +104,36 @@ def test_broken_flat_value_keeps_namespace_state() -> None:
     assert state.will_type == "handwritten"
 
 
+def test_empty_string_flat_value_does_not_override_namespace() -> None:
+    """빈 문자열은 "미지정"이라 저장된 값을 덮어쓰면 안 된다.
+
+    프론트가 아직 선택 안 한 필드를 `will_type=""` 로 실어 보내는 경우가 있는데,
+    이게 override 로 인정되면 will_type 게이트가 다시 열려 사용자가 이미 답한
+    질문을 또 받게 된다.
+    """
+    state = load_state(
+        {
+            STATE_KEY: {"will_type": "handwritten", "seal_answer": "signature_only"},
+            "will_type": "",
+            "seal_answer": "",
+        }
+    )
+
+    assert state.will_type == "handwritten"
+    assert state.seal_answer == "signature_only"
+
+
+def test_false_has_draft_is_still_a_valid_override() -> None:
+    """회귀: has_draft=False 는 bool 이라 빈 문자열 필터에 걸리지 않아야 한다.
+
+    `False == ""` 는 False 이므로 그대로 유효한 override 로 남는다 — "초안이
+    없다"는 명시적 답을 잃으면 prepare 모드가 잘못 동작한다.
+    """
+    state = load_state({STATE_KEY: {"has_draft": True}, "has_draft": False})
+
+    assert state.has_draft is False
+
+
 def test_dump_state_roundtrip() -> None:
     original = DecedentState(will_type="handwritten", handwriting_answer="yes")
     assert load_state({STATE_KEY: dump_state(original)}) == original
