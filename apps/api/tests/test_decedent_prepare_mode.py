@@ -428,6 +428,12 @@ _NOT_DRAFT_MESSAGES = [
     "유언장",  # 제목만 있고 내용이 없음
     "",
     "   ",
+    # 회귀 테스트 — "준다/드립니다/남깁니다" 같은 범용 어미가 수신자·재산 표시
+    # 없이 단독으로 쓰인 일상 응답은 초안으로 오인되면 안 된다 (실측 확인된 버그).
+    "확인해 드립니다.",
+    "설명 드립니다.",
+    "이거 확인 후 남깁니다.",
+    "곧 다시 연락 드리겠습니다.",
 ]
 
 _DRAFT_MESSAGES = [
@@ -464,6 +470,19 @@ def test_prepare_with_request_sentence_shows_guide_only() -> None:
     assert output.reply.rstrip().endswith(
         "초안을 작성하신 뒤 그 내용을 보내주시면 형식 요건을 점검해드릴게요."
     )
+
+
+def test_prepare_with_polite_reply_shows_guide_only() -> None:
+    """버그 재현 케이스 — "확인해 드립니다." 같은 평범한 응답도 점검 결과가
+
+    붙으면 안 된다. "드립니다"만으로 초안 처분 의사로 오인하던 문제.
+    """
+    output = _run("확인해 드립니다.", will_type="handwritten", intent="prepare")
+
+    assert "review" not in output.data
+    assert "requirements" not in output.data
+    assert "❌" not in output.reply
+    assert "확인되지 않습니다" not in output.reply
 
 
 def test_prepare_with_real_draft_still_shows_both_guide_and_review() -> None:

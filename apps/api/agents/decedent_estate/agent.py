@@ -196,10 +196,21 @@ def _intent_question_output(
 #    초안으로 잡히면 안 되기 때문). recording_checker._DISPOSITION_INTENT_RE 와
 #    목적이 비슷하지만, 그쪽은 "요건 충족 여부" 판정용이라 더 좁고 여기는
 #    "초안인가" 판별용이라 구어체 어미까지 넓게 잡는다.
-_DRAFT_DISPOSITION_RE = re.compile(
+#
+#    "상속한다"/"물려주다" 계열은 그 자체로 재산 처분 의미가 명확해 단어만으로
+#    판단해도 된다. 하지만 "준다/드립니다/남깁니다" 같은 범용 어미는 "확인해
+#    드립니다", "말씀 드립니다"처럼 재산과 무관한 일상 응답에도 흔히 등장한다
+#    (실측 확인된 버그) — 그래서 이 그룹은 수신자 표시("에게"/"한테")나 재산
+#    관련 명사가 같은 문장에 함께 있을 때만 처분 의사로 인정한다.
+_DRAFT_DISPOSITION_VERB_RE = re.compile(
     r"(?:상속|증여|유증|양도)(?:한다|하며|하고|합니다|하겠|시킨다|시키며)"
     r"|물려주(?:다|고|며|겠|었|기)"
-    r"|(?:준다|줍니다|드린다|드립니다|넘긴다|남긴다|남깁니다|맡긴다)"
+)
+_DRAFT_BARE_GIVE_VERB_RE = re.compile(
+    r"준다|줍니다|드린다|드립니다|넘긴다|남긴다|남깁니다|맡긴다"
+)
+_DRAFT_RECIPIENT_OR_PROPERTY_RE = re.compile(
+    r"에게|한테|재산|통장|부동산|예금|주식|아파트|건물|집|땅|토지|돈"
 )
 
 # 3) "유언장"/"유언" 만으로 이루어진 제목 줄 (그 아래에 내용이 더 있어야 초안).
@@ -221,7 +232,12 @@ def _looks_like_draft(text: str) -> bool:
     if not text or not text.strip():
         return False
 
-    if _DRAFT_DISPOSITION_RE.search(text):
+    if _DRAFT_DISPOSITION_VERB_RE.search(text):
+        return True
+
+    if _DRAFT_BARE_GIVE_VERB_RE.search(text) and _DRAFT_RECIPIENT_OR_PROPERTY_RE.search(
+        text
+    ):
         return True
 
     if parse_dates(text).case != "absent":
