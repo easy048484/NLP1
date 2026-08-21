@@ -54,6 +54,7 @@ def test_missing_will_type_asks_the_selection_question() -> None:
         {"value": "recording", "label": "녹음·영상"},
         {"value": "notarial", "label": "공증받은 유언"},
         {"value": "unknown", "label": "그 외·모르겠음"},
+        {"value": "none", "label": "유언장이 없거나 찾지 못했습니다"},
     ]
 
 
@@ -78,7 +79,10 @@ def test_invalid_will_type_reasks_with_warning() -> None:
                 "notarial",
                 "secret",
                 "oral",
+                # 아래 둘은 민법 5방식이 아니라 UI sentinel이다
+                # ("모르겠음" / "유언장 없음").
                 "unknown",
+                "none",
             ],
         }
     ]

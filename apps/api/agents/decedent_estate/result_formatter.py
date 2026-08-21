@@ -137,6 +137,17 @@ _FOOTER_NOTICE = (
 )
 
 
+def closing_lines() -> list[str]:
+    """모든 결과 화면 끝에 붙는 §3-3(상담 연결) · §3-4(하단 고지) 두 줄.
+
+    format_result/format_guide 는 내부에서 알아서 붙이지만, 요건 판정을 돌지
+    않는 안내 전용 화면(예: agent._run_no_will_pipeline)도 같은 두 줄로 끝나야
+    해서 공개 헬퍼로 노출한다 — 문구를 그쪽에 복사해두면 스펙이 바뀔 때 한쪽만
+    고쳐질 수 있다(§3-3/§3-4의 단일 출처를 이 모듈로 유지).
+    """
+    return [_CONSULTATION_LINE, _FOOTER_NOTICE]
+
+
 @lru_cache(maxsize=1)
 def _load_precedents() -> dict[str, dict[str, Any]]:
     with _PRECEDENTS_PATH.open(encoding="utf-8") as f:
