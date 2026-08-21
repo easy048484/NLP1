@@ -79,11 +79,22 @@ class DecedentState(BaseModel):
 
 
 def _flat_overrides(context: dict[str, Any]) -> dict[str, Any]:
-    """이번 턴 평면 키 중 실제로 들어온 것만 뽑는다 (None 은 "미지정"이라 제외)."""
+    """이번 턴 평면 키 중 실제로 들어온 것만 뽑는다.
+
+    None(키 자체가 없거나 명시적 null)과 빈 문자열은 "미지정"으로 보고 제외한다.
+    빈 문자열을 걸러내지 않으면 프론트가 아직 선택 안 한 필드를 `will_type=""`
+    처럼 실어 보냈을 때, 네임스페이스에 저장돼 있던 정상 값을 빈 문자열로
+    덮어쓴다 — 그러면 will_type 게이트가 다시 열려 사용자가 이미 답한 질문을
+    또 받게 된다(유족 대상 UX에서 특히 나쁘다).
+
+    ⚠️ `v != ""` 는 문자열에만 걸린다. has_draft(bool)의 False 는 `False == ""`
+    가 False 라 그대로 유효한 override 로 남는다 — "초안이 없다"는 명시적 답을
+    잃지 않는다.
+    """
     return {
         field: context[field]
         for field in _FLAT_FALLBACK_FIELDS
-        if context.get(field) is not None
+        if context.get(field) is not None and context.get(field) != ""
     }
 
 
