@@ -22,6 +22,7 @@ STATE_KEY = "tax_calculator"
 BOOL_SLOTS = {
     "decedent_is_resident",
     "spouse_exists",
+    "spouse_is_sole_heir",
     "filing_within_deadline",
 }
 
@@ -45,6 +46,11 @@ QUESTIONS = {
     ),
     "children_count": (
         "피상속인의 생존 자녀는 몇 명인가요? " "예: '2명', 자녀가 없다면 '0명'"
+    ),
+    "spouse_is_sole_heir": (
+        "자녀가 없으시군요. 배우자가 단독으로 상속받으시나요, 아니면 피상속인의 "
+        "부모님(직계존속)도 함께 상속받으시나요? 배우자 단독상속이면 '네', "
+        "부모님과 함께라면 '아니요'로 답해주세요."
     ),
     "original_inherited_property": (
         "부동산, 예금, 주식 등 본래의 상속재산은 총 얼마인가요? "
@@ -168,9 +174,21 @@ def _apply_family_graph(
 
         spouse_exists = any(heir.get("relation") == "spouse" for heir in alive_heirs)
         children_count = sum(heir.get("relation") == "child" for heir in alive_heirs)
-        spouse_is_sole_heir = (
-            len(alive_heirs) == 1 and alive_heirs[0].get("relation") == "spouse"
+
+        # 민법 제1003조: 배우자는 1순위(직계비속) 또는 2순위(직계존속)
+        # 상속인이 있으면 그들과 공동상속하고, 둘 다 없을 때만 단독상속인이
+        # 된다 — 형제자매(3순위)는 배우자가 있으면 애초에 상속인이 아니므로
+        # family_graph에 같이 등록돼 있어도 단독상속 여부에 영향을 주면
+        # 안 된다. grandchild/grandparent는 대습상속(자녀·부모가 먼저
+        # 사망한 경우의 대체) 자리라 1·2순위와 동일하게 취급한다.
+        # ⚠️ 대습상속의 정확한 지분 계산(예: 대습자가 여럿일 때 원래 몫을
+        # 나누는 것)까지는 다루지 않는다 — 여기서는 "단독상속 여부"만
+        # 정확히 가리는 것이 목적이다.
+        _HIGHER_PRIORITY_RELATIONS = {"child", "parent", "grandchild", "grandparent"}
+        has_higher_priority_heir = any(
+            heir.get("relation") in _HIGHER_PRIORITY_RELATIONS for heir in alive_heirs
         )
+        spouse_is_sole_heir = spouse_exists and not has_higher_priority_heir
 
         values["spouse_exists"] = spouse_exists
         values["children_count"] = children_count
@@ -249,7 +267,13 @@ def _parse_money(message: str) -> int | None:
 
     normalized = message.strip().replace(",", "").replace(" ", "")
 
-    if any(word in normalized for word in ("없", "없음", "0원")):
+    if "없" in normalized:
+        return 0
+
+    # "0원", "0" 처럼 전체가 0을 뜻하는 경우만 0으로 처리한다. 부분 문자열로
+    # "0원"을 검사하면 "500000000원"처럼 끝자리가 0으로 끝나는 정상적인 금액까지
+    # 전부 0으로 잘못 인식된다 (실측 확인된 버그).
+    if re.fullmatch(r"0+원?", normalized):
         return 0
 
     multipliers = {
@@ -319,13 +343,24 @@ def _missing_slots(values: dict[str, Any]) -> list[str]:
         "decedent_is_resident",
         "spouse_exists",
         "children_count",
-        "original_inherited_property",
-        "debts",
-        "financial_assets",
-        "financial_debts",
-        "prior_gifts_to_heirs",
-        "prior_gifts_to_non_heirs",
     ]
+
+    # 배우자가 있고 자녀가 없으면, 배우자가 단독상속인인지(부모님과 공동상속이
+    # 아닌지) 자녀 수 바로 다음에 확인해야 한다 — 안 물어보면 spouse_is_sole_heir가
+    # 기본값 False로 남아 계산이 실패한다.
+    if values.get("spouse_exists") is True and values.get("children_count") == 0:
+        slot_order.append("spouse_is_sole_heir")
+
+    slot_order.extend(
+        [
+            "original_inherited_property",
+            "debts",
+            "financial_assets",
+            "financial_debts",
+            "prior_gifts_to_heirs",
+            "prior_gifts_to_non_heirs",
+        ]
+    )
 
     if values.get("spouse_exists") is True:
         slot_order.append("spouse_actual_inheritance")
@@ -421,6 +456,32 @@ def run(payload: AgentInput) -> AgentOutput:
                 "현재 상속세 계산기는 피상속인이 국내 거주자인 경우만 "
                 "지원합니다. 비거주자 상속은 국내 재산 범위와 공제 기준이 "
                 "다르므로 세무 전문가의 확인이 필요합니다."
+            ),
+            next_action=None,
+            data={STATE_KEY: state},
+        )
+
+    if (
+        values.get("spouse_exists") is True
+        and values.get("children_count") == 0
+        and values.get("spouse_is_sole_heir") is False
+    ):
+        # calculator.calculate_spouse_legal_share는 배우자+자녀 공동상속 또는
+        # 배우자 단독상속만 지원한다 — 배우자가 피상속인의 부모님과 함께
+        # 공동상속받는 경우는 아직 계산할 수 없다. 이 경우를 계산까지 보냈다가
+        # ValueError로 걸리면 "입력이 서로 안 맞는다"는 오해를 주므로 여기서
+        # 먼저 걸러 정확한 이유를 안내한다.
+        state["status"] = "unsupported"
+        state["asked_slot"] = None
+        state["missing_fields"] = []
+
+        return AgentOutput(
+            agent=AgentName.TAX_CALCULATOR,
+            reply=(
+                "현재 상속세 계산기는 배우자와 자녀의 공동상속, 또는 배우자 "
+                "단독상속만 지원합니다. 배우자가 피상속인의 부모님(직계존속)과 "
+                "함께 상속받는 경우는 아직 지원하지 않아 세무 전문가의 확인이 "
+                "필요합니다."
             ),
             next_action=None,
             data={STATE_KEY: state},
