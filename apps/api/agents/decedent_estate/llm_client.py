@@ -20,7 +20,7 @@ LLM 추출 클라이언트 (CLAUDE.md 빌드 순서 4단계).
 6. 요청/응답을 저장하지 않는다. 실패 시에도 원문이 담긴 예외 메시지를
    로깅하지 않고 그냥 None 을 반환한다 — 호출부가 정규식 결과로 폴백한다.
 
-API 키는 팀 공용 키(.env 의 CLAUDE_API_KEY)를 쓴다. 키가 없거나, 네트워크
+API 키는 팀 공용 키(.env 의 ANTHROPIC_API_KEY)를 쓴다. 키가 없거나, 네트워크
 오류·타임아웃·응답 형식 오류가 나면 예외를 던지지 않고 조용히 None 을 반환한다.
 """
 
@@ -81,7 +81,7 @@ _RECORDING_SYSTEM_PROMPT = (
 
 
 def _client() -> Optional[anthropic.Anthropic]:
-    api_key = os.getenv("CLAUDE_API_KEY")
+    api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return None
     return anthropic.Anthropic(api_key=api_key)

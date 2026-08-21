@@ -47,7 +47,7 @@ def _install_fake_client(
     text: str | None = None,
     exc: Exception | None = None
 ) -> None:
-    monkeypatch.setenv("CLAUDE_API_KEY", "fake-test-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-test-key")
     monkeypatch.setattr(
         llm_client.anthropic,
         "Anthropic",
@@ -56,7 +56,7 @@ def _install_fake_client(
 
 
 def test_returns_none_when_api_key_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("CLAUDE_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     def _fail_if_called(**kwargs):
         raise AssertionError("API 키가 없으면 Anthropic 클라이언트를 만들면 안 된다")
