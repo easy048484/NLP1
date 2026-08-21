@@ -29,11 +29,36 @@
 
 ## 빌드 순서
 1) rules/requirements.json → 2) 연월일 파서+요건 판정기+테스트 → 3) 마스킹 → 4) LLM 추출 연결
-- 3), 4)는 **성명(name) 요건에 한해** 완료됨: masking.py(민감정보 제거) →
-  llm_client.py(정규식이 못 찾은 경우에만 호출, 유언자 본인 성명만 추출) →
-  requirement_checker.extract_name_with_fallback() 로 연결.
-- 날짜/주소는 여전히 정규식 전용이며, LLM 폴백이 없다 (docs/known_limitations.md
-  의 항목들이 아직 해당 요건에 남아 있음).
+- 3), 4)는 **성명·연월일·주소 세 요건 모두** 완료됨: masking.py(민감정보 제거) →
+  llm_client.py(정규식이 못 찾은 경우에만 호출) → requirement_checker.py 의
+  extract_*_with_fallback() 세 함수로 연결.
+  - **성명**: extract_name_with_fallback() → llm_client.extract_testator_name().
+    LLM이 이름을 찾으면 곧바로 "present"로 확정한다(성명은 찾음/못찾음만 있고
+    등급이 갈리지 않음).
+  - **연월일**: extract_date_with_fallback() → llm_client.extract_will_date().
+    성명과 달리 LLM이 등급(day_missing/verbal_specified 등)을 직접 정하지
+    않는다 — 원문 그대로의 날짜 "문자열"만 반환하고, 그 문자열을
+    date_parser.parse_dates()에 다시 통과시켜 규칙 엔진이 등급을 매긴다.
+    **여러 날짜가 섞인 경우(multiple_dates_mixed)는 폴백 대상이 아니다** —
+    작성일 "선별"은 절 추출이 아니라 사실 판단에 가까워 신뢰 모델이 다르고,
+    잘못 선별해도 형식상 결과가 나와 실패가 조용히 묻힐 위험이 있다(팀 결정
+    2026-08-21, docs/known_limitations.md 3-4 — 별도 이슈로 사용자 확인
+    질문 방식을 검토 중).
+  - **주소**: extract_address_with_fallback() → llm_client.extract_will_address().
+    연월일과 동일한 원칙 — LLM은 주소 문자열만 찾고, 그 문자열을
+    _ADDRESS_UNIT_RE/_ADDRESS_DISTRICT_RE에 다시 통과시켜 full_address/
+    city_district_only를 가른다. 이미 등급이 매겨진 결과(예: city_district_only,
+    2012다71688 "동만 기재 무효" 판정)는 LLM이 절대 덮어쓰지 않는다 — 정규식이
+    `absent`를 반환했을 때만 호출된다.
+  - 셋 다 `extracted["extraction_method"]`(`"regex"|"llm"|"none"`)로 어느
+    경로에서 값이 왔는지 노출한다.
+  - **날짜의 실제 개선 폭은 주소보다 좁다** — 주소는 재산 문맥 줄 제외
+    규칙(known_limitations.md 2-1) 때문에 "존재하는데 통째로 가려지는"
+    구조적 버그가 있어 LLM 폴백이 실질적으로 해결하지만, date_parser 는 그런
+    줄 단위 배제 로직이 없다. 또한 LLM이 날짜를 "원문 그대로"만 반환하고
+    재구성하지 않기 때문에(팀 결정), 정규식이 아예 인식 못 하는 새 키워드
+    (예: "생신")는 LLM 폴백을 거쳐도 여전히 absent로 남는다 — 자세한 내용은
+    docs/known_limitations.md 3-1 참고.
 - **유언 방식 분기**(rules/will_types.json, will_types.py)가 agent.run() 맨 앞단에
   추가됨: context.will_type 이 없으면 방식을 먼저 묻는다.
   - handwritten/unknown(기본값 자필증서 적용) → requirement_checker.py 파이프라인

@@ -1,13 +1,26 @@
 """
 LLM 추출 클라이언트 (CLAUDE.md 빌드 순서 4단계).
 
-두 가지 추출을 담당한다:
+네 가지 추출을 담당한다:
 1. extract_testator_name — 자필증서 유언자 본인 성명 단일 추출 (requirement_checker
    에서 정규식이 못 찾았을 때만 호출).
 2. extract_recording_fields — 녹음 유언(§1067) 대본에서 5개 항목
    (유언자 성명/증인 성명/구술 연월일/재산 처분 의사/증인의 정확함 확인)을
    한 번의 호출로 함께 추출 (recording_checker에서 정규식이 5개 중 하나라도
    못 찾았을 때만 호출 — 항목별로 나눠 부르지 않는다, 비용/지연 절감).
+3. extract_will_date — 자필증서 유언장 작성 연월일 "문자열" 단일 추출
+   (requirement_checker 에서 정규식이 날짜를 전혀 못 찾았을 때만 호출).
+   이 함수는 값만 반환하고, day_missing/verbal_specified 같은 등급은
+   호출부가 date_parser.parse_dates 에 그 문자열을 다시 통과시켜 규칙
+   엔진으로 매긴다 — LLM이 case 를 직접 결정하지 않는다. 여러 날짜가
+   섞여 있어 작성일을 "선별"해야 하는 경우(multiple_dates_mixed)는
+   이 함수의 대상이 아니다 — 그건 절 추출이 아니라 사실 판단에 가까워
+   신뢰 모델이 다르고, 잘못 선별해도 형식상 결과가 나와 실패가 조용히
+   묻힐 위험이 있다 (docs/known_limitations.md 3-4).
+4. extract_will_address — 자필증서 유언자 본인 주소 "문자열" 단일 추출
+   (requirement_checker 에서 정규식이 주소를 전혀 못 찾았을 때만 호출).
+   이 함수도 값만 반환하고, full_address/city_district_only 등급은
+   호출부가 그 문자열을 주소 판별 정규식에 다시 통과시켜 매긴다.
 
 ⚠️ CLAUDE.md 절대 원칙:
 1. 판정은 하지 않는다. 이 모듈은 값/사실 여부만 추출한다 — 요건 충족 여부·
@@ -37,10 +50,17 @@ _MODEL = "claude-haiku-4-5-20251001"
 _TIMEOUT_SECONDS = 8.0
 _NAME_MAX_TOKENS = 64
 _RECORDING_MAX_TOKENS = 300
+_DATE_MAX_TOKENS = 64
+_ADDRESS_MAX_TOKENS = 100
 
 # LLM이 돌려준 이름이 정말 "이름처럼" 생겼는지 최소한으로 검증한다 — 응답 형식
 # 오류나 프롬프트 인젝션성 텍스트를 그대로 신뢰하지 않기 위한 방어선.
 _VALID_NAME_RE = re.compile(r"^[가-힣]{2,10}$")
+
+# 날짜·주소는 이름과 달리 표기가 너무 다양해 형식 정규식으로 검증할 수 없다.
+# 대신 응답이 빈 문자열이거나 비정상적으로 길면(프롬프트 인젝션성 텍스트 등)
+# 버린다 — 실제 날짜·주소 문구가 이 길이를 넘을 일은 거의 없다.
+_MAX_SHORT_TEXT_LENGTH = 120
 
 _TESTATOR_NAME_SYSTEM_PROMPT = (
     "너는 자필증서 유언장 텍스트에서 유언자 본인의 성명만 추출하는 도구다.\n"
@@ -79,6 +99,36 @@ _RECORDING_SYSTEM_PROMPT = (
     "}"
 )
 
+_WILL_DATE_SYSTEM_PROMPT = (
+    "너는 자필증서 유언장 텍스트에서 유언장을 작성한 연월일(작성일)이 적힌 "
+    "부분만 원문 그대로 찾아내는 도구다.\n"
+    "절대 판정하지 마라 — 일(日)이 빠졌는지, 날짜가 특정 가능한지 같은 판단은 "
+    "이 도구의 역할이 아니고 다른 시스템이 처리한다. 너는 오직 값 추출만 한다.\n"
+    "본문에는 작성일 외에도 다른 날짜(예: 재산 취득일, 과거 사건, 기념일 등)가 "
+    "함께 등장할 수 있다. 그런 날짜가 두 개 이상 섞여 있어 어느 것이 작성일인지 "
+    "애매하면 찾지 못한 것으로 처리하라 — 추측해서 하나를 고르지 마라.\n"
+    "찾은 날짜는 원문에 적힌 그대로 옮겨 적어라. 숫자로 바꾸거나 다른 형식으로 "
+    "고치지 마라.\n"
+    "반드시 아래 JSON 형식으로만 답하라. 다른 설명이나 문장을 절대 덧붙이지 마라.\n"
+    '작성일을 찾았으면: {"date_text": "2026년 5월 3일"}\n'
+    '찾을 수 없거나 애매하면: {"date_text": null}'
+)
+
+_WILL_ADDRESS_SYSTEM_PROMPT = (
+    "너는 자필증서 유언장 텍스트에서 유언자 본인의 주소가 적힌 부분만 원문 "
+    "그대로 찾아내는 도구다.\n"
+    "절대 판정하지 마라 — 주소가 번지까지 온전한지, 시·구 수준까지만인지 같은 "
+    "판단은 이 도구의 역할이 아니고 다른 시스템이 처리한다. 너는 오직 값 추출만 "
+    "한다.\n"
+    "본문에는 유언자 본인 주소 외에도 상속·증여하는 부동산의 소재지가 함께 "
+    "등장할 수 있다. 재산을 받는 사람의 주소나 부동산 소재지를 유언자 본인 "
+    "주소와 혼동하지 마라 — 유언장을 작성한 유언자 본인이 사는 곳만 찾아라.\n"
+    "찾은 주소는 원문에 적힌 그대로 옮겨 적어라. 다른 형식으로 고치지 마라.\n"
+    "반드시 아래 JSON 형식으로만 답하라. 다른 설명이나 문장을 절대 덧붙이지 마라.\n"
+    '유언자 본인 주소를 찾았으면: {"address_text": "서울특별시 강남구 테헤란로 123, 45동 678호"}\n'
+    '찾을 수 없으면: {"address_text": null}'
+)
+
 
 def _client() -> Optional[anthropic.Anthropic]:
     api_key = os.getenv("CLAUDE_API_KEY")
@@ -100,6 +150,27 @@ def _parse_name(raw_response_text: str) -> Optional[str]:
     parsed = json.loads(raw_response_text.strip())
     name = parsed.get("name") if isinstance(parsed, dict) else None
     return _validated_name(name)
+
+
+def _validated_short_text(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or len(value) > _MAX_SHORT_TEXT_LENGTH:
+        return None
+    return value
+
+
+def _parse_will_date(raw_response_text: str) -> Optional[str]:
+    parsed = json.loads(raw_response_text.strip())
+    date_text = parsed.get("date_text") if isinstance(parsed, dict) else None
+    return _validated_short_text(date_text)
+
+
+def _parse_will_address(raw_response_text: str) -> Optional[str]:
+    parsed = json.loads(raw_response_text.strip())
+    address_text = parsed.get("address_text") if isinstance(parsed, dict) else None
+    return _validated_short_text(address_text)
 
 
 def _parse_recording_fields(raw_response_text: str) -> Optional[dict[str, Any]]:
@@ -145,6 +216,57 @@ def extract_testator_name(masked_text: str) -> Optional[str]:
     except Exception:
         # 네트워크 오류·타임아웃·응답 형식 오류 등 어떤 이유든 정규식 폴백으로
         # 넘긴다. 원문이 섞일 수 있는 예외 메시지는 로깅하지 않는다.
+        return None
+
+
+def extract_will_date(masked_text: str) -> Optional[str]:
+    """마스킹된 유언장 텍스트에서 작성 연월일 문자열을 LLM으로 추출한다.
+
+    호출부(requirement_checker.extract_date_with_fallback)가 정규식으로
+    날짜를 전혀 못 찾았을 때만(fallback) 이 함수를 부른다. 반환값은 항상
+    "원문 그대로의 날짜 문자열"이며, day_missing/verbal_specified 같은 등급은
+    호출부가 date_parser.parse_dates 로 다시 매긴다 — 이 함수는 case 를
+    직접 정하지 않는다.
+    """
+    client = _client()
+    if client is None:
+        return None
+
+    try:
+        response = client.messages.create(
+            model=_MODEL,
+            max_tokens=_DATE_MAX_TOKENS,
+            system=_WILL_DATE_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": masked_text}],
+            timeout=_TIMEOUT_SECONDS,
+        )
+        return _parse_will_date(response.content[0].text)
+    except Exception:
+        return None
+
+
+def extract_will_address(masked_text: str) -> Optional[str]:
+    """마스킹된 유언장 텍스트에서 유언자 본인 주소 문자열을 LLM으로 추출한다.
+
+    호출부(requirement_checker.extract_address_with_fallback)가 정규식으로
+    주소를 전혀 못 찾았을 때만(fallback) 이 함수를 부른다. 반환값은 항상
+    "원문 그대로의 주소 문자열"이며, full_address/city_district_only 같은
+    등급은 호출부가 주소 판별 정규식으로 다시 매긴다.
+    """
+    client = _client()
+    if client is None:
+        return None
+
+    try:
+        response = client.messages.create(
+            model=_MODEL,
+            max_tokens=_ADDRESS_MAX_TOKENS,
+            system=_WILL_ADDRESS_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": masked_text}],
+            timeout=_TIMEOUT_SECONDS,
+        )
+        return _parse_will_address(response.content[0].text)
+    except Exception:
         return None
 
 
