@@ -22,6 +22,8 @@ from datetime import datetime, timedelta, timezone
 from threading import Lock
 from typing import Any, Optional
 
+from sqlalchemy.exc import IntegrityError
+
 from db.base import mask_sensitive_id, session_scope
 from family_graph.models import FamilyGraph
 from schemas import AgentName
@@ -134,35 +136,50 @@ class PostgresSessionStore(SessionStore):
     def save(self, session_id: str, state: SessionState) -> None:
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=_SESSION_TTL_SECONDS)
-        with session_scope() as db:
-            row = db.get(ChatSession, session_id)
-            if row is None:
-                row = ChatSession(session_id=session_id)
-                db.add(row)
+        # 같은 session_id로 두 요청이 동시에 "없는 세션"을 보면 둘 다 INSERT를
+        # 시도해 PK 충돌이 납니다. flush에서 IntegrityError가 나면 한 번 더
+        # 시도해 이미 커밋된 row를 갱신합니다.
+        last_error: Optional[IntegrityError] = None
+        for _ in range(2):
+            try:
+                with session_scope() as db:
+                    row = db.get(ChatSession, session_id)
+                    if row is None:
+                        row = ChatSession(session_id=session_id)
+                        db.add(row)
+                        db.flush()
 
-            family_graph_id = state.family_graph_id
-            if (
-                family_graph_id is not None
-                and db.get(FamilyGraph, family_graph_id) is None
-            ):
-                # 존재하지 않는(또는 삭제된) family_graph_id — sessions의 FK
-                # 제약을 그대로 두면 이 한 줄 때문에 요청 전체가 500으로
-                # 죽습니다. family_graph_id 하나 잘못 들어왔다고 세션 저장이
-                # 실패하면 안 되므로 조용히 비워둡니다 (repository.get_heirs_dict가
-                # 알 수 없는 id에 조용히 None을 돌려주는 것과 같은 원칙).
-                logger.warning(
-                    "family_graph_id=%s가 family_graphs에 없어 세션에서 비웁니다.",
-                    mask_sensitive_id(family_graph_id),
-                )
-                family_graph_id = None
+                    family_graph_id = state.family_graph_id
+                    if (
+                        family_graph_id is not None
+                        and db.get(FamilyGraph, family_graph_id) is None
+                    ):
+                        # 존재하지 않는(또는 삭제된) family_graph_id — sessions의 FK
+                        # 제약을 그대로 두면 이 한 줄 때문에 요청 전체가 500으로
+                        # 죽습니다. family_graph_id 하나 잘못 들어왔다고 세션 저장이
+                        # 실패하면 안 되므로 조용히 비워둡니다 (repository.get_heirs_dict가
+                        # 알 수 없는 id에 조용히 None을 돌려주는 것과 같은 원칙).
+                        logger.warning(
+                            "family_graph_id=%s가 family_graphs에 없어 세션에서 비웁니다.",
+                            mask_sensitive_id(family_graph_id),
+                        )
+                        family_graph_id = None
 
-            row.family_graph_id = family_graph_id
-            row.last_agent = state.last_agent.value if state.last_agent else None
-            row.pending_handoff = (
-                state.pending_handoff.value if state.pending_handoff else None
-            )
-            row.per_agent_context = dict(state.per_agent_context)
-            row.expires_at = expires_at
+                    row.family_graph_id = family_graph_id
+                    row.last_agent = (
+                        state.last_agent.value if state.last_agent else None
+                    )
+                    row.pending_handoff = (
+                        state.pending_handoff.value if state.pending_handoff else None
+                    )
+                    row.per_agent_context = dict(state.per_agent_context)
+                    row.expires_at = expires_at
+                return
+            except IntegrityError as exc:
+                last_error = exc
+                continue
+        assert last_error is not None
+        raise last_error
 
 
 #: 오케스트레이터 프로세스 전역에서 공유하는 싱글턴 — 기본값은 인메모리입니다.

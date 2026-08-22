@@ -6,6 +6,7 @@ test_orchestrator.py의 시나리오 일부를 그대로 이 구현체로도 반
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 
 from schemas import AgentName
@@ -73,3 +74,29 @@ def test_load_expired_session_returns_fresh_state(with_db):
 
     loaded = store.load("session-b")
     assert loaded.last_agent is None
+
+
+def test_concurrent_first_save_same_session_id_does_not_raise(with_db):
+    """같은 session_id로 동시에 첫 save가 와도 PK 충돌로 실패하지 않는다."""
+    store = PostgresSessionStore()
+    session_id = "session-concurrent-first-save"
+
+    def _save(agent: AgentName, turn: int) -> None:
+        state = SessionState()
+        state.remember(agent, context={"turn": turn}, pending_handoff=None)
+        store.save(session_id, state)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(_save, AgentName.HEIR_NAVIGATOR, 1),
+            pool.submit(_save, AgentName.TAX_CALCULATOR, 2),
+        ]
+        for future in as_completed(futures):
+            future.result()
+
+    loaded = store.load(session_id)
+    assert loaded.last_agent in (
+        AgentName.HEIR_NAVIGATOR,
+        AgentName.TAX_CALCULATOR,
+    )
+    assert loaded.context_for(loaded.last_agent)["turn"] in (1, 2)

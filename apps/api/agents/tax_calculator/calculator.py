@@ -150,7 +150,11 @@ def calculate_basic_or_lump_sum_deduction(
 def calculate_spouse_legal_share(
     data: InheritanceTaxInput,
 ) -> tuple[int, int]:
-    """배우자 법정상속분을 분자와 분모로 반환한다."""
+    """배우자 법정상속분을 분자와 분모로 반환한다.
+
+    현재 런타임에서 법정상속분 비율을 쓰는 실제 구현입니다.
+    family_graph와의 단일화는 후속 PR에서 다룹니다.
+    """
 
     if not data.spouse_exists:
         return (0, 1)
