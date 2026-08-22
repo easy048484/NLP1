@@ -343,7 +343,7 @@ def _will_type_question_output(
     )
 
 
-def _run_no_will_pipeline() -> AgentOutput:
+def _run_no_will_pipeline(state: DecedentState) -> AgentOutput:
     """유언장이 없거나 찾지 못한 경우 — 요건 판정을 아예 돌지 않고 안내만 한다.
 
     범위를 의도적으로 좁게 잡았다:
@@ -357,6 +357,15 @@ def _run_no_will_pipeline() -> AgentOutput:
     - CLAUDE.md 절대 원칙 2(무단정)를 그대로 적용한다 — "유언장이 없으니
       법정상속입니다" 같은 단정 대신 "확인된 유언장이 없는 경우 일반적으로 ~
       따릅니다" 패턴을 쓴다. 문구는 rules/will_types.json 의 no_will 에 있다.
+
+    ⚠️ (버그 수정) 다른 안내 전용 분기(_guidance_only_output — notarial/secret/oral)는
+    전부 _namespaced()로 will_type을 세션에 기록하는데, 이 함수만 평면 dict를 그대로
+    반환해서 data["decedent_estate"] 네임스페이스가 비어 있었다. 그 결과
+    handoff.extract_state_to_persist가 아무것도 저장하지 못해(next turn에서
+    `{}` ) will_type="none" 이 세션에서 사라지고, 나중에 다시 decedent_estate로
+    라우팅되면(예: 사용자가 heir_navigator 대화 중 "유언장" 키워드를 다시 언급) 방식
+    질문을 처음부터 다시 하게 되는 회귀가 있었다. _namespaced()로 감싸 다른 분기와
+    동일하게 상태를 남긴다.
     """
     guidance = no_will_guidance()
 
@@ -367,6 +376,12 @@ def _run_no_will_pipeline() -> AgentOutput:
             *closing_lines(),
         ]
     )
+
+    data: dict[str, Any] = {
+        "will_type": _NO_WILL_TYPE,
+        "handoff_reason": guidance["handoff_reason"],
+        "warnings": [],
+    }
 
     return AgentOutput(
         agent=AgentName.DECEDENT_ESTATE,
@@ -379,11 +394,7 @@ def _run_no_will_pipeline() -> AgentOutput:
         # 아직 합의되지 않았다. 합의되면 이 함수의 data 에 그 필드를 추가하면
         # 되도록 핸드오프 관련 값을 여기 한곳에 모아 두었다.
         next_action=NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR,
-        data={
-            "will_type": _NO_WILL_TYPE,
-            "handoff_reason": guidance["handoff_reason"],
-            "warnings": [],
-        },
+        data=_namespaced(state, data, will_type=_NO_WILL_TYPE, pending_questions=[]),
     )
 
 
@@ -690,7 +701,7 @@ def run(payload: AgentInput) -> AgentOutput:
     # "유언장이 없다/못 찾았다" — 요건 판정 대상이 아예 없으므로 intent 게이트보다
     # 먼저 갈라낸다 (review/prepare 구분이 의미 없다).
     if will_type == _NO_WILL_TYPE:
-        return _run_no_will_pipeline()
+        return _run_no_will_pipeline(state)
 
     if will_type in _FULL_SUPPORT_WILL_TYPES:
         intent, intent_warnings = _resolve_intent(state)
