@@ -1,0 +1,9 @@
+#!/bin/sh
+# 어떤 AI 코딩 도구가 붙였든 커밋 메시지의 공동저자/생성 서명을 제거합니다.
+COMMIT_MSG_FILE="$1"
+TMP_FILE="$(mktemp)"
+grep -viE \
+  -e '^Co-Authored-By:.*(claude|cursor|copilot|anthropic)' \
+  -e 'generated with.*(claude code|cursor)' \
+  "$COMMIT_MSG_FILE" > "$TMP_FILE"
+mv "$TMP_FILE" "$COMMIT_MSG_FILE"
