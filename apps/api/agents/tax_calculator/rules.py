@@ -1,10 +1,17 @@
 """대한민국 상속세 계산에 사용하는 세율 규칙."""
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Final
 
 
-RULE_VERSION: Final = "kr-inheritance-tax-2026-08-18"
+RULE_VERSION: Final = "kr-inheritance-tax-2026-08-20"
+RULE_AS_OF_DATE: Final = date(2026, 8, 20)
+RULE_SOURCE_URLS: Final[tuple[str, ...]] = (
+    "https://www.nts.go.kr/nts/cm/cntnts/cntntsView.do" "?cntntsId=7720&mi=2326",
+    "https://www.nts.go.kr/nts/cm/cntnts/cntntsView.do" "?cntntsId=7959&mi=6531",
+    "https://mob.tbht.hometax.go.kr/jsonAction.do" "?actionId=UTBRNAAM02F001",
+)
 
 BASIC_DEDUCTION: Final = 200_000_000
 LUMP_SUM_DEDUCTION: Final = 500_000_000

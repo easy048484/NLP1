@@ -298,3 +298,38 @@ def test_consultation_and_footer_lines_always_present() -> None:
         "이 점검은 민법 제1066조의 형식 요건에 대한 참고용 확인이며, 법률 자문이 아닙니다. "
         "유언의 유효성에 대한 최종 판단은 법원과 법률 전문가의 영역입니다."
     ) in output
+
+
+def test_executor_not_disqualified_is_statute_not_unverified_precedent() -> None:
+    """유언집행자 항목은 확인되지 않은 판례가 아니라 조문(§1072 열거) 근거다.
+
+    사건번호를 검증하지 못해 precedent → statute 로 전환한 항목이라, 다시
+    precedent 로 되돌아가거나 사건번호가 붙는 것을 막는다.
+    """
+    card = _precedent("executor_not_disqualified")
+
+    assert card["type"] == "statute"
+    assert card["source"] == "민법 제1072조 제1항"
+    assert card["verified"] is True
+    # 사건번호·법원·선고일은 검증 못 해 제거한 필드다.
+    for removed in ("case_number", "court", "date"):
+        assert removed not in card, removed
+    # 화면 문구가 "판례"를 근거로 내세우면 안 된다.
+    assert "판례" not in card["one_liner"]
+
+
+def test_all_precedent_type_cards_are_verified_with_case_number() -> None:
+    """type이 precedent 인 카드는 사건번호가 있고 미검증 표시가 없어야 한다.
+
+    사건번호를 확인하지 못한 항목은 statute/commentary 로 내리거나 검증을
+    마쳐야 한다는 규칙을 고정한다.
+    """
+    with _PRECEDENTS_PATH.open(encoding="utf-8") as f:
+        data = json.load(f)
+
+    for card in data["precedents"]:
+        if card["type"] != "precedent":
+            continue
+        assert card.get("case_number"), card["id"]
+        assert "확인 필요" not in card["case_number"], card["id"]
+        assert card.get("verified", True) is True, card["id"]

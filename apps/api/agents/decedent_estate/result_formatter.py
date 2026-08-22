@@ -27,7 +27,9 @@ court+case_number, commentary는 "(대한법률구조공단 해설)", statute(�
 인용)는 "(민법 제OOOO조)". 다만 무효 판례가 아니라 반대 취지의 참고 정보인
 precedent_id(_RED_REFERENCE_NOTES)는 카드가 아니라 들여쓴 참고 문구로 따로
 보여준다 (예: 날인 RED의 fingerprint_seal_valid, 증인결격 RED의
-executor_not_disqualified).
+executor_not_disqualified). 이 참고 문구는 카드 인용(_precedent_citation)을
+거치지 않고 여기 문자열을 그대로 쓰므로, 근거가 판례인지 조문인지에 맞는
+표현을 문자열 자체에 담아야 한다.
 """
 
 from __future__ import annotations
@@ -116,7 +118,10 @@ _COMMENTARY_CITATION = "(대한법률구조공단 해설)"
 # 것들은 카드(사건번호 인용)가 아니라 들여쓴 참고 문구로 따로 보여준다.
 _RED_REFERENCE_NOTES = {
     "fingerprint_seal_valid": "   ℹ️ 참고: 지장(손도장)도 날인으로 인정됩니다",
-    "executor_not_disqualified": "   ℹ️ 참고: 유언집행자라는 사정만으로는 증인 결격이 아닙니다",
+    # executor_not_disqualified는 판례가 아니라 조문(§1072 열거) 근거라, "판례가
+    # 있습니다"가 아니라 "조문상" 표현을 쓴다 — precedents.json 의 note 대로 명시적
+    # 대법원 판례로 확인된 해석이 아니라 열거 목록에 없다는 소극적 추론이기 때문.
+    "executor_not_disqualified": "   ℹ️ 참고: 조문상 유언집행자는 증인 결격사유로 열거되어 있지 않습니다",
 }
 
 # ---------------------------------------------------------------------------
@@ -130,6 +135,17 @@ _FOOTER_NOTICE = (
     "이 점검은 민법 제1066조의 형식 요건에 대한 참고용 확인이며, 법률 자문이 아닙니다. "
     "유언의 유효성에 대한 최종 판단은 법원과 법률 전문가의 영역입니다."
 )
+
+
+def closing_lines() -> list[str]:
+    """모든 결과 화면 끝에 붙는 §3-3(상담 연결) · §3-4(하단 고지) 두 줄.
+
+    format_result/format_guide 는 내부에서 알아서 붙이지만, 요건 판정을 돌지
+    않는 안내 전용 화면(예: agent._run_no_will_pipeline)도 같은 두 줄로 끝나야
+    해서 공개 헬퍼로 노출한다 — 문구를 그쪽에 복사해두면 스펙이 바뀔 때 한쪽만
+    고쳐질 수 있다(§3-3/§3-4의 단일 출처를 이 모듈로 유지).
+    """
+    return [_CONSULTATION_LINE, _FOOTER_NOTICE]
 
 
 @lru_cache(maxsize=1)
