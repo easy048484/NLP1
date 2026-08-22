@@ -1,5 +1,5 @@
 """
-요건 판정기 (규칙 기반 판정 + 성명 한정 LLM 추출 폴백).
+요건 판정기 (규칙 기반 판정 + 성명·연월일·주소 LLM 추출 폴백).
 
 유언장 텍스트 + 사용자 확인 답변(전문 자서 / 날인 / 주소가 RED일 때만 물어보는 봉투 확인)을
 받아 rules/requirements.json
@@ -8,14 +8,21 @@
 
 ⚠️ CLAUDE.md 절대 원칙:
 1. 판정(어떤 등급인가)은 이 모듈 + rules/requirements.json 이 전담한다.
-   텍스트에서 "값"을 뽑아내는 것(추출)만 정규식/규칙(+성명은 LLM 폴백)으로 하고,
-   등급표는 절대 여기서 하드코딩하지 않는다 — 항상 rules/requirements.json 을 조회한다.
-   LLM(llm_client.extract_testator_name)도 값만 반환하며, 그 값 역시 다른
-   추출값과 동일하게 룰 엔진(_build_result)을 통과해야만 등급이 매겨진다.
+   텍스트에서 "값"을 뽑아내는 것(추출)만 정규식/규칙(+성명·연월일·주소는 LLM
+   폴백)으로 하고, 등급표는 절대 여기서 하드코딩하지 않는다 — 항상
+   rules/requirements.json 을 조회한다. LLM(llm_client.extract_testator_name/
+   extract_will_date/extract_will_address)도 값만 반환하며, 그 값 역시 다른
+   추출값과 동일하게 룰 엔진(_build_result) 또는 규칙 기반 파서
+   (date_parser.parse_dates, 주소 판별 정규식)를 다시 거쳐야만 등급이
+   매겨진다 — LLM이 case를 직접 정하지 않는다.
+   ⚠️ 연월일의 "여러 날짜 중 작성일 선별"(multiple_dates_mixed)은 LLM 폴백
+   대상이 아니다 — 절 추출이 아니라 사실 판단에 가까워 신뢰 모델이 다르고,
+   잘못 선별해도 형식상 결과가 나와 실패가 조용히 묻힐 위험이 있다
+   (docs/known_limitations.md 3-4, 팀 결정 2026-08-21).
 3. 판례 카드는 rules/requirements.json(→ precedents.json)에 있는 id만 참조한다.
-4. LLM에는 마스킹(masking.mask_text)을 거친 텍스트만 보낸다 — 성명은 판정에
-   필요한 값이라 마스킹 대상이 아니지만, 그 외 민감정보(주민번호·계좌·전화)는
-   LLM 호출 직전에 제거한다.
+4. LLM에는 마스킹(masking.mask_text)을 거친 텍스트만 보낸다 — 성명·주소·날짜는
+   판정에 필요한 값이라 마스킹 대상이 아니지만, 그 외 민감정보(주민번호·계좌·
+   전화)는 LLM 호출 직전에 제거한다.
 """
 
 from __future__ import annotations
@@ -27,8 +34,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
-from .date_parser import parse_dates
-from .llm_client import extract_testator_name
+from .date_parser import DateParseResult, parse_dates
+from .llm_client import extract_testator_name, extract_will_address, extract_will_date
 from .masking import mask_text
 
 _RULES_PATH = Path(__file__).parent / "rules" / "requirements.json"
@@ -145,6 +152,7 @@ def _build_address_result(
     rules: dict[str, Any],
     address_result: "ExtractedText",
     envelope_answer: Optional[str],
+    extraction_method: str,
 ) -> RequirementResult:
     """주소 요건 + followup(봉투 확인 질문)을 함께 판정한다.
 
@@ -158,13 +166,20 @@ def _build_address_result(
     - 답변 없음 → PENDING (자서/날인 미확인과 동일한 취급)
     - "envelope_or_minor_discrepancy" → followup 조건의 YELLOW로 승격
     - "no_envelope" → 본문 기반 RED 판정 그대로 유지
+
+    extraction_method는 extract_address_with_fallback 이 정리한 "regex"|"llm"|
+    "none" 을 그대로 받아 extracted 에 실어준다. base.extracted 에 넣어두면
+    아래 followup 분기들이 **base.extracted 로 그대로 이어받는다.
     """
     req = _find_requirement(rules, "address")
     base = _build_result(
         rules,
         "address",
         address_result.case,
-        extracted={"raw_text": address_result.raw_text},
+        extracted={
+            "raw_text": address_result.raw_text,
+            "extraction_method": extraction_method,
+        },
     )
 
     followup = req.get("followup")
@@ -230,6 +245,79 @@ def extract_address(text: str) -> ExtractedText:
             return ExtractedText(case="city_district_only", raw_text=line.strip())
 
     return ExtractedText(case="absent", raw_text=None)
+
+
+def extract_address_with_fallback(text: str) -> tuple[ExtractedText, str]:
+    """정규식으로 먼저 시도하고, 아예 못 찾았을 때만(absent) LLM으로 보완한다.
+
+    1) extract_address(정규식)이 뭔가 찾으면(absent 가 아니면) 그대로 쓴다 —
+       LLM은 호출하지 않는다. city_district_only(2012다71688, "동만 기재
+       무효")처럼 이미 등급이 매겨진 결과를 LLM이 절대 덮어쓰지 않는다.
+    2) 정규식이 absent 를 반환했을 때만 마스킹된 텍스트로 LLM을 호출해 주소
+       "문자열"만 받는다.
+    3) LLM이 찾은 문자열도 곧바로 신뢰하지 않고, 같은 판정 정규식
+       (_ADDRESS_UNIT_RE/_ADDRESS_DISTRICT_RE)에 다시 통과시켜 full_address/
+       city_district_only 를 가른다 — LLM은 "어디에 주소가 있는지"만 찾고,
+       그 주소가 번지까지 온전한지는 규칙 엔진이 그대로 판정한다. 어느
+       쪽에도 안 걸리면(LLM이 뭔가 찾았어도 우리 기준상 주소로 볼 근거가
+       부족하면) absent 로 남긴다 — 규칙 엔진이 승인하지 않은 등급을
+       만들어내지 않는다.
+    4) LLM도 못 찾거나(또는 호출 자체가 실패하면) 정규식의 absent 결과를
+       그대로 돌려준다.
+
+    반환값의 두 번째 원소(extraction_method)는 "regex" | "llm" | "none".
+    """
+    regex_result = extract_address(text)
+    if regex_result.case != "absent":
+        return regex_result, "regex"
+
+    llm_address_text = extract_will_address(mask_text(text))
+    if llm_address_text:
+        if _ADDRESS_UNIT_RE.search(llm_address_text):
+            return ExtractedText(case="full_address", raw_text=llm_address_text), "llm"
+        if _ADDRESS_DISTRICT_RE.search(llm_address_text):
+            return (
+                ExtractedText(case="city_district_only", raw_text=llm_address_text),
+                "llm",
+            )
+
+    return regex_result, "none"
+
+
+def extract_date_with_fallback(text: str) -> tuple[DateParseResult, str]:
+    """정규식으로 먼저 시도하고, 아예 못 찾았을 때만(absent) LLM으로 보완한다.
+
+    recording_checker._resolve_date_field 와 동일한 원칙이다.
+
+    1) date_parser.parse_dates(정규식)가 뭔가 찾으면(absent 가 아니면) 그대로
+       쓴다 — multiple_dates_mixed 처럼 여러 날짜가 섞인 경우도 포함해서
+       LLM을 호출하지 않는다. 여러 날짜 중 작성일을 "선별"하는 것은 이
+       함수의 범위 밖이다 (docs/known_limitations.md 3-4 — 절 추출이 아니라
+       사실 판단에 가까워 신뢰 모델이 다르고, 잘못 선별해도 형식상 결과가
+       나와 실패가 조용히 묻힐 위험이 있어 팀 결정으로 제외했다).
+    2) 정규식이 absent 를 반환했을 때만(날짜가 아예 하나도 안 잡혔을 때만)
+       마스킹된 텍스트로 LLM을 호출해 날짜 "문자열"만 받는다.
+    3) LLM이 돌려준 문자열도 곧바로 신뢰하지 않고 date_parser.parse_dates 에
+       다시 통과시켜 day_missing/verbal_specified 등 기존 등급 조건을 그대로
+       적용한다 — LLM은 값만 추출하고, 판정은 규칙 엔진이 그대로 담당한다.
+       재파싱 결과도 absent 면(LLM이 인식하지 못하는 표현이거나 실제로 날짜가
+       없으면) 버린다.
+    4) LLM도 못 찾거나(또는 호출 자체가 실패하면) 정규식의 absent 결과를
+       그대로 돌려준다.
+
+    반환값의 두 번째 원소(extraction_method)는 "regex" | "llm" | "none".
+    """
+    regex_result = parse_dates(text)
+    if regex_result.case != "absent":
+        return regex_result, "regex"
+
+    llm_date_text = extract_will_date(mask_text(text))
+    if llm_date_text:
+        llm_result = parse_dates(llm_date_text)
+        if llm_result.case != "absent":
+            return llm_result, "llm"
+
+    return regex_result, "none"
 
 
 def extract_name(text: str) -> ExtractedText:
@@ -346,28 +434,36 @@ def check_requirements(
     rules = _load_rules()
     results: dict[str, RequirementResult] = {}
 
-    date_result = parse_dates(text)
+    date_result, date_extraction_method = extract_date_with_fallback(text)
     results["date"] = _build_result(
         rules,
         "date",
         date_result.case,
         extracted={
+            # ⚠️ ParsedDate.raw_text(매칭된 원문 조각)는 의도적으로 담지 않는다
+            # (CLAUDE.md 절대 원칙 4). extracted 는 API 응답과 세션 저장까지
+            # 그대로 흘러가는 경계라, 날짜 오탐이 생기면 원문 조각이 그대로
+            # 밖으로 나간다. 실제로 주민등록번호가 연월로 오탐되던 시절
+            # "1231-12"(생년월일+성별 식별 숫자)가 이 경로로 노출됐다.
+            # 정규식 가드(date_parser._NO_DIGIT_BEFORE/_AFTER)로 근본 원인을
+            # 막았지만, 다른 오탐이 생겨도 원문이 새지 않도록 여기서도 막는다.
+            # 화면 표시(result_formatter)는 year/month/day 만 쓰므로 손실 없다.
             "entries": [
                 {
                     "year": e.year,
                     "month": e.month,
                     "day": e.day,
-                    "raw_text": e.raw_text,
                     "case": e.case,
                 }
                 for e in date_result.entries
-            ]
+            ],
+            "extraction_method": date_extraction_method,
         },
     )
 
-    address_result = extract_address(text)
+    address_result, address_extraction_method = extract_address_with_fallback(text)
     results["address"] = _build_address_result(
-        rules, address_result, address_envelope_answer
+        rules, address_result, address_envelope_answer, address_extraction_method
     )
 
     name_result, name_extraction_method = extract_name_with_fallback(text)

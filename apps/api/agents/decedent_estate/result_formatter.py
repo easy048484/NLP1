@@ -27,7 +27,9 @@ court+case_number, commentary는 "(대한법률구조공단 해설)", statute(�
 인용)는 "(민법 제OOOO조)". 다만 무효 판례가 아니라 반대 취지의 참고 정보인
 precedent_id(_RED_REFERENCE_NOTES)는 카드가 아니라 들여쓴 참고 문구로 따로
 보여준다 (예: 날인 RED의 fingerprint_seal_valid, 증인결격 RED의
-executor_not_disqualified).
+executor_not_disqualified). 이 참고 문구는 카드 인용(_precedent_citation)을
+거치지 않고 여기 문자열을 그대로 쓰므로, 근거가 판례인지 조문인지에 맞는
+표현을 문자열 자체에 담아야 한다.
 """
 
 from __future__ import annotations
@@ -116,7 +118,10 @@ _COMMENTARY_CITATION = "(대한법률구조공단 해설)"
 # 것들은 카드(사건번호 인용)가 아니라 들여쓴 참고 문구로 따로 보여준다.
 _RED_REFERENCE_NOTES = {
     "fingerprint_seal_valid": "   ℹ️ 참고: 지장(손도장)도 날인으로 인정됩니다",
-    "executor_not_disqualified": "   ℹ️ 참고: 유언집행자라는 사정만으로는 증인 결격이 아닙니다",
+    # executor_not_disqualified는 판례가 아니라 조문(§1072 열거) 근거라, "판례가
+    # 있습니다"가 아니라 "조문상" 표현을 쓴다 — precedents.json 의 note 대로 명시적
+    # 대법원 판례로 확인된 해석이 아니라 열거 목록에 없다는 소극적 추론이기 때문.
+    "executor_not_disqualified": "   ℹ️ 참고: 조문상 유언집행자는 증인 결격사유로 열거되어 있지 않습니다",
 }
 
 # ---------------------------------------------------------------------------

@@ -184,6 +184,28 @@ def test_handoff_signal_follows_the_established_format() -> None:
     assert parse_handoff(output.next_action) == AgentName.HEIR_NAVIGATOR
 
 
+def test_no_will_state_is_persisted_to_session_namespace() -> None:
+    """회귀: will_type="none" 이 다른 안내 전용 분기(notarial/secret/oral)와
+    동일하게 세션 네임스페이스(data["decedent_estate"])에 저장돼야 한다.
+
+    _run_no_will_pipeline이 _namespaced()를 거치지 않고 평면 dict만 반환하던
+    시절에는 output.data에 "decedent_estate" 키 자체가 없어서,
+    handoff.extract_state_to_persist가 빈 dict를 돌려줬다 — 즉 "유언장 없음"
+    답변이 세션에 전혀 남지 않았다. 나중에 다시 decedent_estate로 라우팅되면
+    (예: heir_navigator 대화 중 사용자가 "유언장"을 다시 언급) will_type을
+    처음부터 다시 물어보는 회귀가 있었다.
+    """
+    from orchestrator.handoff import extract_state_to_persist
+
+    output = _no_will_output()
+
+    assert "decedent_estate" in output.data
+    assert output.data["decedent_estate"]["will_type"] == "none"
+
+    persisted = extract_state_to_persist(AgentName.DECEDENT_ESTATE, output)
+    assert persisted.get("will_type") == "none"
+
+
 # ---------------------------------------------------------------------------
 # 회귀 — 기존 경로 무영향
 # ---------------------------------------------------------------------------
