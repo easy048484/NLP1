@@ -469,7 +469,7 @@
         "instruction": "증인은 미성년자, 피성년후견인·피한정후견인, 그리고 이 유언으로 재산을 받는 사람과 그 배우자·직계혈족이 아니어야 합니다.",
         "mistake_sentence": "결격 사유가 있는 사람을 증인으로 세우면 요건을 갖추지 못합니다",
         "mistake_precedent_id": "witness_disqualification",
-        "extra_note": "유언집행자라는 사정만으로는 증인 결격이 아니라고 본 판례가 있습니다."
+        "extra_note": "조문상 유언집행자는 증인 결격사유로 열거되어 있지 않습니다."
       },
       "conditions": [
         {
