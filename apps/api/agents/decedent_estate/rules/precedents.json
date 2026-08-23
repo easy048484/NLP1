@@ -83,10 +83,22 @@
       "court": "대법원",
       "date": "1998-06-12",
       "case_name": "주주명의개서절차이행",
-      "summary": "날인은 인장 대신 무인(拇印)에 의한 경우에도 유효하다. 주소도 전문과 같은 지편이 아니라 전문을 담은 봉투에 기재해도 무방하다.",
+      "summary": "날인은 인장 대신 무인(拇印)에 의한 경우에도 유효하다.",
       "one_liner": "지장(무인)도 날인으로 인정된다는 판례가 있습니다",
       "source_url": null,
       "note": "typed_will_invalid 와 동일 판례(97다38510)에서 다른 쟁점(무인 날인 인정)을 인용"
+    },
+    {
+      "id": "address_on_envelope_valid",
+      "type": "precedent",
+      "case_number": "97다38510",
+      "court": "대법원",
+      "date": "1998-06-12",
+      "case_name": "주주명의개서절차이행",
+      "summary": "주소는 전문과 같은 지편이 아니라 전문을 담은 봉투에 기재해도 무방하다.",
+      "one_liner": "주소를 유언장 본문이 아니라 봉투에 적은 경우도 인정한 판례가 있습니다",
+      "source_url": null,
+      "note": "typed_will_invalid · fingerprint_seal_valid 와 동일 판례(97다38510)에서 또 다른 쟁점(주소의 봉투 기재)을 인용. 쟁점별로 카드를 나누지 않으면 주소 안내 화면에 날인 관련 one_liner가 표시된다"
     },
     {
       "id": "recording_requirements",

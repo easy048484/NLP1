@@ -107,7 +107,7 @@
             "description": "예 — 주소가 봉투에 기재되어 있음",
             "label": "봉투에 적혀 있다",
             "grade": "YELLOW",
-            "precedent_ids": ["fingerprint_seal_valid"],
+            "precedent_ids": ["address_on_envelope_valid"],
             "note": "97다38510 — 주소도 전문을 담은 봉투에 기재해도 무방하다는 판례 참조. 최종 유효 여부는 개별 판단 필요"
           },
           {
