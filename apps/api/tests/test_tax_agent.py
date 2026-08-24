@@ -88,7 +88,12 @@ def test_tax_agent_uses_family_graph_and_calculates() -> None:
     assert state["values"]["spouse_exists"] is False
     assert state["values"]["children_count"] == 1
     assert state["last_result"]["estimated_tax_due"] == 86_330_000
-    assert "예상 납부세액" in output.reply
+    assert "최종 예상 상속세" in output.reply
+    assert "세금을 매기는 기준 금액" in output.reply
+    assert "상속세 과세가액" not in output.reply
+    assert "상속세 과세표준" not in output.reply
+    assert "산출세액" not in output.reply
+    assert "신고세액공제" not in output.reply
 
 
 # ---------------------------------------------------------------------------
@@ -159,8 +164,27 @@ def test_family_graph_parent_blocks_spouse_sole_heir() -> None:
     assert state["status"] == "unsupported"
 
 
+def test_family_graph_grandchild_is_not_reported_as_parent_case() -> None:
+    """배우자와 손주가 있는 경우를 부모님 공동상속으로 안내하면 안 된다."""
+
+    output = _run_with_family_graph(
+        "tax-fg-grandchild",
+        [
+            {"name": "배우자", "relation": "spouse", "alive": True},
+            {"name": "자녀", "relation": "child", "alive": False},
+            {"name": "손주", "relation": "grandchild", "alive": True},
+        ],
+    )
+
+    state = output.data[STATE_KEY]
+
+    assert state["status"] == "unsupported"
+    assert "자녀분이 먼저 돌아가시고 손주가 대신 상속받는 경우" in output.reply
+    assert "부모님" not in output.reply
+
+
 # ---------------------------------------------------------------------------
-# _parse_money — "0원"을 부분 문자열로 검사하면 500000000원처럼 0으로 끝나는
+# _parse_money — "0원"을 부분 문자열로 검사하면 500000000원처럼 끝나는
 # 정상적인 금액까지 전부 0으로 잘못 인식되던 버그의 회귀 테스트.
 # ---------------------------------------------------------------------------
 
@@ -170,6 +194,12 @@ def test_parse_money_handles_round_amounts_ending_in_zero() -> None:
     assert _parse_money("100000000원") == 100_000_000
     assert _parse_money("1000000000원") == 1_000_000_000
     assert _parse_money("500,000,000원") == 500_000_000
+
+
+def test_parse_money_handles_compound_korean_units() -> None:
+    assert _parse_money("9천5백만원") == 95_000_000
+    assert _parse_money("1억9천5백만원") == 195_000_000
+    assert _parse_money("2억 3천만원") == 230_000_000
 
 
 def test_parse_money_still_treats_zero_and_none_as_zero() -> None:
@@ -271,7 +301,7 @@ def test_childless_couple_sole_heir_calculates_successfully() -> None:
 
     assert output.data[STATE_KEY]["status"] == "calculated"
     assert output.data[STATE_KEY]["values"]["spouse_is_sole_heir"] is True
-    assert "예상 납부세액" in output.reply
+    assert "최종 예상 상속세" in output.reply
 
 
 def test_childless_couple_co_heir_with_parents_is_reported_as_unsupported() -> None:
@@ -290,3 +320,34 @@ def test_childless_couple_co_heir_with_parents_is_reported_as_unsupported() -> N
     assert "부모님" in output.reply
     # 이전 버그처럼 "정보가 서로 안 맞는다"는 오해를 주는 문구가 아니어야 한다.
     assert "서로 맞지 않는" not in output.reply
+
+
+def test_validation_error_uses_friendly_reply_and_keeps_raw_error_for_dev() -> None:
+    output = run(
+        AgentInput(
+            session_id="tax-friendly-error",
+            user_message="계산해주세요.",
+            context={
+                "tax_input": {
+                    "decedent_is_resident": True,
+                    "spouse_exists": False,
+                    "children_count": 0,
+                    "original_inherited_property": 100_000_000,
+                    "debts": 0,
+                    "financial_assets": 200_000_000,
+                    "financial_debts": 0,
+                    "prior_gifts_to_heirs": 0,
+                    "prior_gifts_to_non_heirs": 0,
+                    "filing_within_deadline": True,
+                }
+            },
+        )
+    )
+
+    state = output.data[STATE_KEY]
+    raw_error = "금융재산가액은 총상속재산가액보다 클 수 없습니다."
+
+    assert state["status"] == "needs_review"
+    assert raw_error in state["last_error"]
+    assert raw_error not in output.reply
+    assert "금융재산으로 입력한 금액이 전체 상속재산보다 커요" in output.reply

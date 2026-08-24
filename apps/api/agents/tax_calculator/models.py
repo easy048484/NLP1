@@ -7,28 +7,28 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class InheritanceTaxInput(BaseModel):
-    """피상속인이 거주자인 경우의 상속세 계산 입력값."""
+    """돌아가신 분이 국내 거주자였던 경우의 상속세 계산 입력값."""
 
     filing_within_deadline: bool = Field(
         default=False,
-        description="법정 신고기한 내 신고 여부",
+        description="정해진 신고기한 안에 신고할 예정인지 여부",
     )
     decedent_is_resident: bool = Field(
         default=True,
-        description="피상속인의 거주자 여부",
+        description="돌아가신 분이 사망 당시 국내에 거주했는지 여부",
     )
     inheritance_commencement_date: date | None = Field(
         default=None,
-        description="상속개시일(일반적으로 피상속인의 사망일)",
+        description="돌아가신 날짜",
     )
     spouse_exists: bool = Field(
         default=False,
-        description="피상속인의 배우자 생존 여부",
+        description="돌아가신 분의 배우자 생존 여부",
     )
     children_count: int = Field(
         default=0,
         ge=0,
-        description="피상속인의 자녀 수",
+        description="돌아가신 분의 생존 자녀 수",
     )
     spouse_is_sole_heir: bool = Field(
         default=False,
@@ -53,7 +53,7 @@ class InheritanceTaxInput(BaseModel):
     deemed_inherited_property: int = Field(
         default=0,
         ge=0,
-        description="보험금·신탁재산·퇴직금 등 간주상속재산가액(원)",
+        description="사망보험금·퇴직금처럼 상속재산으로 함께 계산되는 금액(원)",
     )
     estimated_inherited_property: int = Field(
         default=0,
@@ -129,17 +129,13 @@ class InheritanceTaxInput(BaseModel):
     prior_gift_tax_base_included_in_taxable_value: int = Field(
         default=0,
         ge=0,
-        description=(
-            "상속세 과세가액에 가산된 사전증여재산의 " "증여세 과세표준 합계(원)"
-        ),
+        description="미리 증여한 재산 중 상속세 계산에 함께 반영되는 금액(원)",
     )
     # 5. 상속공제
     basic_or_lump_sum_deduction: int | None = Field(
         default=None,
         ge=0,
-        description=(
-            "기초·인적공제 또는 일괄공제 직접 적용액. " "입력하지 않으면 자동 계산(원)"
-        ),
+        description="기본으로 적용할 공제 금액. 입력하지 않으면 자동 계산(원)",
     )
     business_or_farming_deduction: int = Field(
         default=0,
@@ -255,7 +251,7 @@ class InheritanceTaxInput(BaseModel):
 
 
 class InheritanceTaxResult(BaseModel):
-    """상속세 계산 과정과 예상 납부세액."""
+    """상속세 계산 과정과 최종 예상 상속세."""
 
     warnings: list[str] = Field(
         default_factory=list,
@@ -264,7 +260,7 @@ class InheritanceTaxResult(BaseModel):
     filing_tax_credit: int = Field(
         default=0,
         ge=0,
-        description="법정 신고기한 내 신고에 따른 신고세액공제",
+        description="정해진 기한 안에 신고하면 세금에서 줄어드는 금액",
     )
     total_inherited_property: int
     deductible_expenses: int
