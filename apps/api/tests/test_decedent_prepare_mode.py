@@ -178,7 +178,7 @@ def test_prepare_handwritten_without_draft_returns_guide_only() -> None:
     seal_citation = _citation("signature_only_insufficient")
     assert (
         f"📝 날인: 도장이나 지장을 반드시 찍어주세요. 서명(사인)만으로는 인정되지 않습니다 "
-        f"{seal_citation}. 지장도 유효합니다."
+        f"{seal_citation}. 무인(지장)을 날인으로 인정한 판례가 있습니다."
     ) in output.reply
 
     assert (
@@ -197,7 +197,7 @@ def test_prepare_guide_payload_structure_for_seal() -> None:
         "instruction": "도장이나 지장을 반드시 찍어주세요.",
         "mistake_sentence": "서명(사인)만으로는 인정되지 않습니다",
         "mistake_precedent_id": "signature_only_insufficient",
-        "extra_note": "지장도 유효합니다.",
+        "extra_note": "무인(지장)을 날인으로 인정한 판례가 있습니다.",
     }
 
 

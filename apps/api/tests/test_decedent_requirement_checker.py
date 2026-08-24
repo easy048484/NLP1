@@ -272,7 +272,7 @@ def test_address_missing_but_envelope_confirmed_upgrades_to_yellow() -> None:
     address = results["address"]
     assert address.condition_id == "envelope_or_minor_discrepancy"
     assert address.grade == "YELLOW"
-    assert address.precedent_ids == ["fingerprint_seal_valid"]
+    assert address.precedent_ids == ["address_on_envelope_valid"]
     assert address.followup_question is None
 
 
