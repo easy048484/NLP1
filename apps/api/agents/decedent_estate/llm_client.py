@@ -30,21 +30,27 @@ LLM 추출 클라이언트 (CLAUDE.md 빌드 순서 4단계).
 4. 호출부(requirement_checker.py, recording_checker.py)가 masking.mask_text()
    를 거친 텍스트만 이 함수들에 넘긴다는 전제로 동작한다. 이 모듈 자체는
    마스킹을 하지 않는다.
-6. 요청/응답을 저장하지 않는다. 실패 시에도 원문이 담긴 예외 메시지를
-   로깅하지 않고 그냥 None 을 반환한다 — 호출부가 정규식 결과로 폴백한다.
+6. 요청/응답을 저장하지 않는다. 실패 시에도 원문·응답 본문이 담길 수 있는
+   예외 상세 메시지는 로깅하지 않는다 — 호출부가 정규식 결과로 폴백하고,
+   로그에는 예외 타입 이름만 warning으로 남는다.
 
 API 키는 팀 공용 키(.env 의 ANTHROPIC_API_KEY)를 쓴다. 키가 없거나, 네트워크
 오류·타임아웃·응답 형식 오류가 나면 예외를 던지지 않고 조용히 None 을 반환한다.
+다만 완전히 소리 없이 사라지지는 않는다 — 예외 타입만 warning으로 남긴다
+(응답 본문은 마스킹된 텍스트라도 로그 유출 경로가 되므로 절대 남기지 않는다).
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import Any, Optional
 
 import anthropic
+
+logger = logging.getLogger(__name__)
 
 _MODEL = "claude-haiku-4-5-20251001"
 _TIMEOUT_SECONDS = 8.0
@@ -130,6 +136,40 @@ _WILL_ADDRESS_SYSTEM_PROMPT = (
 )
 
 
+# claude-haiku-4-5 가 시스템 프롬프트의 "JSON만 반환하라(다른 설명·문장 금지)"
+# 지시에도 불구하고 응답을 마크다운 코드펜스(```json ... ``` / ``` ... ```)로
+# 감싸 돌려주는 경우가 실전 검증에서 확인됐다(2026-08-25, 4/4 재현). 모델
+# 출력 형식은 우리가 통제할 수 없으므로 프롬프트를 더 강하게 쓰기보다 파싱
+# 쪽에서 방어한다 — json.loads 가 코드펜스를 그대로 못 읽어 JSONDecodeError가
+# 나고, 그게 각 extract_* 의 except Exception 에 흡수돼 LLM 폴백 전체가
+# 조용히 100% 실패하고 있었다.
+_CODE_FENCE_RE = re.compile(r"^```[a-zA-Z0-9_+-]*\s*\n?(.*?)\n?```$", re.DOTALL)
+
+
+def _strip_code_fence(text: str) -> str:
+    """마크다운 코드펜스로 감싸진 응답이면 안쪽 내용만 돌려준다.
+
+    펜스가 없는 순수 JSON은 그대로 통과한다(회귀 없음). 언어 태그가 있는
+    ```json ... ``` 과 없는 ``` ... ``` 두 형태 모두 처리한다.
+    """
+    stripped = text.strip()
+    match = _CODE_FENCE_RE.match(stripped)
+    if match:
+        return match.group(1).strip()
+    return stripped
+
+
+def _load_json_response(raw_response_text: str) -> Any:
+    """코드펜스를 벗기고 json.loads 로 파싱한다.
+
+    _parse_name/_parse_will_date/_parse_will_address/_parse_recording_fields
+    네 곳이 전부 같은 전처리를 거치므로 여기 한 곳에만 둔다. 파싱 실패 시
+    예외는 그대로 전파한다 — 호출부(extract_* 의 try/except)가 이미 감싸고
+    있어 여기서 또 흡수할 필요가 없다.
+    """
+    return json.loads(_strip_code_fence(raw_response_text))
+
+
 def _client() -> Optional[anthropic.Anthropic]:
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
@@ -147,7 +187,7 @@ def _validated_name(value: Any) -> Optional[str]:
 
 
 def _parse_name(raw_response_text: str) -> Optional[str]:
-    parsed = json.loads(raw_response_text.strip())
+    parsed = _load_json_response(raw_response_text)
     name = parsed.get("name") if isinstance(parsed, dict) else None
     return _validated_name(name)
 
@@ -162,19 +202,19 @@ def _validated_short_text(value: Any) -> Optional[str]:
 
 
 def _parse_will_date(raw_response_text: str) -> Optional[str]:
-    parsed = json.loads(raw_response_text.strip())
+    parsed = _load_json_response(raw_response_text)
     date_text = parsed.get("date_text") if isinstance(parsed, dict) else None
     return _validated_short_text(date_text)
 
 
 def _parse_will_address(raw_response_text: str) -> Optional[str]:
-    parsed = json.loads(raw_response_text.strip())
+    parsed = _load_json_response(raw_response_text)
     address_text = parsed.get("address_text") if isinstance(parsed, dict) else None
     return _validated_short_text(address_text)
 
 
 def _parse_recording_fields(raw_response_text: str) -> Optional[dict[str, Any]]:
-    parsed = json.loads(raw_response_text.strip())
+    parsed = _load_json_response(raw_response_text)
     if not isinstance(parsed, dict):
         return None
 
@@ -213,9 +253,11 @@ def extract_testator_name(masked_text: str) -> Optional[str]:
             timeout=_TIMEOUT_SECONDS,
         )
         return _parse_name(response.content[0].text)
-    except Exception:
+    except Exception as exc:
         # 네트워크 오류·타임아웃·응답 형식 오류 등 어떤 이유든 정규식 폴백으로
-        # 넘긴다. 원문이 섞일 수 있는 예외 메시지는 로깅하지 않는다.
+        # 넘긴다. 예외 타입만 남기고, 원문/응답이 섞일 수 있는 상세 메시지는
+        # 로깅하지 않는다 — 마스킹된 텍스트라도 로그 유출 경로가 된다.
+        logger.warning("성명 추출 실패 (%s)", type(exc).__name__)
         return None
 
 
@@ -241,7 +283,8 @@ def extract_will_date(masked_text: str) -> Optional[str]:
             timeout=_TIMEOUT_SECONDS,
         )
         return _parse_will_date(response.content[0].text)
-    except Exception:
+    except Exception as exc:
+        logger.warning("날짜 추출 실패 (%s)", type(exc).__name__)
         return None
 
 
@@ -266,7 +309,8 @@ def extract_will_address(masked_text: str) -> Optional[str]:
             timeout=_TIMEOUT_SECONDS,
         )
         return _parse_will_address(response.content[0].text)
-    except Exception:
+    except Exception as exc:
+        logger.warning("주소 추출 실패 (%s)", type(exc).__name__)
         return None
 
 
@@ -295,5 +339,6 @@ def extract_recording_fields(masked_text: str) -> Optional[dict[str, Any]]:
             timeout=_TIMEOUT_SECONDS,
         )
         return _parse_recording_fields(response.content[0].text)
-    except Exception:
+    except Exception as exc:
+        logger.warning("녹음 유언 필드 추출 실패 (%s)", type(exc).__name__)
         return None
