@@ -88,7 +88,9 @@ def test_derive_heirs_labels_two_hop_relations():
         _edge(RelationEdgeType.PARENT_OF, 6, 2),  # 할아버지 → 아버지
     ]
 
-    result = {entry["name"]: entry["relation"] for entry in derive_heirs(persons, edges)}
+    result = {
+        entry["name"]: entry["relation"] for entry in derive_heirs(persons, edges)
+    }
     assert result == {
         "아버지": "parent",
         "동생": "sibling",

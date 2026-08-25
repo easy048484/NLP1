@@ -180,13 +180,10 @@ def derive_heirs(
         for grandparent_id in parents_of.get(parent_id, []):
             label(grandparent_id, RelationType.GRANDPARENT)
 
-    unreachable = [
-        p.name for p in persons if not p.is_decedent and p.id not in labels
-    ]
+    unreachable = [p.name for p in persons if not p.is_decedent and p.id not in labels]
     if unreachable:
         logger.warning(
-            "피상속인과 연결되지 않아 관계를 파생할 수 없는 구성원을 "
-            "제외합니다: %s",
+            "피상속인과 연결되지 않아 관계를 파생할 수 없는 구성원을 " "제외합니다: %s",
             ", ".join(unreachable),
         )
 
