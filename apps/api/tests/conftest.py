@@ -42,9 +42,14 @@ def with_db():
     yield
 
     with engine.begin() as conn:
-        conn.execute(
-            text(
-                "TRUNCATE sessions, family_members, family_graphs "
-                "RESTART IDENTITY CASCADE"
+        if conn.dialect.name == "postgresql":
+            conn.execute(
+                text(
+                    "TRUNCATE sessions, relations, persons, family_graphs "
+                    "RESTART IDENTITY CASCADE"
+                )
             )
-        )
+        else:
+            # sqlite 등 TRUNCATE가 없는 방언용 폴백 (FK 순서 역순으로 삭제)
+            for table in ("sessions", "relations", "persons", "family_graphs"):
+                conn.execute(text(f"DELETE FROM {table}"))

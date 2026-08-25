@@ -1,8 +1,13 @@
-"""family_graph REST API (담당: 지원). 프론트가 가족 구성원을 등록/조회할 때 씁니다.
+"""family_graph REST API (담당: 지원 · 개편: 정민). 프론트 온보딩이 가족 트리를
+저장/조회할 때 씁니다.
 
-이 라우터가 다루는 건 "가족관계 데이터 자체"의 CRUD뿐입니다. 오케스트레이터가
-family_graph_id로 이 데이터를 읽어 AgentInput.family_graph를 채우는 부분은
-repository.get_heirs_dict()가 담당하고, 이 라우터와는 별개 경로입니다.
+이 라우터가 다루는 건 "가족 트리 데이터 자체"의 저장/조회뿐입니다.
+오케스트레이터가 family_graph_id로 이 데이터를 읽어 AgentInput.family_graph를
+채우는 부분은 repository.get_heirs_dict()가 담당하고, 이 라우터와는 별개
+경로입니다.
+
+트리는 통째로 저장/교체합니다(schemas.py 참고) — 구성원 단위 부분 수정
+엔드포인트는 두지 않습니다.
 
 보안 모델(현재 MVP 범위, 알려진 한계): 이 라우터는 로그인/세션 소유권
 검증이 없습니다. family_graph_id(32자리 uuid4 hex, 추측 불가능한 값)를 아는
@@ -30,7 +35,7 @@ from sqlalchemy.orm import Session
 from db.base import DatabaseNotConfigured, get_engine, session_scope
 
 from . import repository
-from .schemas import FamilyGraphOut, FamilyMemberIn, FamilyMemberOut
+from .schemas import FamilyTreeIn, FamilyTreeOut
 
 router = APIRouter(prefix="/family-graph", tags=["family-graph"])
 
@@ -46,36 +51,51 @@ def get_db() -> Iterator[Session]:
         yield db
 
 
-@router.post("", response_model=FamilyGraphOut, status_code=201)
-def create_family_graph(db: Session = Depends(get_db)) -> repository.FamilyGraph:
-    return repository.create_family_graph(db)
+def _tree_out(db: Session, family_graph_id: str) -> FamilyTreeOut:
+    graph = db.get(repository.FamilyGraph, family_graph_id)
+    assert graph is not None
+    persons, relations = repository.load_tree(db, family_graph_id)
+    return FamilyTreeOut(
+        id=graph.id,
+        created_at=graph.created_at,
+        persons=persons,
+        relations=relations,
+    )
 
 
-@router.get("/{family_graph_id}", response_model=FamilyGraphOut)
+@router.post("", response_model=FamilyTreeOut, status_code=201)
+def create_family_graph(
+    payload: FamilyTreeIn, db: Session = Depends(get_db)
+) -> FamilyTreeOut:
+    """가족 트리를 새로 저장합니다. 온보딩 '저장하고 시작하기'가 호출합니다."""
+    graph = repository.create_family_graph(db)
+    repository.replace_tree(db, graph.id, payload)
+    return _tree_out(db, graph.id)
+
+
+@router.get("/{family_graph_id}", response_model=FamilyTreeOut)
 def read_family_graph(
     family_graph_id: str, db: Session = Depends(get_db)
-) -> repository.FamilyGraph:
+) -> FamilyTreeOut:
+    """수정 화면 프리필용 트리 조회."""
     graph = db.get(repository.FamilyGraph, family_graph_id)
     if graph is None:
         raise HTTPException(status_code=404, detail="family_graph를 찾을 수 없습니다.")
     repository.touch_family_graph(db, family_graph_id)
-    return graph
+    return _tree_out(db, family_graph_id)
 
 
-@router.post(
-    "/{family_graph_id}/members", response_model=FamilyMemberOut, status_code=201
-)
-def add_family_member(
-    family_graph_id: str, payload: FamilyMemberIn, db: Session = Depends(get_db)
-) -> repository.FamilyMember:
+@router.put("/{family_graph_id}", response_model=FamilyTreeOut)
+def replace_family_graph(
+    family_graph_id: str, payload: FamilyTreeIn, db: Session = Depends(get_db)
+) -> FamilyTreeOut:
+    """트리를 통째로 교체합니다. 수정 화면 '저장'이 호출합니다.
+
+    id를 유지한 채 내용만 바꾸므로, 세션(sessions.family_graph_id)이나
+    프론트 localStorage가 들고 있는 id는 그대로 유효합니다.
+    """
     graph = db.get(repository.FamilyGraph, family_graph_id)
     if graph is None:
         raise HTTPException(status_code=404, detail="family_graph를 찾을 수 없습니다.")
-    return repository.add_member(
-        db,
-        family_graph_id,
-        name=payload.name,
-        relation=payload.relation,
-        is_alive=payload.is_alive,
-        is_minor=payload.is_minor,
-    )
+    repository.replace_tree(db, family_graph_id, payload)
+    return _tree_out(db, family_graph_id)

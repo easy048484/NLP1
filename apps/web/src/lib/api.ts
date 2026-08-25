@@ -1,4 +1,4 @@
-import type { AgentInput, AgentOutput } from "../types";
+import type { AgentInput, AgentOutput, FamilyTreeIn, FamilyTreeOut } from "../types";
 
 export const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8000";
@@ -18,19 +18,20 @@ export interface ChatCallResult {
  * apps/api/main.py 의 POST /chat 을 호출합니다.
  * (AgentInput -> AgentOutput, apps/api/schemas/agent_io.py 참고)
  *
- * family_graph / family_graph_id는 이 프로토타입에서는 아직 다루지 않는
- * Phase 2(가족관계 그래프) 영역이라 보내지 않습니다 — 보내지 않으면
- * 오케스트레이터가 그대로 비워서 처리합니다 (orchestrator/router.py
- * node_build_context 참고).
+ * familyGraphId가 있으면 매 요청에 실어 보냅니다 — 세션도 기억해주지만
+ * 세션 TTL(2시간)이 지나면 잊어버리므로, 프론트가 localStorage에 들고
+ * 있다가 항상 함께 보내는 쪽이 안전합니다.
  */
 export async function sendChatMessage(
   sessionId: string,
   userMessage: string,
+  familyGraphId?: string | null,
 ): Promise<ChatCallResult> {
   const request: AgentInput = {
     session_id: sessionId,
     user_message: userMessage,
     context: {},
+    ...(familyGraphId ? { family_graph_id: familyGraphId } : {}),
   };
 
   const startedAt = performance.now();
@@ -90,4 +91,52 @@ export async function sendChatMessage(
       latencyMs,
     };
   }
+}
+
+/**
+ * 가족 트리 저장/조회 (apps/api/family_graph/router.py).
+ * 온보딩 화면(FamilySetup)이 씁니다. 실패 시 Error를 던지므로 호출부가
+ * try/catch로 에러 문구를 보여줘야 합니다.
+ */
+
+async function familyTreeRequest(
+  path: string,
+  init?: RequestInit,
+): Promise<FamilyTreeOut> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    headers: { "Content-Type": "application/json" },
+    ...init,
+  });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (body.detail) detail = JSON.stringify(body.detail);
+    } catch {
+      // 본문이 JSON이 아니면 상태 코드만 보여줍니다.
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as FamilyTreeOut;
+}
+
+export function createFamilyTree(tree: FamilyTreeIn): Promise<FamilyTreeOut> {
+  return familyTreeRequest("/family-graph", {
+    method: "POST",
+    body: JSON.stringify(tree),
+  });
+}
+
+export function getFamilyTree(familyGraphId: string): Promise<FamilyTreeOut> {
+  return familyTreeRequest(`/family-graph/${familyGraphId}`);
+}
+
+export function updateFamilyTree(
+  familyGraphId: string,
+  tree: FamilyTreeIn,
+): Promise<FamilyTreeOut> {
+  return familyTreeRequest(`/family-graph/${familyGraphId}`, {
+    method: "PUT",
+    body: JSON.stringify(tree),
+  });
 }

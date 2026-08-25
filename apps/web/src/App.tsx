@@ -2,9 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import "./App.css";
 import { AgentStrip } from "./components/AgentStrip";
 import { ChatMessage, type Turn } from "./components/ChatMessage";
+import { FamilySetup } from "./components/FamilySetup";
 import { SuggestionChips } from "./components/SuggestionChips";
 import { API_BASE_URL, sendChatMessage } from "./lib/api";
 import type { AgentName } from "./types";
+
+const FAMILY_GRAPH_ID_KEY = "family_graph_id";
+const FAMILY_MEMBER_COUNT_KEY = "family_member_count";
+const FAMILY_SETUP_SKIPPED_KEY = "family_setup_skipped";
 
 const WELCOME_TURN: Turn = {
   id: "welcome",
@@ -30,6 +35,19 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [devMode, setDevMode] = useState(false);
   const [activeAgent, setActiveAgent] = useState<AgentName | null>(null);
+  const [familyGraphId, setFamilyGraphId] = useState<string | null>(() =>
+    localStorage.getItem(FAMILY_GRAPH_ID_KEY),
+  );
+  const [familyMemberCount, setFamilyMemberCount] = useState<number>(() =>
+    Number(localStorage.getItem(FAMILY_MEMBER_COUNT_KEY) ?? "0"),
+  );
+  // 첫 진입이면 온보딩부터. 이미 입력했거나 "나중에"를 눌렀으면 바로 채팅으로.
+  const [view, setView] = useState<"onboarding" | "chat">(() =>
+    localStorage.getItem(FAMILY_GRAPH_ID_KEY) ||
+    localStorage.getItem(FAMILY_SETUP_SKIPPED_KEY)
+      ? "chat"
+      : "onboarding",
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -52,7 +70,7 @@ export default function App() {
     setInput("");
     setLoading(true);
 
-    const result = await sendChatMessage(sessionId, text);
+    const result = await sendChatMessage(sessionId, text, familyGraphId);
 
     if (result.ok && result.response) {
       const output = result.response;
@@ -101,6 +119,32 @@ export default function App() {
     setLoading(false);
   };
 
+  const handleSetupDone = (id: string, memberCount: number) => {
+    localStorage.setItem(FAMILY_GRAPH_ID_KEY, id);
+    localStorage.setItem(FAMILY_MEMBER_COUNT_KEY, String(memberCount));
+    localStorage.removeItem(FAMILY_SETUP_SKIPPED_KEY);
+    setFamilyGraphId(id);
+    setFamilyMemberCount(memberCount);
+    setView("chat");
+  };
+
+  const handleSetupSkip = () => {
+    localStorage.setItem(FAMILY_SETUP_SKIPPED_KEY, "1");
+    setView("chat");
+  };
+
+  if (view === "onboarding") {
+    return (
+      <div className="app-shell">
+        <FamilySetup
+          familyGraphId={familyGraphId}
+          onDone={handleSetupDone}
+          onSkip={handleSetupSkip}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -110,6 +154,15 @@ export default function App() {
             <p className="app-subtitle">누구나 쉽게 준비하는 상속 AI 상담</p>
           </div>
           <div className="app-header-actions">
+            <button
+              type="button"
+              className="icon-btn family-chip"
+              onClick={() => setView("onboarding")}
+              title="가족 정보 입력/수정"
+            >
+              👨‍👩‍👧{" "}
+              {familyGraphId ? `가족 ${familyMemberCount}명` : "가족 정보 입력"}
+            </button>
             <button type="button" className="icon-btn" onClick={resetSession}>
               ↺ 새 상담
             </button>
