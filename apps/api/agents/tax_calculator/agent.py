@@ -16,6 +16,7 @@ from schemas import AgentInput, AgentName, AgentOutput
 
 from .calculator import calculate_inheritance_tax
 from .models import InheritanceTaxInput
+from .presentation import result_reply, user_error_reply
 
 STATE_KEY = "tax_calculator"
 
@@ -38,19 +39,19 @@ MONEY_SLOTS = {
 
 QUESTIONS = {
     "decedent_is_resident": (
-        "먼저 피상속인이 사망 당시 국내 거주자였는지 알려주세요. "
+        "먼저 돌아가신 분이 사망 당시 국내에 거주하셨는지 알려주세요. "
         "국내 거주자였다면 '네', 아니면 '아니요'라고 답해주세요."
     ),
     "spouse_exists": (
-        "피상속인의 배우자가 현재 생존해 있나요? " "'네' 또는 '아니요'로 알려주세요."
+        "돌아가신 분의 배우자가 현재 생존해 있나요? " "'네' 또는 '아니요'로 알려주세요."
     ),
     "children_count": (
-        "피상속인의 생존 자녀는 몇 명인가요? " "예: '2명', 자녀가 없다면 '0명'"
+        "돌아가신 분의 생존 자녀는 몇 명인가요? " "예: '2명', 자녀가 없다면 '0명'"
     ),
     "spouse_is_sole_heir": (
-        "자녀가 없으시군요. 배우자가 단독으로 상속받으시나요, 아니면 피상속인의 "
-        "부모님(직계존속)도 함께 상속받으시나요? 배우자 단독상속이면 '네', "
-        "부모님과 함께라면 '아니요'로 답해주세요."
+        "자녀가 없으시군요. 배우자만 상속받나요, 아니면 돌아가신 분의 "
+        "부모님이나 조부모님도 함께 상속받나요? 배우자만 받는다면 '네', "
+        "부모님이나 조부모님도 함께 받는다면 '아니요'로 답해주세요."
     ),
     "original_inherited_property": (
         "부동산, 예금, 주식 등 본래의 상속재산은 총 얼마인가요? "
@@ -81,7 +82,7 @@ QUESTIONS = {
         "아직 정해지지 않았다면 '0원'이라고 입력해주세요."
     ),
     "filing_within_deadline": (
-        "법정 신고기한 안에 상속세를 신고할 예정인가요? "
+        "정해진 신고기한 안에 상속세를 신고할 예정인가요? "
         "'네' 또는 '아니요'로 알려주세요."
     ),
 }
@@ -97,6 +98,7 @@ def _empty_state() -> dict[str, Any]:
         "asked_slot": None,
         "missing_fields": [],
         "last_result": None,
+        "has_grandchild_heir": False,
     }
 
 
@@ -122,6 +124,7 @@ def _load_state(context: dict[str, Any] | None) -> dict[str, Any]:
     if isinstance(raw_state.get("last_result"), dict):
         state["last_result"] = dict(raw_state["last_result"])
 
+    state["has_grandchild_heir"] = raw_state.get("has_grandchild_heir") is True
     return state
 
 
@@ -175,6 +178,11 @@ def _apply_family_graph(
         spouse_exists = any(heir.get("relation") == "spouse" for heir in alive_heirs)
         children_count = sum(heir.get("relation") == "child" for heir in alive_heirs)
 
+        has_grandchild_heir = any(
+            heir.get("relation") == "grandchild" for heir in alive_heirs
+        )
+
+        state["has_grandchild_heir"] = spouse_exists and has_grandchild_heir
         # 민법 제1003조: 배우자는 1순위(직계비속) 또는 2순위(직계존속)
         # 상속인이 있으면 그들과 공동상속하고, 둘 다 없을 때만 단독상속인이
         # 된다 — 형제자매(3순위)는 배우자가 있으면 애초에 상속인이 아니므로
@@ -262,48 +270,104 @@ def _parse_count(message: str) -> int | None:
     return int(match.group())
 
 
+def _parse_small_korean_amount(text: str) -> Decimal | None:
+    """만보다 작은 구간의 천·백·십 단위를 계산한다."""
+
+    if not text:
+        return Decimal("1")
+
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return Decimal(text)
+
+    small_units = {
+        "천": Decimal("1000"),
+        "백": Decimal("100"),
+        "십": Decimal("10"),
+    }
+
+    total = Decimal("0")
+    position = 0
+
+    for match in re.finditer(r"(\d+(?:\.\d+)?)?(천|백|십)", text):
+        if match.start() != position:
+            return None
+
+        number = Decimal(match.group(1) or "1")
+        total += number * small_units[match.group(2)]
+        position = match.end()
+
+    tail = text[position:]
+
+    if tail:
+        if re.fullmatch(r"\d+(?:\.\d+)?", tail) is None:
+            return None
+
+        total += Decimal(tail)
+
+    return total
+
+
 def _parse_money(message: str) -> int | None:
-    """'10억', '5천만원', '300000000원'을 원 단위 정수로 변환한다."""
+    """'10억', '9천5백만원', '300000000원'을 원 단위 정수로 변환한다."""
 
     normalized = message.strip().replace(",", "").replace(" ", "")
 
     if "없" in normalized:
         return 0
 
-    # "0원", "0" 처럼 전체가 0을 뜻하는 경우만 0으로 처리한다. 부분 문자열로
-    # "0원"을 검사하면 "500000000원"처럼 끝자리가 0으로 끝나는 정상적인 금액까지
-    # 전부 0으로 잘못 인식된다 (실측 확인된 버그).
     if re.fullmatch(r"0+원?", normalized):
         return 0
 
-    multipliers = {
+    amount_text = normalized.removesuffix("원")
+
+    if re.fullmatch(r"\d+", amount_text):
+        return int(amount_text)
+
+    if re.fullmatch(r"[0-9.조억만천백십]+", amount_text) is None:
+        return None
+
+    big_units = {
         "조": 1_000_000_000_000,
         "억": 100_000_000,
-        "천만": 10_000_000,
-        "백만": 1_000_000,
         "만": 10_000,
-        "원": 1,
     }
 
-    matches = re.findall(
-        r"(\d+(?:\.\d+)?)(조|억|천만|백만|만|원)",
-        normalized,
-    )
+    total = Decimal("0")
+    position = 0
+    previous_multiplier: int | None = None
 
-    if matches:
-        total = Decimal("0")
+    for match in re.finditer(r"[조억만]", amount_text):
+        multiplier = big_units[match.group()]
 
-        for number, unit in matches:
-            total += Decimal(number) * multipliers[unit]
+        # 큰 단위는 조 → 억 → 만 순서로만 입력할 수 있다.
+        if previous_multiplier is not None and multiplier >= previous_multiplier:
+            return None
 
-        return int(total)
+        section = amount_text[position : match.start()]
 
-    plain_number = re.fullmatch(r"\d+", normalized)
+        if not section and position != 0:
+            return None
 
-    if plain_number:
-        return int(normalized)
+        section_value = _parse_small_korean_amount(section)
 
-    return None
+        if section_value is None:
+            return None
+
+        total += section_value * multiplier
+        position = match.end()
+        previous_multiplier = multiplier
+
+    tail = amount_text[position:]
+
+    if tail:
+        tail_value = _parse_small_korean_amount(tail)
+
+        if tail_value is None:
+            return None
+
+        total += tail_value
+
+    return int(total)
 
 
 def _apply_previous_answer(
@@ -370,59 +434,6 @@ def _missing_slots(values: dict[str, Any]) -> list[str]:
     return [slot for slot in slot_order if slot not in values]
 
 
-def _won(value: int) -> str:
-    """원 단위 금액을 읽기 쉬운 형식으로 표시한다."""
-
-    return f"{value:,}원"
-
-
-def _result_reply(result: Any) -> str:
-    """계산 결과를 쉬운 말로 변환한다."""
-
-    lines = [
-        "입력하신 정보를 기준으로 상속세를 계산했습니다.",
-        "",
-        f"- 총상속재산가액: {_won(result.total_inherited_property)}",
-        f"- 공제 가능한 비용·채무: {_won(result.deductible_expenses)}",
-        f"- 상속세 과세가액: {_won(result.taxable_inheritance_value)}",
-        f"- 적용된 상속공제: {_won(result.total_inheritance_deduction)}",
-        f"- 상속세 과세표준: {_won(result.inheritance_tax_base)}",
-        f"- 산출세액: {_won(result.calculated_inheritance_tax)}",
-        f"- 신고세액공제: {_won(result.filing_tax_credit)}",
-        f"- 예상 납부세액: {_won(result.estimated_tax_due)}",
-    ]
-
-    if result.estimated_filing_deadline is not None:
-        lines.extend(
-            [
-                "",
-                (
-                    "예상 신고기한은 "
-                    f"{result.estimated_filing_deadline.isoformat()}입니다."
-                ),
-            ]
-        )
-
-    if result.warnings:
-        lines.append("")
-        lines.append("확인할 사항:")
-
-        for warning in result.warnings:
-            lines.append(f"- {warning}")
-
-    lines.extend(
-        [
-            "",
-            (
-                "이 결과는 현재 입력한 정보에 따른 참고용 시뮬레이션입니다. "
-                "실제 신고 전에는 홈택스 또는 세무 전문가를 통해 확인해주세요."
-            ),
-        ]
-    )
-
-    return "\n".join(lines)
-
-
 def run(payload: AgentInput) -> AgentOutput:
     """상속세 정보를 수집하고 계산 결과를 반환한다."""
 
@@ -453,14 +464,30 @@ def run(payload: AgentInput) -> AgentOutput:
         return AgentOutput(
             agent=AgentName.TAX_CALCULATOR,
             reply=(
-                "현재 상속세 계산기는 피상속인이 국내 거주자인 경우만 "
-                "지원합니다. 비거주자 상속은 국내 재산 범위와 공제 기준이 "
+                "현재 상속세 계산기는 돌아가신 분이 사망 당시 국내에 거주한 "
+                "경우만 지원합니다. 해외 거주자의 상속은 국내 재산 범위와 공제 기준이 "
                 "다르므로 세무 전문가의 확인이 필요합니다."
             ),
             next_action=None,
             data={STATE_KEY: state},
         )
+    if state.get("has_grandchild_heir") is True:
+        state["status"] = "unsupported"
+        state["asked_slot"] = None
+        state["missing_fields"] = []
 
+        return AgentOutput(
+            agent=AgentName.TAX_CALCULATOR,
+            reply=(
+                "자녀분이 먼저 돌아가시고 손주가 대신 상속받는 경우인가요?\n\n"
+                "이 경우에는 손주가 어느 자녀분을 대신해 상속받는지에 따라 "
+                "배우자와 손주의 몫이 달라질 수 있습니다. 현재 계산기에서는 "
+                "이 경우의 지분 계산을 아직 지원하지 않으므로 세무 전문가의 "
+                "확인이 필요합니다."
+            ),
+            next_action=None,
+            data={STATE_KEY: state},
+        )
     if (
         values.get("spouse_exists") is True
         and values.get("children_count") == 0
@@ -479,9 +506,9 @@ def run(payload: AgentInput) -> AgentOutput:
             agent=AgentName.TAX_CALCULATOR,
             reply=(
                 "현재 상속세 계산기는 배우자와 자녀의 공동상속, 또는 배우자 "
-                "단독상속만 지원합니다. 배우자가 피상속인의 부모님(직계존속)과 "
-                "함께 상속받는 경우는 아직 지원하지 않아 세무 전문가의 확인이 "
-                "필요합니다."
+                "단독상속만 지원합니다. 배우자가 돌아가신 분의 부모님이나 "
+                "조부모님과 함께 상속받는 경우는 아직 지원하지 않아 세무 "
+                "전문가의 확인이 필요합니다."
             ),
             next_action=None,
             data={STATE_KEY: state},
@@ -513,11 +540,7 @@ def run(payload: AgentInput) -> AgentOutput:
 
         return AgentOutput(
             agent=AgentName.TAX_CALCULATOR,
-            reply=(
-                "입력한 정보 사이에 서로 맞지 않는 부분이 있어 계산하지 "
-                "못했습니다. 재산과 채무 금액을 다시 확인해주세요.\n\n"
-                f"확인 내용: {exc}"
-            ),
+            reply=user_error_reply(exc),
             next_action=None,
             data={STATE_KEY: state},
         )
@@ -529,7 +552,7 @@ def run(payload: AgentInput) -> AgentOutput:
 
     return AgentOutput(
         agent=AgentName.TAX_CALCULATOR,
-        reply=_result_reply(result),
+        reply=result_reply(result),
         next_action=None,
         data={STATE_KEY: state},
     )
