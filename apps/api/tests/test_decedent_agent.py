@@ -97,7 +97,7 @@ def test_run_reads_answers_from_context() -> None:
     address = output.data["requirements"]["address"]
     assert address["condition_id"] == "envelope_or_minor_discrepancy"
     assert address["grade"] == "YELLOW"
-    assert address["precedent_ids"] == ["fingerprint_seal_valid"]
+    assert address["precedent_ids"] == ["address_on_envelope_valid"]
     # PENDING이 하나도 없고 자서도 확인됐으니 heir_navigator 로 넘겨야 한다.
     assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
 

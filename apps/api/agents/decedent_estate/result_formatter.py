@@ -117,7 +117,7 @@ _COMMENTARY_CITATION = "(대한법률구조공단 해설)"
 # RED 판정에 딸린 precedent_id 중 "무효 판례"가 아니라 반대 취지의 참고 정보인
 # 것들은 카드(사건번호 인용)가 아니라 들여쓴 참고 문구로 따로 보여준다.
 _RED_REFERENCE_NOTES = {
-    "fingerprint_seal_valid": "   ℹ️ 참고: 지장(손도장)도 날인으로 인정됩니다",
+    "fingerprint_seal_valid": "   ℹ️ 참고: 지장(손도장)을 날인으로 인정한 판례가 있습니다",
     # executor_not_disqualified는 판례가 아니라 조문(§1072 열거) 근거라, "판례가
     # 있습니다"가 아니라 "조문상" 표현을 쓴다 — precedents.json 의 note 대로 명시적
     # 대법원 판례로 확인된 해석이 아니라 열거 목록에 없다는 소극적 추론이기 때문.

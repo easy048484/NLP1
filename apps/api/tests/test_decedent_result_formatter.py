@@ -250,7 +250,7 @@ def test_seal_red_shows_fingerprint_note_not_card() -> None:
     )
 
     line = format_requirement_line(results["seal"])
-    assert "   ℹ️ 참고: 지장(손도장)도 날인으로 인정됩니다" in line
+    assert "   ℹ️ 참고: 지장(손도장)을 날인으로 인정한 판례가 있습니다" in line
     assert _one_liner("fingerprint_seal_valid") not in line
     assert "[카드]" not in line
 

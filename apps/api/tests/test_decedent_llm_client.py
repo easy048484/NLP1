@@ -111,7 +111,7 @@ def test_rejects_name_that_does_not_look_korean(
 def test_will_date_returns_none_when_api_key_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("CLAUDE_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     def _fail_if_called(**kwargs):
         raise AssertionError("API 키가 없으면 Anthropic 클라이언트를 만들면 안 된다")
@@ -176,7 +176,7 @@ def test_will_date_rejects_empty_string(monkeypatch: pytest.MonkeyPatch) -> None
 def test_will_address_returns_none_when_api_key_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("CLAUDE_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     def _fail_if_called(**kwargs):
         raise AssertionError("API 키가 없으면 Anthropic 클라이언트를 만들면 안 된다")
