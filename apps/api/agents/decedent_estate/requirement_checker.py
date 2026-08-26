@@ -94,6 +94,16 @@ def _load_rules() -> dict[str, Any]:
         return json.load(f)
 
 
+def photo_confirm_templates() -> dict[str, Any]:
+    """rules/requirements.json 의 photo_confirm_templates 섹션을 그대로 돌려준다.
+
+    사진 판독(image_reader.py) 1단계 전용 동적 확인 질문 템플릿 — 기존
+    requirements[].followup 과 무관한 별도 최상위 키다. agent.py 가 이 값을
+    받아 question_template 의 {value} 자리에 판독값을 끼워 넣는다.
+    """
+    return _load_rules()["photo_confirm_templates"]
+
+
 def _find_requirement(rules: dict[str, Any], requirement_id: str) -> dict[str, Any]:
     for req in rules["requirements"]:
         if req["id"] == requirement_id:

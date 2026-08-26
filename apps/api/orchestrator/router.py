@@ -158,6 +158,11 @@ def node_build_context(state: GraphState) -> GraphState:
         user_message=payload.user_message,
         family_graph=family_graph,
         context=context,
+        # 이미지는 세션에 저장되지 않는다 — extract_state_to_persist가
+        # output.data[agent.value]만 영속화하고, payload(이번 요청)는 애초에
+        # 저장 경로에 들어가지 않는다. 그대로 통과만 시킨다.
+        image_base64=payload.image_base64,
+        image_media_type=payload.image_media_type,
     )
     return {"agent_input": agent_input, "session": session}
 
