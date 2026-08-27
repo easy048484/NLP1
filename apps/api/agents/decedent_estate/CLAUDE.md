@@ -88,17 +88,21 @@
       하나 있다"는 사실 고지다.
     - **상속인 범위·지분·유류분은 답하지 않는다** — heir_navigator 영역이라
       침범하면 두 에이전트가 서로 다른 답을 할 위험이 있다. "확인된 유언장이
-      없는 경우 일반적으로 법정상속 절차를 따릅니다"까지만 말하고 넘긴다
-      (절대 원칙 2 무단정 유지 — "유언장이 없으니 법정상속입니다" 금지).
+      없는 경우 일반적으로 법정상속 절차를 따릅니다"까지만 말하고, 필요하면
+      채팅으로 돌아가 다시 물어보라고 안내한다(아래 라우터 참고). (절대 원칙 2
+      무단정 유지 — "유언장이 없으니 법정상속입니다" 금지)
     - ⚠️ **공정증서 고지 문구는 검증된 사실까지만 적었다.** 원본이 공증사무소에
       보관된다는 점은 법제처 '찾기쉬운 생활법령정보'로 확인했으나, 유언 존재
       여부를 조회하는 통합 검색 제도(기관명·절차)는 확인하지 못해 기관명·URL을
       특정하지 않고 "공증사무소를 통해 확인" 수준으로 낮췄다. 확인 없이 기관명을
       채워 넣지 말 것 — 회귀 테스트(`test_decedent_no_will.py`)가 막고 있다.
-    - ⚠️ heir_navigator 핸드오프는 **스텁**이다. next_action 포맷은 handoff.py
-      규약 2번으로 확립돼 있어 notarial과 같은 상수를 재사용하지만, 넘겨받은
-      heir_navigator 가 "유언장 없음"을 어떻게 초기 상태로 반영할지는 팀 협의
-      대기 중이다(정민님 담당).
+    - **heir_navigator로의 직접 next_action 핸드오프는 없다** (2026-08-25 제거).
+      웹 UI가 로그인 후 채팅창에서 라우터가 적합한 에이전트를 선택하는 구조로
+      확정되면서, #20에서 넣었던 handoff:heir_navigator 스텁은 받는 쪽이 없어
+      막다른 길이 됐다. 대신 rules/will_types.json의 no_will.chat_return_notice
+      로 "처음 화면에서 다시 문의해 주세요"만 안내한다. notarial 분기는 여전히
+      같은 상수(NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR)로 핸드오프한다 — 이건
+      no_will과 별개 경로라 건드리지 않았다.
   - result_formatter.py 는 summarize()/pending_questions()/format_result() 가
     formal_ids·messages(SummaryMessages)를 파라미터로 받도록 일반화되어
     handwritten·recording 두 요건 집합을 하나의 §3 렌더링 로직으로 처리한다

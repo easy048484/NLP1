@@ -35,7 +35,7 @@ def unknown_default() -> dict[str, Any]:
 def no_will_guidance() -> dict[str, Any]:
     """ "유언장이 없거나 찾지 못했다" 선택 시 쓸 안내 문구 묶음.
 
-    공정증서 고지 / 법정상속 안내 / 핸드오프 사유를 담는다. "unknown"과 마찬가지로
+    공정증서 고지 / 법정상속 안내 / 채팅 복귀 안내를 담는다. "unknown"과 마찬가지로
     민법 5방식 중 하나가 아니라 UI sentinel이라 will_types 배열이 아닌 별도 키에 있다.
     """
     return _load()["no_will"]
