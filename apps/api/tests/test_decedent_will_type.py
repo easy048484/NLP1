@@ -184,6 +184,23 @@ def test_oral_gives_requirements_summary_and_unsupported_notice() -> None:
     assert output.data["will_type"] == "oral"
 
 
+def test_oral_guidance_includes_nodding_only_precedent() -> None:
+    """구수증서 안내에 '질문에 고개만 끄덕인 경우 구수 불인정' 판례 문구가 포함된다."""
+    payload = AgentInput(
+        session_id="s1", user_message=_WILL_TEXT_COMPLETE, context={"will_type": "oral"}
+    )
+
+    output = decedent_estate.run(payload)
+
+    assert (
+        "미리 작성된 서면을 확인하며 고개를 끄덕이거나 간단한 답변만 한 경우는 "
+        "'유언취지의 구수'로 인정되지 않은 사례가 있습니다"
+    ) in output.reply
+    assert "2005다57899" in output.reply
+    for assertive in ("무효입니다", "유효합니다", "인정되지 않습니다"):
+        assert assertive not in output.reply
+
+
 def test_all_guidance_only_types_have_no_requirements_payload() -> None:
     for will_type in ("notarial", "secret", "oral"):
         payload = AgentInput(
