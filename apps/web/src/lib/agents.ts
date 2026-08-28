@@ -8,11 +8,14 @@ export interface AgentMeta {
   color: string;
   bg: string;
   emoji: string;
+  /** 백엔드에 껍데기(stub)만 등록된 에이전트. 라우팅은 되지만 "준비 중" 응답을 낸다. */
+  stub?: boolean;
 }
 
 /**
- * apps/api/schemas/agent_io.py 의 AgentName enum, orchestrator/router.py 의
- * _KEYWORD_ROUTES 와 맞춘 3개 에이전트 메타데이터입니다. 라벨/설명 문구는
+ * apps/api/schemas/agent_io.py 의 AgentName enum 및 각 에이전트의
+ * agents/<이름>/spec.py 선언과 맞춘 메타데이터입니다. 새 에이전트를 백엔드에
+ * 등록하면 여기에도 한 항목을 추가해야 합니다 (AgentName 유니온 타입이 강제). 라벨/설명 문구는
  * README 및 각 에이전트 모듈 docstring의 담당 영역 설명을 따랐습니다.
  */
 export const AGENTS: Record<AgentName, AgentMeta> = {
@@ -43,10 +46,32 @@ export const AGENTS: Record<AgentName, AgentMeta> = {
     bg: "#ecfdf5",
     emoji: "🧮",
   },
+  retirement_planner: {
+    name: "retirement_planner",
+    label: "은퇴자금 설계",
+    shortLabel: "은퇴 설계",
+    description: "은퇴까지 필요한 자금과 준비 갭을 계산해드려요",
+    color: "#d97706",
+    bg: "#fffbeb",
+    emoji: "🏖️",
+    stub: true,
+  },
+  asset_organizer: {
+    name: "asset_organizer",
+    label: "자산 목록 정리",
+    shortLabel: "자산 정리",
+    description: "보유 자산과 부채를 한눈에 정리해드려요",
+    color: "#0891b2",
+    bg: "#ecfeff",
+    emoji: "🗂️",
+    stub: true,
+  },
 };
 
 export const AGENT_LIST: AgentMeta[] = [
   AGENTS.heir_navigator,
   AGENTS.decedent_estate,
   AGENTS.tax_calculator,
+  AGENTS.retirement_planner,
+  AGENTS.asset_organizer,
 ];
