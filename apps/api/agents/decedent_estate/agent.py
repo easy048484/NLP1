@@ -355,7 +355,8 @@ def _run_no_will_pipeline(state: DecedentState) -> AgentOutput:
       공증사무소에 보관되어 고인이 정본을 갖고 있지 않아도 존재할 수 있다.
     - **상속인 범위·지분·유류분은 여기서 답하지 않는다.** heir_navigator 영역이라
       침범하면 두 에이전트가 서로 다른 답을 할 위험이 있다. "법정상속 절차를
-      따릅니다"까지만 말하고 넘긴다.
+      따릅니다"까지만 말하고, 필요하면 채팅으로 돌아가 다시 물어보라고 안내한다
+      (아래 router 안내 참고).
     - CLAUDE.md 절대 원칙 2(무단정)를 그대로 적용한다 — "유언장이 없으니
       법정상속입니다" 같은 단정 대신 "확인된 유언장이 없는 경우 일반적으로 ~
       따릅니다" 패턴을 쓴다. 문구는 rules/will_types.json 의 no_will 에 있다.
@@ -367,13 +368,21 @@ def _run_no_will_pipeline(state: DecedentState) -> AgentOutput:
     `{}` ) will_type="none" 이 세션에서 사라지고, 나중에 다시 decedent_estate로
     라우팅되면(예: 사용자가 heir_navigator 대화 중 "유언장" 키워드를 다시 언급) 방식
     질문을 처음부터 다시 하게 되는 회귀가 있었다. _namespaced()로 감싸 다른 분기와
-    동일하게 상태를 남긴다.
+    동일하게 상태를 남긴다. (이 문단은 will_type="none" 세션 저장 관련 — 아래
+    next_action 제거와는 무관하니 건드리지 않는다.)
+
+    ⚠️ (2026-08-25) heir_navigator로의 직접 next_action 핸드오프를 제거했다.
+    웹 UI가 "로그인 후 채팅창에서 라우터가 적합한 에이전트를 선택"하는 구조로
+    확정되면서, #20에서 넣었던 handoff:heir_navigator 는 받는 쪽이 없어 막다른
+    길이었다 — 사용자는 채팅으로 돌아가 다시 말하면 라우터가 알아서 보낸다.
+    next_action은 이제 다른 안내 전용 분기(secret/oral)와 마찬가지로 None이다.
     """
     guidance = no_will_guidance()
 
     reply = "\n\n".join(
         [
             guidance["legal_succession_guidance"],
+            guidance["chat_return_notice"],
             guidance["notarial_notice"],
             *closing_lines(),
         ]
@@ -381,21 +390,12 @@ def _run_no_will_pipeline(state: DecedentState) -> AgentOutput:
 
     data: dict[str, Any] = {
         "will_type": _NO_WILL_TYPE,
-        "handoff_reason": guidance["handoff_reason"],
         "warnings": [],
     }
 
     return AgentOutput(
         agent=AgentName.DECEDENT_ESTATE,
         reply=reply,
-        # 포맷은 handoff.py 규약 2번("handoff:<에이전트이름>")으로 확립돼 있어
-        # notarial 분기와 같은 상수를 그대로 쓴다.
-        # TODO(팀 협의 대기): heir_navigator 쪽 실제 연결은 정민님 담당이다.
-        # 지금은 신호만 내보내는 스텁이라, 넘겨받은 heir_navigator 가 "유언장
-        # 없음"을 어떻게 초기 상태로 반영할지(예: will_exists="no" 슬롯 채우기)는
-        # 아직 합의되지 않았다. 합의되면 이 함수의 data 에 그 필드를 추가하면
-        # 되도록 핸드오프 관련 값을 여기 한곳에 모아 두었다.
-        next_action=NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR,
         data=_namespaced(state, data, will_type=_NO_WILL_TYPE, pending_questions=[]),
     )
 

@@ -214,7 +214,8 @@
           "description": "도장/지장",
           "label": "도장 또는 지장이 있다",
           "grade": "GREEN",
-          "precedent_ids": []
+          "precedent_ids": ["fingerprint_identity_disputed_invalid"],
+          "note": "등급은 GREEN 유지 — 무인 자체는 적법하고 본인 여부는 사실 인정 문제라 판정 영역이 아니다. result_formatter._GREEN_REFERENCE_NOTES를 통해 카드가 아니라 들여쓴 참고 문구로만 안내한다(날인 RED의 fingerprint_seal_valid와 동일한 패턴)."
         },
         {
           "id": "signature_only",

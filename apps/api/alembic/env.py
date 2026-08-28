@@ -1,6 +1,9 @@
 import os
+import sys
 from logging.config import fileConfig
+from pathlib import Path
 
+from dotenv import load_dotenv
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
@@ -9,14 +12,26 @@ from alembic import context
 # apps/api를 sys.path에 넣어야 db/family_graph/orchestrator를 import할 수
 # 있습니다. pytest.ini의 `pythonpath = .`와 같은 이유로, alembic은 CLI로
 # 실행되므로 여기서 직접 넣어줍니다.
-import sys
-from pathlib import Path
+_api_dir = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_api_dir))
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# uvicorn(main.py)과 같이 저장소 루트 .env를 읽습니다. alembic CLI는
+# dotenv를 자동으로 로드하지 않아서, 이게 없으면 alembic.ini의
+# placeholder(driver://...)로 붙어 dialects:driver 오류가 납니다.
+# 로컬 저장소는 repo_root/apps/api/alembic/env.py로 4단 깊이라
+# parents[1]이 repo_root지만, Docker 이미지(infra/Dockerfile.api)는
+# WORKDIR /app에 apps/api/의 내용만 복사돼 깊이가 얕아져 parents[1]이
+# 아예 없을 수 있습니다(IndexError로 서버가 못 뜸 - 2026-08-28 배포 장애
+# 원인). 그런 환경에서는 어차피 Railway가 실제 환경변수를 직접 주입하므로
+# .env 파일 자체가 없는 게 정상이라 조용히 건너뜁니다.
+_env_path = _api_dir.parents[1] / ".env" if len(_api_dir.parents) > 1 else None
+if _env_path is not None and _env_path.exists():
+    load_dotenv(_env_path)
 
 # Base.metadata에 모든 테이블이 올라오도록, models 모듈들을 import합니다
 # (import 자체가 부작용으로 Base.metadata에 테이블을 등록시킵니다).
 from db.base import Base  # noqa: E402
+import auth.models  # noqa: E402,F401
 import family_graph.models  # noqa: E402,F401
 import orchestrator.models  # noqa: E402,F401
 
@@ -26,9 +41,14 @@ config = context.config
 
 # alembic.ini의 sqlalchemy.url 대신 환경변수 DATABASE_URL을 우선 씁니다 —
 # 시크릿을 alembic.ini에 커밋하지 않기 위해서입니다 (.env.example과 동일한
-# 원칙).
-if os.getenv("DATABASE_URL"):
-    config.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
+# 원칙). ConfigParser가 %를 보간 문법으로 해석하므로 비밀번호의 %는
+# %% 로 이스케이프합니다.
+_database_url = os.getenv("DATABASE_URL", "").strip()
+if not _database_url:
+    raise RuntimeError(
+        "DATABASE_URL이 없습니다. 저장소 루트 .env에 Postgres URL을 넣으세요."
+    )
+config.set_main_option("sqlalchemy.url", _database_url.replace("%", "%%"))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

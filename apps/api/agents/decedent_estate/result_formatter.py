@@ -30,6 +30,11 @@ precedent_id(_RED_REFERENCE_NOTES)는 카드가 아니라 들여쓴 참고 문�
 executor_not_disqualified). 이 참고 문구는 카드 인용(_precedent_citation)을
 거치지 않고 여기 문자열을 그대로 쓰므로, 근거가 판례인지 조문인지에 맞는
 표현을 문자열 자체에 담아야 한다.
+
+GREEN 항목에도 같은 패턴(_GREEN_REFERENCE_NOTES)이 있다 — 날인 GREEN(지장
+선택)의 fingerprint_identity_disputed_invalid: 무인 자체는 적법하므로 등급은
+GREEN을 유지하되, 무인이 본인 것인지가 다투어져 무효로 판단된 사례가 있다는
+참고 문구만 덧붙인다. RED 예외와 마찬가지로 카드 인용을 거치지 않는다.
 """
 
 from __future__ import annotations
@@ -122,6 +127,16 @@ _RED_REFERENCE_NOTES = {
     # 있습니다"가 아니라 "조문상" 표현을 쓴다 — precedents.json 의 note 대로 명시적
     # 대법원 판례로 확인된 해석이 아니라 열거 목록에 없다는 소극적 추론이기 때문.
     "executor_not_disqualified": "   ℹ️ 참고: 조문상 유언집행자는 증인 결격사유로 열거되어 있지 않습니다",
+}
+
+# GREEN 판정에 딸린 precedent_id 중 등급 자체는 바꾸지 않지만 별도 쟁점(본인
+# 확인 등)이 있음을 알려야 하는 것들 — RED와 동일한 패턴으로 카드가 아니라
+# 들여쓴 참고 문구로 보여준다.
+_GREEN_REFERENCE_NOTES = {
+    "fingerprint_identity_disputed_invalid": (
+        "   ℹ️ 참고: 무인이 고인 본인의 것임이 다투어지는 경우 유언증서가 무효로 "
+        "판단된 사례가 있습니다"
+    ),
 }
 
 # ---------------------------------------------------------------------------
@@ -237,7 +252,11 @@ def format_requirement_line(result: RequirementResult) -> Optional[str]:
     if result.grade == "GREEN":
         value = _extracted_display_value(result)
         suffix = f" ({value})" if value else ""
-        return f"✅ {name}: 기재 확인{suffix}"
+        lines = [f"✅ {name}: 기재 확인{suffix}"]
+        for precedent_id in result.precedent_ids:
+            if precedent_id in _GREEN_REFERENCE_NOTES:
+                lines.append(_GREEN_REFERENCE_NOTES[precedent_id])
+        return "\n".join(lines)
 
     if result.grade == "RED":
         label = red_label(result.requirement_id)
