@@ -105,7 +105,7 @@ def with_db():
     with engine.begin() as conn:
         conn.execute(
             text(
-                "TRUNCATE sessions, family_members, family_graphs "
+                "TRUNCATE sessions, family_members, family_graphs, users "
                 "RESTART IDENTITY CASCADE"
             )
         )

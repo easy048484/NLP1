@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 import orchestrator
+from auth import router as auth_router
 from family_graph import router as family_graph_router
 from orchestrator import route
 from orchestrator.session_store import PostgresSessionStore
@@ -35,6 +36,7 @@ app.add_middleware(
 if os.getenv("DATABASE_URL"):
     orchestrator.configure_session_store(PostgresSessionStore())
 
+app.include_router(auth_router)
 app.include_router(family_graph_router)
 
 
