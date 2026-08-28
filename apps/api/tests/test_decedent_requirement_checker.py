@@ -9,6 +9,7 @@ decedent_estate.requirement_checker 통합 테스트.
 
 from agents.decedent_estate.requirement_checker import (
     check_requirements,
+    extract_address,
     validate_confirm_answers,
 )
 
@@ -272,7 +273,7 @@ def test_address_missing_but_envelope_confirmed_upgrades_to_yellow() -> None:
     address = results["address"]
     assert address.condition_id == "envelope_or_minor_discrepancy"
     assert address.grade == "YELLOW"
-    assert address.precedent_ids == ["fingerprint_seal_valid"]
+    assert address.precedent_ids == ["address_on_envelope_valid"]
     assert address.followup_question is None
 
 
@@ -345,3 +346,102 @@ def test_invalid_confirm_answer_still_results_in_pending_not_crash() -> None:
 
     assert results["seal"].condition_id is None
     assert results["seal"].grade == "PENDING"
+
+
+# ---------------------------------------------------------------------------
+# 도로명주소 / 라벨 없는 지번 인식 (2026-08-26)
+#
+# _ADDRESS_UNIT_RE 가 "번지"라는 리터럴 단어에 의존해, 완전한 도로명주소
+# ("테헤란로 123")와 "번지" 글자 없는 지번("역삼동 123-45")이 전부
+# city_district_only(RED)로 오판정되던 문제를 고쳤다. 아래는 사진 판독
+# 기능 검증 중 실측한 8건 그대로다 — 도로명 4건 중 2건, 지번 2건 중 1건이
+# 수정 전에는 오판정이었다(정확히는: 도로명 2건 + 지번 2건, 총 4건).
+# ---------------------------------------------------------------------------
+
+
+def test_address_lot_number_with_label() -> None:
+    """지번 + '번지' 라벨 — 기존에도 정상 동작하던 케이스(회귀 확인용)."""
+    result = extract_address("주소: 서울특별시 강남구 역삼동 123번지")
+    assert result.case == "full_address"
+
+
+def test_address_lot_number_without_label() -> None:
+    """지번인데 '번지' 글자가 없는 표기 — 수정 전엔 city_district_only로 오판정됐다."""
+    result = extract_address("주소: 서울특별시 강남구 역삼동 123-45")
+    assert result.case == "full_address"
+
+
+def test_address_dong_only_stays_red() -> None:
+    """🔴 회귀: '동만 기재'(2012다71688) — 완화 이후에도 반드시 RED로 남아야 한다."""
+    result = extract_address("주소: 서울시 강남구 역삼동")
+    assert result.case == "city_district_only"
+
+
+def test_address_road_name_basic() -> None:
+    """도로명주소 기본형 — 수정 전엔 city_district_only로 오판정됐다."""
+    result = extract_address("주소: 서울특별시 강남구 테헤란로 123")
+    assert result.case == "full_address"
+
+
+def test_address_road_name_with_apartment_unit() -> None:
+    result = extract_address("주소: 서울특별시 강남구 테헤란로 123, 45동 678호")
+    assert result.case == "full_address"
+
+
+def test_address_road_name_without_number_stays_red() -> None:
+    """🔴 회귀: 번지 없는 도로명 — 완화 이후에도 반드시 RED로 남아야 한다."""
+    result = extract_address("주소: 서울특별시 강남구 테헤란로")
+    assert result.case == "city_district_only"
+
+
+def test_address_road_name_compound_beonggil() -> None:
+    """간선로 + 번길(지선) + 건물번호 복합 표기."""
+    result = extract_address("주소: 경기도 성남시 분당구 판교로 256번길 12")
+    assert result.case == "full_address"
+
+
+def test_address_lot_number_without_label_alt_district() -> None:
+    result = extract_address("주소: 부산광역시 해운대구 우동 1234")
+    assert result.case == "full_address"
+
+
+def test_address_district_only_stays_red() -> None:
+    """🔴 회귀: 구까지만 기재 — 완화 이후에도 반드시 RED로 남아야 한다."""
+    result = extract_address("주소: 서울특별시 강남구")
+    assert result.case == "city_district_only"
+
+
+def test_address_road_name_sub_number() -> None:
+    """부번 표기("123-4") — 지번의 '-45'와 동일한 패턴을 도로명에도 적용."""
+    result = extract_address("주소: 서울특별시 강남구 테헤란로 123-4")
+    assert result.case == "full_address"
+
+
+def test_amount_in_will_body_is_not_mistaken_for_address() -> None:
+    """유언 내용의 금액·수량이 새 정규식 대안(로/길/동/읍/면/리)에 걸려
+    주소로 오인되지 않아야 한다 — '-(으)로' 조사, '동/개월' 등 단위 표현이
+    실제 주소 패턴처럼 보일 수 있는 문장들."""
+    for text in (
+        "장남에게 5000만원을 준다.",
+        "이유로 3개월 이내에 처리한다.",
+        "나는 매일 운동 30분씩 한다.",
+        "회의 안건으로 3가지를 정했다.",
+    ):
+        result = extract_address(text)
+        assert result.case == "absent", f"오탐: {text!r} -> {result.case}"
+
+
+def test_property_location_road_address_still_excluded_by_context() -> None:
+    """재산 소재지(도로명주소)가 유언자 본인 주소로 오인되지 않는지 —
+    _ADDRESS_PROPERTY_CONTEXT_RE 필터가 도로명주소 대안 추가 이후에도
+    그대로 작동하는지 확인한다."""
+    text = _will_text(
+        _NAME_LINE,
+        "나는 내가 소유한 서울특별시 강남구 테헤란로 456 아파트를 장남에게 상속한다.",
+        _DATE_LINE,
+    )
+
+    results = check_requirements(text, address_envelope_answer="no_envelope")
+
+    assert results["address"].condition_id == "absent"
+    assert results["address"].grade == "RED"

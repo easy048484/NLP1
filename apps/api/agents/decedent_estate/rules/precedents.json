@@ -60,8 +60,8 @@
       "case_name": "주주명의개서절차이행",
       "summary": "자필증서 유언은 전문·연월일·주소·성명의 자서가 절대적 요건이므로 전자복사기를 이용해 작성한 복사본은 이에 해당하지 않는다.",
       "one_liner": "워드 작성본·복사본은 자필증서로 인정되지 않는다는 판례가 있습니다",
-      "source_url": null,
-      "note": "참고: 서울고등법원 2021. 1. 14. 선고 2020나2021150 — 컴퓨터 등으로 작성된 부분이 유언의 핵심적인 내용(예: 재산목록)을 이루어 그 부분 없이는 유언의 취지가 불완전한 경우 유언 전체가 무효. 다만 컴퓨터로 작성된 부분이 부수적인 데 그치고 그 부분을 제외해도 취지가 충분히 표현된 경우에는 유효할 수 있음.",
+      "source_url": "https://www.law.go.kr/LSW/precInfoP.do?evtNo=97%EB%8B%A438510",
+      "note": "참고: 서울고등법원 2021. 1. 14. 선고 2020나2021150 — 컴퓨터 등으로 작성된 부분이 유언의 핵심적인 내용(예: 재산목록)을 이루어 그 부분 없이는 유언의 취지가 불완전한 경우 유언 전체가 무효. 다만 컴퓨터로 작성된 부분이 부수적인 데 그치고 그 부분을 제외해도 취지가 충분히 표현된 경우에는 유효할 수 있음. source_url: precSeq가 아니라 evtNo 파라미터 — 이 사건은 law.go.kr에서 precSeq 형태 링크가 확인되지 않아 evtNo 형태로 대체(2026-08-25 확인). typed_will_invalid·fingerprint_seal_valid·address_on_envelope_valid 세 카드가 같은 판례(97다38510)라 링크를 통일했다.",
       "verified": true
     },
     {
@@ -83,10 +83,35 @@
       "court": "대법원",
       "date": "1998-06-12",
       "case_name": "주주명의개서절차이행",
-      "summary": "날인은 인장 대신 무인(拇印)에 의한 경우에도 유효하다. 주소도 전문과 같은 지편이 아니라 전문을 담은 봉투에 기재해도 무방하다.",
+      "summary": "날인은 인장 대신 무인(拇印)에 의한 경우에도 유효하다.",
       "one_liner": "지장(무인)도 날인으로 인정된다는 판례가 있습니다",
-      "source_url": null,
-      "note": "typed_will_invalid 와 동일 판례(97다38510)에서 다른 쟁점(무인 날인 인정)을 인용"
+      "source_url": "https://www.law.go.kr/LSW/precInfoP.do?evtNo=97%EB%8B%A438510",
+      "note": "typed_will_invalid 와 동일 판례(97다38510)에서 다른 쟁점(무인 날인 인정)을 인용. source_url은 typed_will_invalid 참고."
+    },
+    {
+      "id": "address_on_envelope_valid",
+      "type": "precedent",
+      "case_number": "97다38510",
+      "court": "대법원",
+      "date": "1998-06-12",
+      "case_name": "주주명의개서절차이행",
+      "summary": "주소는 전문과 같은 지편이 아니라 전문을 담은 봉투에 기재해도 무방하다.",
+      "one_liner": "주소를 유언장 본문이 아니라 봉투에 적은 경우도 인정한 판례가 있습니다",
+      "source_url": "https://www.law.go.kr/LSW/precInfoP.do?evtNo=97%EB%8B%A438510",
+      "note": "typed_will_invalid · fingerprint_seal_valid 와 동일 판례(97다38510)에서 또 다른 쟁점(주소의 봉투 기재)을 인용. 쟁점별로 카드를 나누지 않으면 주소 안내 화면에 날인 관련 one_liner가 표시된다. source_url은 typed_will_invalid 참고."
+    },
+    {
+      "id": "fingerprint_identity_disputed_invalid",
+      "type": "precedent",
+      "case_number": "2005누1600",
+      "court": "대전고등법원",
+      "date": "2007-08-17",
+      "case_name": null,
+      "summary": "유증인 이름 다음에 무인이 네 번 찍혀 있을 뿐 날인은 없었는데, 그 무인이 유언자 본인의 것임을 인정할 증거가 없어 유언증서가 민법이 정하는 유언으로서의 요건과 방식에 어긋나 무효라고 판단했다. 97다38510을 인용하며 \"유언증서의 날인은 인장 대신 무인에 의하여도 상관은 없으나, 그 유언증서가 유효하기 위해서는 유언증서에 찍힌 무인이 유언자의 것과 동일하여야 한다\"고 판시했다. 대법원 2007두18499 판결(상고심절차에관한특례법 §4 심리불속행 기각)로 확정 — 새 법리 형성이 아니라 이 판단의 확정이므로 대전고법을 주(主) 인용으로, 대법원 확정을 부기로 한다.",
+      "one_liner": "무인이 고인 본인의 것임이 다투어지는 경우 유언증서가 무효로 판단된 사례가 있습니다",
+      "source_url": "https://taxlaw.nts.go.kr/pd/USEPDA002P.do?ntstDcmId=000000000000102542",
+      "note": "source_url은 국세청 국세법령정보시스템의 문서번호(ntstDcmId) 기준 링크다 — 대법원 2007두18499(심리불속행 기각) 관련 문서이며, 그 안에 대전고법 2005누1600 판결 전문(주문·이유)이 첨부돼 있는 구조다. 사이트가 JS 렌더링이라 자동 접근으로는 본문이 보이지 않지만, 국세법령정보시스템 공식 출력 PDF 원문(주문·이유·인정근거·결론)으로 내용을 확인했다.",
+      "verified": true
     },
     {
       "id": "recording_requirements",

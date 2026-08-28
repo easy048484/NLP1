@@ -111,7 +111,7 @@ def test_rejects_name_that_does_not_look_korean(
 def test_will_date_returns_none_when_api_key_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("CLAUDE_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     def _fail_if_called(**kwargs):
         raise AssertionError("API 키가 없으면 Anthropic 클라이언트를 만들면 안 된다")
@@ -176,7 +176,7 @@ def test_will_date_rejects_empty_string(monkeypatch: pytest.MonkeyPatch) -> None
 def test_will_address_returns_none_when_api_key_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("CLAUDE_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     def _fail_if_called(**kwargs):
         raise AssertionError("API 키가 없으면 Anthropic 클라이언트를 만들면 안 된다")
@@ -229,3 +229,118 @@ def test_will_address_rejects_overly_long_response(
     _install_fake_client(monkeypatch, text=f'{{"address_text": "{"가" * 200}"}}')
 
     assert llm_client.extract_will_address("텍스트") is None
+
+
+# ---------------------------------------------------------------------------
+# 코드펜스 파싱 버그 회귀 테스트 (2026-08-25).
+#
+# 실전 검증에서 claude-haiku-4-5 가 시스템 프롬프트의 "JSON만 반환하라, 다른
+# 설명이나 문장을 절대 덧붙이지 마라" 지시에도 불구하고 응답을 마크다운
+# 코드펜스(```json ... ``` / ``` ... ```)로 감싸 돌려주는 것이 4/4 재현됐다.
+# json.loads(text.strip()) 가 펜스를 그대로 못 읽어 JSONDecodeError가 났고,
+# 그 예외가 각 extract_* 의 except Exception 에 흡수돼 LLM 폴백 전체가
+# 조용히 100% 실패하고 있었다 — 아래 기존 테스트들은 전부 펜스 없는 순수
+# JSON('{"name": "김영수"}')만 흉내 내서, 393개 테스트가 전부 통과하면서도
+# 이 버그를 한 번도 잡지 못했다.
+# ---------------------------------------------------------------------------
+
+
+def test_strip_code_fence_removes_json_tagged_fence() -> None:
+    assert (
+        llm_client._strip_code_fence('```json\n{"name": "김철수"}\n```')
+        == '{"name": "김철수"}'
+    )
+
+
+def test_strip_code_fence_removes_untagged_fence() -> None:
+    assert (
+        llm_client._strip_code_fence('```\n{"name": "김철수"}\n```')
+        == '{"name": "김철수"}'
+    )
+
+
+def test_strip_code_fence_passes_through_plain_json() -> None:
+    """펜스가 없으면 그대로 통과한다 (회귀 — 기존 순수 JSON 응답 경로)."""
+    assert llm_client._strip_code_fence('{"name": "김철수"}') == '{"name": "김철수"}'
+
+
+def test_load_json_response_still_raises_on_truly_broken_json() -> None:
+    """펜스 제거로도 못 살리는 진짜 깨진 JSON은 여전히 예외를 던진다 — 이걸
+    호출부의 except Exception 이 잡아 None 으로 폴백한다(아래 개별 함수
+    테스트에서 확인)."""
+    with pytest.raises(Exception):
+        llm_client._load_json_response("이건 JSON이 아닙니다")
+
+
+def test_extract_testator_name_handles_code_fenced_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_client(monkeypatch, text='```json\n{"name": "김철수"}\n```')
+
+    assert llm_client.extract_testator_name("텍스트") == "김철수"
+
+
+def test_extract_will_date_handles_code_fenced_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_client(
+        monkeypatch, text='```json\n{"date_text": "2026년 5월 3일"}\n```'
+    )
+
+    assert llm_client.extract_will_date("텍스트") == "2026년 5월 3일"
+
+
+def test_extract_will_address_handles_untagged_code_fenced_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """언어 태그 없는 ``` ... ``` 형태도 처리돼야 한다 — json 태그 케이스는
+    위 성명/날짜 테스트가 이미 커버하므로 여기서는 다른 형태를 쓴다."""
+    _install_fake_client(
+        monkeypatch, text='```\n{"address_text": "서울특별시 강남구 테헤란로 123"}\n```'
+    )
+
+    assert llm_client.extract_will_address("텍스트") == "서울특별시 강남구 테헤란로 123"
+
+
+def test_extract_recording_fields_handles_code_fenced_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """extract_recording_fields 는 이 파일에서 지금까지 한 번도 단위 테스트된
+    적이 없었다 — test_decedent_recording_checker.py 의 테스트들이
+    llm_client.extract_recording_fields 자체를 몽키패치해서 우회했기 때문에,
+    이 함수의 실제 파싱 경로(_parse_recording_fields)는 393개 테스트를
+    통과하면서도 한 번도 실행되지 않았다. 이 테스트는 실전 검증에서 실제로
+    받은 응답(대전고법 사례가 아니라 녹음 유언 5필드 케이스)을 그대로 재현한다."""
+    _install_fake_client(
+        monkeypatch,
+        text=(
+            "```json\n"
+            "{\n"
+            '  "testator_name": "이순자",\n'
+            '  "witness_name": "최민수",\n'
+            '  "date_text": "2026년 7월 10일",\n'
+            '  "has_disposition_intent": true,\n'
+            '  "has_witness_accuracy": true\n'
+            "}\n"
+            "```"
+        ),
+    )
+
+    result = llm_client.extract_recording_fields("텍스트")
+
+    assert result == {
+        "testator_name": "이순자",
+        "witness_name": "최민수",
+        "date_text": "2026년 7월 10일",
+        "has_disposition_intent": True,
+        "has_witness_accuracy": True,
+    }
+
+
+def test_extract_recording_fields_returns_none_on_malformed_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """회귀 — 펜스 제거로도 못 살리는 진짜 깨진 JSON은 여전히 None."""
+    _install_fake_client(monkeypatch, text="이건 JSON이 아닙니다")
+
+    assert llm_client.extract_recording_fields("텍스트") is None

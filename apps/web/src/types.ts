@@ -23,50 +23,57 @@ export interface AgentOutput {
 }
 
 /**
- * apps/api/family_graph/schemas.py의 트리 저장/조회 계약과 1:1로 맞춘
- * 타입입니다. persons의 key는 요청 안에서만 유효한 임시 식별자로,
- * relations가 참조하며 서버에 저장되지는 않습니다.
+ * 백엔드 apps/api/family_graph/schemas.py / models.py 와 1:1로 맞춘 타입입니다.
+ * (family_graph_입력_플로우_계획_0823.md 참고)
  */
+export type RelationType =
+  | "spouse"
+  | "child"
+  | "parent"
+  | "grandchild"
+  | "sibling"
+  | "grandparent";
 
-export type RelationEdgeType = "parent_of" | "spouse_of";
-
-export interface PersonIn {
-  key: string;
+export interface FamilyMemberIn {
   name: string;
-  is_decedent?: boolean;
+  relation: RelationType;
   is_alive?: boolean;
   is_minor?: boolean;
 }
 
-export interface RelationIn {
-  type: RelationEdgeType;
-  from_key: string;
-  to_key: string;
+/** 보낸 필드만 갱신하는 부분 수정 요청 (PATCH /family-graph/{id}/members/{member_id}). */
+export interface FamilyMemberPatch {
+  name?: string;
+  relation?: RelationType;
+  is_alive?: boolean;
+  is_minor?: boolean;
 }
 
-export interface FamilyTreeIn {
-  persons: PersonIn[];
-  relations: RelationIn[];
-}
-
-export interface PersonOut {
+export interface FamilyMemberOut {
   id: number;
   name: string;
-  is_decedent: boolean;
+  relation: RelationType;
   is_alive: boolean;
   is_minor: boolean;
 }
 
-export interface RelationOut {
-  id: number;
-  type: RelationEdgeType;
-  from_person_id: number;
-  to_person_id: number;
-}
-
-export interface FamilyTreeOut {
+export interface FamilyGraphOut {
   id: string;
   created_at: string;
-  persons: PersonOut[];
-  relations: RelationOut[];
+  members: FamilyMemberOut[];
+}
+
+/**
+ * 백엔드 apps/api/auth/schemas.py 의 UserOut / TokenOut 과 1:1로 맞춘 타입입니다.
+ */
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  token_type: string;
+  user: AuthUser;
 }

@@ -10,8 +10,8 @@ from __future__ import annotations
 import pytest
 
 from db.base import session_scope
-from family_graph.repository import create_family_graph, replace_tree
-from family_graph.schemas import FamilyTreeIn
+from family_graph.models import RelationType
+from family_graph.repository import add_member, create_family_graph
 from orchestrator import router
 from orchestrator.session_store import InMemorySessionStore
 from schemas import AgentInput, AgentName, AgentOutput
@@ -33,30 +33,12 @@ def _fake_agent(agent_name: AgentName):
     return _run
 
 
-def _save_graph(*, with_child: bool = False) -> str:
-    """피상속인 + 배우자(+자녀 1)를 저장하고 family_graph_id를 돌려줍니다."""
-    persons = [
-        {"key": "d", "name": "고인", "is_decedent": True, "is_alive": False},
-        {"key": "s", "name": "배우자"},
-    ]
-    relations = [{"type": "spouse_of", "from_key": "d", "to_key": "s"}]
-    if with_child:
-        persons.append({"key": "c1", "name": "자녀 1"})
-        relations.append({"type": "parent_of", "from_key": "d", "to_key": "c1"})
-
+def test_family_graph_id_resolves_to_db_backed_heirs(monkeypatch, with_db):
     with session_scope() as db:
         graph = create_family_graph(db)
         graph_id = graph.id
-        replace_tree(
-            db,
-            graph_id,
-            FamilyTreeIn.model_validate({"persons": persons, "relations": relations}),
-        )
-    return graph_id
-
-
-def test_family_graph_id_resolves_to_db_backed_heirs(monkeypatch, with_db):
-    graph_id = _save_graph(with_child=True)
+        add_member(db, graph_id, name="배우자", relation=RelationType.SPOUSE)
+        add_member(db, graph_id, name="자녀 1", relation=RelationType.CHILD)
 
     fake = _fake_agent(AgentName.HEIR_NAVIGATOR)
     monkeypatch.setitem(router._AGENT_RUNNERS, AgentName.HEIR_NAVIGATOR, fake)
@@ -79,7 +61,10 @@ def test_family_graph_id_resolves_to_db_backed_heirs(monkeypatch, with_db):
 
 def test_family_graph_id_persists_across_turns_without_resending(monkeypatch, with_db):
     """첫 턴에만 family_graph_id를 보내도, 다음 턴에는 세션이 기억해서 계속 채워줍니다."""
-    graph_id = _save_graph()
+    with session_scope() as db:
+        graph = create_family_graph(db)
+        graph_id = graph.id
+        add_member(db, graph_id, name="배우자", relation=RelationType.SPOUSE)
 
     fake = _fake_agent(AgentName.HEIR_NAVIGATOR)
     monkeypatch.setitem(router._AGENT_RUNNERS, AgentName.HEIR_NAVIGATOR, fake)
@@ -120,7 +105,10 @@ def test_explicit_family_graph_overrides_valid_family_graph_id(monkeypatch, with
     """family_graph_id가 DB에서 정상적으로 풀려도, 이번 요청이 family_graph를
     직접 채워 보냈으면 그 값이 우선해야 합니다 (schemas/agent_io.py의
     AgentInput.family_graph_id docstring이 명시하는 우선순위)."""
-    graph_id = _save_graph()
+    with session_scope() as db:
+        graph = create_family_graph(db)
+        graph_id = graph.id
+        add_member(db, graph_id, name="배우자", relation=RelationType.SPOUSE)
 
     fake = _fake_agent(AgentName.HEIR_NAVIGATOR)
     monkeypatch.setitem(router._AGENT_RUNNERS, AgentName.HEIR_NAVIGATOR, fake)

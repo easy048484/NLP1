@@ -250,9 +250,28 @@ def test_seal_red_shows_fingerprint_note_not_card() -> None:
     )
 
     line = format_requirement_line(results["seal"])
-    assert "   ℹ️ 참고: 지장(손도장)도 날인으로 인정됩니다" in line
+    assert "   ℹ️ 참고: 지장(손도장)을 날인으로 인정한 판례가 있습니다" in line
     assert _one_liner("fingerprint_seal_valid") not in line
     assert "[카드]" not in line
+
+
+def test_seal_green_shows_fingerprint_identity_note() -> None:
+    """날인 GREEN(지장 선택)에도 본인 확인 관련 참고 문구가 딸려 나온다 — 등급은 GREEN 유지."""
+    text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
+
+    assert results["seal"].grade == "GREEN"
+    line = format_requirement_line(results["seal"])
+    assert line.startswith("✅ 날인: 기재 확인")
+    assert (
+        "   ℹ️ 참고: 무인이 고인 본인의 것임이 다투어지는 경우 유언증서가 무효로 "
+        "판단된 사례가 있습니다"
+    ) in line
+    assert "[카드]" not in line
+    for assertive in ("무효입니다", "유효합니다"):
+        assert assertive not in line
 
 
 def test_red_lines_never_contain_removed_cta() -> None:
@@ -333,3 +352,23 @@ def test_all_precedent_type_cards_are_verified_with_case_number() -> None:
         assert card.get("case_number"), card["id"]
         assert "확인 필요" not in card["case_number"], card["id"]
         assert card.get("verified", True) is True, card["id"]
+
+
+def test_97da38510_cards_share_the_same_source_url() -> None:
+    """97다38510 세 카드(typed_will_invalid/fingerprint_seal_valid/
+
+    address_on_envelope_valid)는 같은 판례라 source_url을 통일한다 — 예전엔
+    두 카드가 빈 문자열이었다.
+    """
+    ids = ("typed_will_invalid", "fingerprint_seal_valid", "address_on_envelope_valid")
+    urls = {pid: _precedent(pid)["source_url"] for pid in ids}
+    for pid, url in urls.items():
+        assert url, pid
+    assert len(set(urls.values())) == 1, urls
+
+
+def test_fingerprint_identity_disputed_invalid_has_source_url() -> None:
+    card = _precedent("fingerprint_identity_disputed_invalid")
+    assert card["source_url"], card["id"]
+    assert card["case_number"] == "2005누1600"
+    assert card["court"] == "대전고등법원"
