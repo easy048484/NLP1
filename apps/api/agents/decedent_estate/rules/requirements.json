@@ -21,6 +21,7 @@
       "order": 1,
       "extraction_type": "text_derivable",
       "extraction_note": "LLM은 날짜 문자열 추출만 수행하고, 판정은 룰 엔진이 수행한다.",
+      "term_note": "연월일이란 유언장을 작성한 날짜(연·월·일)를 말합니다. \"2026년 5월\"처럼 일(日)이 빠지면 무효로 판단한 사례가 있습니다.",
       "guide": {
         "instruction": "연월일을 쓰실 때는 반드시 일(日)까지 적어주세요.",
         "mistake_sentence": "\"2026년 5월\"처럼 일이 빠지면 무효가 된 판례가 있습니다",
@@ -67,6 +68,7 @@
       "will_type": "handwritten",
       "order": 2,
       "extraction_type": "text_derivable",
+      "term_note": "주소란 유언장에 적는 유언자 본인의 거주지 주소를 말합니다. \"서울 강남구\"처럼 구·동까지만 적어 다른 곳과 구별되지 않으면 무효로 판단한 사례가 있습니다.",
       "guide": {
         "instruction": "주소는 번지나 동·호수까지 정확하게 적어주세요.",
         "mistake_sentence": "\"서울 강남구\"처럼 구·동까지만 적으면 다른 곳과 구별되지 않아 무효가 된 판례가 있습니다",
@@ -128,6 +130,7 @@
       "will_type": "handwritten",
       "order": 3,
       "extraction_type": "text_derivable",
+      "term_note": "성명이란 유언자 본인임을 알 수 있는 이름 표기를 말합니다. 본명이 아니어도 호나 아호처럼 본인을 특정할 수 있으면 인정될 수 있지만, 아예 없으면 민법 제1066조가 정한 요건을 갖추지 못합니다.",
       "guide": {
         "instruction": "유언장에 본인 성명을 정확히 적어주세요. 성명이 없으면 민법 제1066조가 정한 요건을 갖추지 못해 무효가 될 수 있습니다.",
         "mistake_sentence": null,
@@ -168,6 +171,7 @@
       "reason": "텍스트 판별 불가 → 사용자 확인",
       "question": "유언장 전체를 직접 손으로 쓰셨나요? (타이핑·워드 출력 아님)",
       "default_grade": "PENDING",
+      "term_note": "자서(自書)란 유언자가 유언장 전체를 손으로 직접 쓰는 것을 말합니다. 컴퓨터로 작성하거나 대필한 유언장은 무효로 판단한 사례가 있습니다.",
       "guide": {
         "instruction": "유언장 전체를 반드시 본인이 직접 손으로 써주세요. 재산 목록 등 일부라도 컴퓨터로 작성하면 안 됩니다.",
         "mistake_sentence": "컴퓨터로 작성하거나 복사한 유언장은 무효가 된 판례가 있습니다",
@@ -202,6 +206,7 @@
       "reason": "텍스트 판별 불가 → 사용자 확인",
       "question": "도장 또는 지장(손도장)이 찍혀 있나요?",
       "default_grade": "PENDING",
+      "term_note": "날인이란 도장이나 지장(손도장)을 찍는 것을 말합니다. 서명(사인)만으로는 부족하다고 판단한 사례가 있습니다.",
       "guide": {
         "instruction": "도장이나 지장을 반드시 찍어주세요.",
         "mistake_sentence": "서명(사인)만으로는 인정되지 않습니다",
@@ -243,6 +248,7 @@
       "extraction_type": "text_derivable",
       "is_legal_requirement": false,
       "note": "체크 항목(형식 요건 판정)에서 제외. 여러 장 감지 시 참고 문구만 표시.",
+      "term_note": "간인이란 여러 장으로 된 문서에서 각 장이 이어진 하나의 문서임을 표시하기 위해 겹쳐 찍는 도장을 말합니다. 법으로 정한 요건은 아니지만, 찍어 두면 위조 다툼을 예방하는 데 도움이 됩니다.",
       "conditions": [
         {
           "id": "single_page",
@@ -268,6 +274,7 @@
       "order": 1,
       "extraction_type": "text_derivable",
       "extraction_note": "재산 처분 의사 표현(상속한다/증여한다/물려준다 등) 유무만 규칙으로 추출한다.",
+      "term_note": "유언 취지란 재산을 누구에게 무엇을 남긴다는 처분 의사를 구술하는 것을 말합니다. 민법 제1067조는 이 구술을 요건으로 정하고 있습니다.",
       "guide": {
         "instruction": "녹음할 때 재산을 \"누구에게 무엇을 준다\"는 처분 의사를 명확한 말로 구술해주세요.",
         "mistake_sentence": "취지를 구술하지 않으면 요건을 갖추지 못합니다",
@@ -297,6 +304,7 @@
       "order": 2,
       "extraction_type": "text_derivable",
       "extraction_note": "requirement_checker.extract_name_with_fallback 재사용 (정규식 우선, 못 찾으면 LLM 폴백).",
+      "term_note": "유언자 성명이란 녹음에서 유언자 본인이 자신의 이름을 말하는 것을 말합니다. 민법 제1067조는 이 구술을 요건으로 정하고 있습니다.",
       "guide": {
         "instruction": "본인 성명을 또렷하게 말해주세요.",
         "mistake_sentence": "유언자 성명을 구술하지 않으면 요건을 갖추지 못합니다",
@@ -326,6 +334,7 @@
       "order": 3,
       "extraction_type": "text_derivable",
       "extraction_note": "date_parser.parse_dates 재사용 — 자필증서 date 요건과 동일한 조건 구조를 그대로 쓴다.",
+      "term_note": "연월일이란 유언을 구술한 날짜(연·월·일)를 말합니다. \"2026년 5월\"처럼 일(日)이 빠지면 무효로 판단한 사례가 있습니다.",
       "guide": {
         "instruction": "연월일을 구술할 때는 반드시 일(日)까지 말해주세요.",
         "mistake_sentence": "\"2026년 5월\"처럼 일이 빠지면 무효가 된 판례가 있습니다",
@@ -372,6 +381,7 @@
       "will_type": "recording",
       "order": 4,
       "extraction_type": "text_derivable",
+      "term_note": "증인의 정확함 확인이란 증인이 유언 내용을 듣고 \"정확합니다\"처럼 내용이 맞다는 것을 구술로 확인하는 것을 말합니다. 민법 제1067조는 이 구술을 요건으로 정하고 있습니다.",
       "guide": {
         "instruction": "증인이 유언 내용을 듣고 \"정확합니다\"처럼 정확함을 확인하는 말을 하도록 해주세요.",
         "mistake_sentence": "증인의 정확함 확인 구술이 없으면 요건을 갖추지 못합니다",
@@ -400,6 +410,7 @@
       "will_type": "recording",
       "order": 5,
       "extraction_type": "text_derivable",
+      "term_note": "증인 성명이란 녹음에서 증인이 자신의 이름을 말하는 것을 말합니다. 민법 제1067조는 이 구술을 요건으로 정하고 있습니다.",
       "guide": {
         "instruction": "증인도 자신의 성명을 또렷하게 말하도록 해주세요.",
         "mistake_sentence": "증인 성명을 구술하지 않으면 요건을 갖추지 못합니다",
@@ -432,6 +443,7 @@
       "confirm_field": "rec_witness_present_answer",
       "question": "녹음에 증인이 실제로 참여했나요?",
       "default_grade": "PENDING",
+      "term_note": "증인 참여란 녹음하는 동안 증인 1인 이상이 실제로 자리에 함께 있어야 한다는 것을 말합니다. 민법 제1067조는 증인의 참여를 요건으로 정하고 있습니다.",
       "guide": {
         "instruction": "녹음하는 동안 증인 1인 이상이 실제로 함께 참여해야 합니다.",
         "mistake_sentence": "증인이 참여하지 않으면 요건을 갖추지 못합니다",
@@ -466,6 +478,7 @@
       "confirm_field": "rec_witness_eligible_answer",
       "question": "증인이 아래에 해당하지 않나요?\n① 미성년자\n② 피성년후견인·피한정후견인\n③ 이 유언으로 재산을 받는 사람과 그 배우자·직계혈족",
       "default_grade": "PENDING",
+      "term_note": "증인 결격이란 미성년자, 피성년후견인·피한정후견인, 이 유언으로 재산을 받는 사람과 그 배우자·직계혈족은 증인이 될 수 없다는 제한을 말합니다. 민법 제1072조 제1항이 정하고 있습니다.",
       "guide": {
         "instruction": "증인은 미성년자, 피성년후견인·피한정후견인, 그리고 이 유언으로 재산을 받는 사람과 그 배우자·직계혈족이 아니어야 합니다.",
         "mistake_sentence": "결격 사유가 있는 사람을 증인으로 세우면 요건을 갖추지 못합니다",
