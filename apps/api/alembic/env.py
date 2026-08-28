@@ -18,8 +18,14 @@ sys.path.insert(0, str(_api_dir))
 # uvicorn(main.py)과 같이 저장소 루트 .env를 읽습니다. alembic CLI는
 # dotenv를 자동으로 로드하지 않아서, 이게 없으면 alembic.ini의
 # placeholder(driver://...)로 붙어 dialects:driver 오류가 납니다.
-_env_path = _api_dir.parents[1] / ".env"
-if _env_path.exists():
+# 로컬 저장소는 repo_root/apps/api/alembic/env.py로 4단 깊이라
+# parents[1]이 repo_root지만, Docker 이미지(infra/Dockerfile.api)는
+# WORKDIR /app에 apps/api/의 내용만 복사돼 깊이가 얕아져 parents[1]이
+# 아예 없을 수 있습니다(IndexError로 서버가 못 뜸 - 2026-08-28 배포 장애
+# 원인). 그런 환경에서는 어차피 Railway가 실제 환경변수를 직접 주입하므로
+# .env 파일 자체가 없는 게 정상이라 조용히 건너뜁니다.
+_env_path = _api_dir.parents[1] / ".env" if len(_api_dir.parents) > 1 else None
+if _env_path is not None and _env_path.exists():
     load_dotenv(_env_path)
 
 # Base.metadata에 모든 테이블이 올라오도록, models 모듈들을 import합니다
