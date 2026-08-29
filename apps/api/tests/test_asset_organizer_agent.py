@@ -8,12 +8,58 @@ develop의 공유 schemas.FinancialProfile로 눌러서 내보내는 것까지�
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from agents.asset_organizer import agent
 from schemas import AgentInput, AgentName, FinancialProfile
 
 STATE_KEY = agent.STATE_KEY
+
+
+class _FakeContent:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class _FakeResponse:
+    def __init__(self, text: str) -> None:
+        self.content = [_FakeContent(text)]
+
+
+class _FakeMessages:
+    def __init__(
+        self, *, text: str | None = None, exc: Exception | None = None
+    ) -> None:
+        self._text = text
+        self._exc = exc
+
+    def create(self, **kwargs):
+        if self._exc is not None:
+            raise self._exc
+        return _FakeResponse(self._text)
+
+
+class _FakeAnthropicClient:
+    def __init__(
+        self, *, text: str | None = None, exc: Exception | None = None, **_kwargs
+    ) -> None:
+        self.messages = _FakeMessages(text=text, exc=exc)
+
+
+def _install_fake_llm(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    text: str | None = None,
+    exc: Exception | None = None,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-test-key")
+    monkeypatch.setattr(
+        agent.extractor.anthropic,
+        "Anthropic",
+        lambda **kwargs: _FakeAnthropicClient(text=text, exc=exc),
+    )
 
 
 def _continue(
@@ -218,3 +264,143 @@ def test_ambiguous_followup_answer_falls_back_to_simple_mode_without_loop():
 
 def test_parse_end_age_rejects_calendar_year_expression():
     assert agent._parse_end_age("2030년까지 갚아요", current_age=58) is None
+
+
+# ============================================================ 보험 카테고리
+
+
+def test_insurance_mention_marks_category_checked_and_not_reasked():
+    output = agent.run(AgentInput(session_id="ins1", user_message="보험 하나 있어요"))
+
+    state = output.data[STATE_KEY]
+    assert "보험" in state["checked_categories"]
+    assert len(state["insurance"]) == 1
+    # 아직 안 물어본 나머지 카테고리만 되묻고, 보험은 다시 대상에 없어야 한다.
+    assert "보험" not in state["pending_categories"]
+
+
+def test_insurance_is_the_only_remaining_category_gets_asked_specifically():
+    """자산·부채 카테고리를 다 언급했는데 보험만 빠지면, 보험만 콕 집어
+    되물어야 한다(나머지를 다시 나열하지 않음)."""
+    session_id = "ins2"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 3천 있어요")
+    ).data[STATE_KEY]
+
+    output = agent.run(
+        _continue(
+            session_id,
+            "주식 5천만원, 펀드 1천만원, 부동산 5억, 대출 3천만원 있어요",
+            state,
+        )
+    )
+    state = output.data[STATE_KEY]
+
+    assert set(state["checked_categories"]) == {
+        "예금",
+        "주식",
+        "펀드",
+        "부동산",
+        "부채",
+    }
+    assert output.reply == (
+        "아직 말씀 안 하신 항목이 있어요: 보험. "
+        "있으면 알려주시고, 없으면 '없음'이라고 답해주세요."
+    )
+
+
+def test_insurance_extra_preserved_through_to_finalize():
+    session_id = "ins3"
+    state = agent.run(
+        AgentInput(
+            session_id=session_id, user_message="예금 3천 있어요, 보험 5천만원 있어요"
+        )
+    ).data[STATE_KEY]
+    assert "보험" in state["checked_categories"]
+
+    output = agent.run(_continue(session_id, "없어요", state))  # 나머지 없음
+    state = output.data[STATE_KEY]
+
+    assert state["status"] == "done"
+    extra = output.financial_profile.extra["asset_organizer"]
+    assert extra["insurance"][0]["value"] == 50_000_000
+
+
+# ============================================================== 이미지 판독
+
+
+def test_image_recognized_merges_into_checklist(monkeypatch: pytest.MonkeyPatch):
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "unreadable": False,
+                "assets": [{"type": "예금", "value": 80_000_000}],
+                "liabilities": [{"type": "대출", "remaining_balance": 10_000_000}],
+                "insurance": [],
+                "unclear": [],
+            }
+        ),
+    )
+
+    output = agent.run(
+        AgentInput(
+            session_id="img1",
+            user_message="",
+            image_base64="fake-base64-data",
+            image_media_type="image/png",
+        )
+    )
+
+    state = output.data[STATE_KEY]
+    assert any(
+        a["type"] == "예금" and a["value"] == 80_000_000 for a in state["assets"]
+    )
+    assert any(
+        liability["type"] == "대출" and liability["remaining_balance"] == 10_000_000
+        for liability in state["liabilities"]
+    )
+    assert "예금" in state["checked_categories"]
+    assert "부채" in state["checked_categories"]
+
+
+def test_image_unreadable_asks_to_reupload_without_guessing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps({"unreadable": True, "assets": [], "unclear": ["화면이 흐림"]}),
+    )
+
+    output = agent.run(
+        AgentInput(
+            session_id="img2",
+            user_message="",
+            image_base64="fake-base64-data",
+            image_media_type="image/png",
+        )
+    )
+
+    state = output.data[STATE_KEY]
+    assert output.reply == agent._IMAGE_UNREADABLE_REPLY
+    # 추측해서 채우지 않는다 — 카테고리 상태가 전혀 바뀌지 않아야 한다.
+    assert state["assets"] == []
+    assert state["checked_categories"] == []
+
+
+def test_image_api_failure_asks_to_reupload_without_guessing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _install_fake_llm(monkeypatch, exc=TimeoutError("network timeout"))
+
+    output = agent.run(
+        AgentInput(
+            session_id="img3",
+            user_message="",
+            image_base64="fake-base64-data",
+            image_media_type="image/png",
+        )
+    )
+
+    assert output.reply == agent._IMAGE_UNREADABLE_REPLY
+    assert output.data[STATE_KEY]["assets"] == []

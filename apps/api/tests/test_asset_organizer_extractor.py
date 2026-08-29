@@ -189,3 +189,107 @@ def test_vague_amount_expression_without_recognizable_type_requires_clarificatio
 
     assert result.status == "needs_clarification"
     assert result.assets == []
+
+
+# ------------------------------------------------------------- 5) 이미지 판독
+
+
+def test_extract_from_image_success_parses_assets_liabilities_insurance(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "unreadable": False,
+                "assets": [{"type": "예금", "value": 50_000_000}],
+                "liabilities": [{"type": "대출", "remaining_balance": 20_000_000}],
+                "insurance": [{"value": 10_000_000}],
+                "unclear": [],
+            }
+        ),
+    )
+
+    result, liabilities, liability_missing = extractor.extract_from_image(
+        "base64-image-data", "image/png"
+    )
+
+    assert result.status == "ok"
+    assert result.assets[0].type == "예금" and result.assets[0].value == 50_000_000
+    assert result.insurance_tags[0].value == 10_000_000
+    assert (
+        liabilities[0].type == "대출" and liabilities[0].remaining_balance == 20_000_000
+    )
+    assert liability_missing == []
+
+
+def test_extract_from_image_unreadable_flag_requires_clarification_without_guessing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """모델 스스로 "unreadable": true라고 답하면 추측 없이 재질문 대상으로
+    수렴해야 한다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps({"unreadable": True, "assets": [], "unclear": ["흐릿함"]}),
+    )
+
+    result, liabilities, liability_missing = extractor.extract_from_image(
+        "base64-image-data", "image/png"
+    )
+
+    assert result.status == "needs_clarification"
+    assert result.assets == []
+    assert liabilities == []
+    assert any(item["kind"] == "image_unreadable" for item in result.missing)
+
+
+def test_extract_from_image_api_failure_requires_clarification_without_guessing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """네트워크 오류·타임아웃 등 어떤 이유로 호출이 실패해도 조용히 삼키지
+    않고 image_unreadable로 수렴해야 한다."""
+    _install_fake_llm(monkeypatch, exc=TimeoutError("network timeout"))
+
+    result, liabilities, liability_missing = extractor.extract_from_image(
+        "base64-image-data", "image/png"
+    )
+
+    assert result.status == "needs_clarification"
+    assert any(item["kind"] == "image_unreadable" for item in result.missing)
+
+
+def test_extract_from_image_without_api_key_requires_clarification(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    result, liabilities, liability_missing = extractor.extract_from_image(
+        "base64-image-data", "image/png"
+    )
+
+    assert result.status == "needs_clarification"
+    assert any(item["kind"] == "image_unreadable" for item in result.missing)
+
+
+def test_extract_from_image_liability_without_amount_is_flagged_not_guessed(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "unreadable": False,
+                "assets": [],
+                "liabilities": [{"type": "카드론"}],  # remaining_balance 없음
+                "unclear": [],
+            }
+        ),
+    )
+
+    result, liabilities, liability_missing = extractor.extract_from_image(
+        "base64-image-data", "image/png"
+    )
+
+    assert liabilities == []
+    assert liability_missing[0]["kind"] == "liability_value"
+    assert liability_missing[0]["liability_type"] == "카드론"

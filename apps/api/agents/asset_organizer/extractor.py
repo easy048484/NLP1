@@ -404,3 +404,149 @@ def extract_financial_slots(text: str) -> ExtractionResult:
     result.missing.extend(llm_missing)
     result.status = "needs_clarification" if result.missing else "ok"
     return result
+
+
+# --------------------------------------------------------------- 이미지 판독
+
+
+#: decedent_estate/image_reader.py와 같은 이유로 원본 이미지 자체는 마스킹
+#: 하지 않는다 — 마스킹하려면 먼저 읽어야 하는데, 읽는 행위(Anthropic API
+#: 호출) 자체가 이미 전송이라 구조적으로 불가능하다. 대신 이 함수는 판독
+#: 결과를 재구성한 텍스트를 2차 LLM 호출에 다시 태우지 않는다(한 번의
+#: 멀티모달 호출로 바로 구조화된 값을 받는다) — 그래서 마스킹이 필요한
+#: "재구성 텍스트가 또 LLM으로 나가는" 지점 자체가 생기지 않는다.
+_IMAGE_MAX_TOKENS = 600
+_IMAGE_SYSTEM_PROMPT = (
+    "너는 은행 앱 잔액 화면, 안심상속 통합조회 결과 캡처 같은 이미지에서 "
+    "금융자산·부채·보험 정보를 추출하는 도구다.\n"
+    "절대 판정하거나 조언하지 마라 — 너는 오직 값 추출만 한다.\n"
+    "화면이 흐릿하거나 무엇을 찍은 건지 알아보기 어려우면 절대 숫자를 "
+    "지어내지 마라 — 그 항목은 생략하고 unclear 배열에 이유를 적어라. "
+    "이미지 전체를 알아볼 수 없으면 unreadable을 true로 하라.\n"
+    "반드시 아래 JSON 형식으로만 답하라. 코드블록이나 다른 설명을 절대 "
+    "덧붙이지 마라.\n"
+    "{\n"
+    '  "unreadable": true 또는 false,\n'
+    '  "assets": [{"type": "예금|주식|펀드|부동산|기타", "value": 원단위 정수}],\n'
+    '  "liabilities": [{"type": "대출|카드론|전세자금대출 등", '
+    '"remaining_balance": 원단위 정수}],\n'
+    '  "insurance": [{"value": 원단위 정수 또는 null}],\n'
+    '  "unclear": ["무엇을 확인하지 못했는지에 대한 짧은 설명"]\n'
+    "}"
+)
+
+#: extract_from_image()이 이미지를 아예 못 읽었을 때(unreadable/네트워크
+#: 오류/형식 오류/키 없음) 공통으로 쓰는 missing 항목 — agent.py가 이
+#: kind를 보고 "다시 올려주세요" 재질문으로 바로 분기한다.
+IMAGE_UNREADABLE_MISSING: dict[str, Any] = {
+    "kind": "image_unreadable",
+    "reason": "이미지를 읽지 못함 — 잘 안 보이거나 형식을 알아볼 수 없음",
+}
+
+
+def _apply_llm_liabilities(
+    raw_liabilities: Any,
+) -> tuple[list[Liability], list[dict[str, Any]]]:
+    """이미지 판독 JSON의 "liabilities" 배열을 Liability로 변환한다.
+    extract_liabilities()의 정규식 경로와 반환 모양을 맞춘 것 — 이미지
+    전용 스키마를 새로 만들지 않기 위해서다."""
+    liabilities: list[Liability] = []
+    missing: list[dict[str, Any]] = []
+
+    for raw in raw_liabilities or []:
+        if not isinstance(raw, dict):
+            continue
+        liability_type = raw.get("type")
+        value = raw.get("remaining_balance")
+        if not isinstance(liability_type, str) or not liability_type.strip():
+            continue
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+            missing.append(
+                {
+                    "kind": "liability_value",
+                    "liability_type": liability_type,
+                    "reason": f"{liability_type} 금액을 이미지에서 확인하지 못함",
+                }
+            )
+            continue
+        liabilities.append(Liability(type=liability_type, remaining_balance=int(value)))
+
+    return liabilities, missing
+
+
+def extract_from_image(
+    image_base64: str, media_type: str
+) -> tuple[ExtractionResult, list[Liability], list[dict[str, Any]]]:
+    """이미지 한 장에서 자산·부채·보험을 한 번의 Claude 멀티모달 호출로
+    구조화해 추출한다. 텍스트 경로(extract_financial_slots +
+    extract_liabilities)와 정확히 같은 모양 — (ExtractionResult, 부채
+    목록, 부채 금액 미확인 목록) — 을 돌려준다. agent.py는 두 경로를
+    같은 병합 로직 하나로 처리한다.
+
+    키가 없거나, 네트워크 오류/타임아웃/형식 오류가 나거나, 모델 스스로
+    "unreadable"이라고 답하면 전부 IMAGE_UNREADABLE_MISSING 하나로
+    수렴한다 — 조용히 0이나 빈 값으로 채우지 않고 재질문으로 넘긴다.
+    """
+    client = _client()
+    if client is None:
+        return (
+            ExtractionResult(
+                status="needs_clarification", missing=[dict(IMAGE_UNREADABLE_MISSING)]
+            ),
+            [],
+            [],
+        )
+
+    try:
+        response = client.messages.create(
+            model=_MODEL,
+            max_tokens=_IMAGE_MAX_TOKENS,
+            system=_IMAGE_SYSTEM_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": image_base64,
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": "이 이미지에서 자산·부채·보험 정보를 추출해줘.",
+                        },
+                    ],
+                }
+            ],
+            timeout=_TIMEOUT_SECONDS,
+        )
+        payload = _parse_json_response(response.content[0].text)
+    except Exception:
+        payload = None
+
+    if payload is None or payload.get("unreadable") is True:
+        return (
+            ExtractionResult(
+                status="needs_clarification", missing=[dict(IMAGE_UNREADABLE_MISSING)]
+            ),
+            [],
+            [],
+        )
+
+    assets, incomes, insurance_tags, missing = _apply_llm_payload(payload)
+    liabilities, liability_missing = _apply_llm_liabilities(payload.get("liabilities"))
+
+    status: Literal["ok", "needs_clarification"] = (
+        "needs_clarification" if (missing or liability_missing) else "ok"
+    )
+    result = ExtractionResult(
+        status=status,
+        assets=assets,
+        incomes=incomes,
+        insurance_tags=insurance_tags,
+        missing=missing,
+    )
+    return result, liabilities, liability_missing

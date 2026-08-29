@@ -9,12 +9,19 @@ produces=["asset_inventory"], retirement_planner는 produces=["retirement_gap"])
 agents/retirement_planner/로 그대로 옮겼고, 이 파일에는 체크리스트 흐름만
 남았다.
 
-흐름: 예금/주식/펀드/부동산/부채 카테고리를 체크리스트로 모은다. 유형은
+흐름: 예금/주식/펀드/부동산/부채/보험 카테고리를 체크리스트로 모은다. 유형은
 알지만 금액이 없는 항목은 임의로 0을 채우지 않고 금액만 콕 집어 되묻는다
-(extractor.py의 "조용한 실패 금지" 원칙 그대로). 부채는 remaining_balance가
-확인된 뒤, monthly_payment/end_age가 비어 있으면 한 번만(강제로 캐묻지
-않고) 후속 질문을 던진다 — 답을 안 하거나 애매하면 재질문 없이 단순 모드로
-남긴다.
+(extractor.py의 "조용한 실패 금지" 원칙 그대로) — 단, 보험은 예외로 금액
+없이도 확인된 것으로 처리한다(추출기 쪽 기존 원칙 그대로, 아래
+_merge_extraction 참고). 부채는 remaining_balance가 확인된 뒤,
+monthly_payment/end_age가 비어 있으면 한 번만(강제로 캐묻지 않고) 후속
+질문을 던진다 — 답을 안 하거나 애매하면 재질문 없이 단순 모드로 남긴다.
+
+사용자가 텍스트 대신 이미지(은행 앱 잔액 화면, 안심상속 조회 결과 캡처
+등)를 올리면 extractor.extract_from_image()로 같은 체크리스트 흐름에
+반영한다 — 텍스트 경로와 완전히 동일한 병합 로직(_merge_extraction)을
+탄다. 화면이 흐릿하거나 판독 자체가 실패하면 추측해서 채우지 않고
+다시 올리거나 말로 알려달라고 재질문한다.
 
 다 모이면 이 에이전트 자신의 요약 응답과 함께, develop의 공유
 schemas.FinancialProfile(flat 집계)로 눌러서 AgentOutput.financial_profile에
@@ -38,11 +45,21 @@ STATE_KEY = AgentName.ASSET_ORGANIZER.value
 #: 말한 항목을 담는 그릇일 뿐, 빠짐을 확인할 대상이 아니다.
 _ASSET_CATEGORIES: tuple[str, ...] = ("예금", "주식", "펀드", "부동산")
 _LIABILITY_CATEGORY = "부채"
-_ALL_CATEGORIES: tuple[str, ...] = (*_ASSET_CATEGORIES, _LIABILITY_CATEGORY)
+_INSURANCE_CATEGORY = "보험"
+_ALL_CATEGORIES: tuple[str, ...] = (
+    *_ASSET_CATEGORIES,
+    _LIABILITY_CATEGORY,
+    _INSURANCE_CATEGORY,
+)
 
 _OPENING_PROMPT = (
     "보유하고 계신 자산과 부채를 정리해드릴게요. "
-    "예금·주식·펀드·부동산 등 자산과 대출 등 부채를 편하게 말씀해주세요."
+    "예금·주식·펀드·부동산·보험 등 자산과 대출 등 부채를 편하게 말씀해주세요. "
+    "은행 앱 화면이나 안심상속 조회 결과를 사진으로 올려주셔도 됩니다."
+)
+
+_IMAGE_UNREADABLE_REPLY = (
+    "이미지가 잘 안 보이는데 다시 올려주시거나 말씀으로 알려주실 수 있을까요?"
 )
 
 _NEGATIVE_ANSWER_RE = re.compile(r"없|아니")
@@ -86,6 +103,7 @@ def _empty_state() -> dict[str, Any]:
     return {
         "assets": [],
         "liabilities": [],
+        "insurance": [],
         "checked_categories": [],
         "pending_categories": [],
         "pending_amounts": [],
@@ -169,6 +187,48 @@ def _append_resolved_pending_item(
 
 def _is_negative_answer(message: str) -> bool:
     return bool(_NEGATIVE_ANSWER_RE.search(message))
+
+
+def _merge_extraction(
+    state: dict[str, Any],
+    asset_result: extractor.ExtractionResult,
+    liabilities: list[Any],
+    liability_missing: list[dict[str, Any]],
+) -> bool:
+    """extract_financial_slots()/extract_liabilities()(텍스트 경로)와
+    extract_from_image()(이미지 경로) 양쪽이 만든 결과를 같은 방식으로
+    state에 반영한다 — 두 입력 채널이 하나의 체크리스트 병합 로직을
+    공유한다. 새 항목을 하나라도 반영했으면 True를 돌려준다(호출부가
+    "없어요" 일괄 확정 여부를 판단할 때 씀).
+
+    보험은 자산·부채와 달리 금액이 없어도(InsuranceTag.value=0,
+    note="금액 미언급") 카테고리가 바로 확인된 것으로 처리한다 —
+    extractor.py가 이미 그렇게 판단해서 넘겨준다(보험은 engine 계산에서
+    제외되는 태그라 0이어도 안전하다는 원칙, extractor.py 참고)."""
+    for asset in asset_result.assets:
+        state["assets"].append(asset.model_dump(mode="json"))
+        _mark_checked(state, asset.type)
+        _drop_pending_amount(state, "asset_value", asset.type)
+
+    for liability in liabilities:
+        state["liabilities"].append(liability.model_dump(mode="json"))
+        _mark_checked(state, _LIABILITY_CATEGORY)
+        _drop_pending_amount(state, "liability_value", liability.type)
+
+    for tag in asset_result.insurance_tags:
+        state["insurance"].append(tag.model_dump(mode="json"))
+        _mark_checked(state, _INSURANCE_CATEGORY)
+
+    for item in asset_result.missing:
+        if item.get("kind") == "asset_value":
+            _mark_checked(state, item["asset_type"])
+            _add_pending_amount(state, item)
+
+    for item in liability_missing:
+        _mark_checked(state, _LIABILITY_CATEGORY)
+        _add_pending_amount(state, item)
+
+    return bool(asset_result.assets or liabilities or asset_result.insurance_tags)
 
 
 def _liabilities_needing_followup(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -267,6 +327,19 @@ def _format_summary(state: dict[str, Any]) -> str:
     else:
         lines.append("\n[부채] 없음")
 
+    # 보험은 순자산 계산에 넣지 않는다 — 노후 재원 계산에서 제외되는
+    # 태그라는 기존 원칙 그대로(engine.py가 이 값을 아예 보지 않음).
+    insurance = state["insurance"]
+    if insurance:
+        lines.append("\n[보험]")
+        lines.extend(
+            f"- {tag['type']}: {_format_krw(tag['value'])}"
+            + (f" ({tag['note']})" if tag.get("note") else "")
+            for tag in insurance
+        )
+    else:
+        lines.append("\n[보험] 없음")
+
     lines.append(f"\n순자산: {_format_krw(total_assets - total_liabilities)}")
     return "\n".join(lines)
 
@@ -299,9 +372,10 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
     4. financial_debts는 아예 채우지 않는다 — Liability.type이 자유
        문자열이라 "금융기관 채무"인지 판단할 근거가 없다(3번과 같은 이유).
        total_debts에는 전부 들어간다.
-    5. InsuranceTag(보험)는 flat 스키마에 대응 필드가 아예 없다 —
-       extra에도 지금은 안 담는다(이 체크리스트가 애초에 보험을 카테고리로
-       묻지 않아서 수집량이 적다는 판단, 필요해지면 확장).
+    5. InsuranceTag(보험)는 flat 스키마에 대응 필드가 아예 없다 — 부채의
+       monthly_payment/end_age(2번)와 같은 방식으로 extra["asset_organizer"]
+       ["insurance"]에 원본 그대로 보존한다. flat 필드만 보는 소비자에게는
+       여전히 안 보이지만, 최소한 조회는 가능하다.
 
     checked_categories에 있는 카테고리만 값을 채운다(전부는 아니어도
     최소 하나는 확인된 상태) — 아직 안 물어본 카테고리까지 0으로 채우면
@@ -311,6 +385,7 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
     """
     assets = state["assets"]
     liabilities = state["liabilities"]
+    insurance = state["insurance"]
 
     real_estate_value = sum(a["value"] for a in assets if a["type"] == "부동산")
     # 3번 참고 — 예금/주식/펀드/기타를 financial_assets/other_assets로
@@ -325,7 +400,13 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
         financial_assets=financial_assets,
         other_assets=other_assets,
         total_debts=total_debts,
-        extra={"asset_organizer": {"assets": assets, "liabilities": liabilities}},
+        extra={
+            "asset_organizer": {
+                "assets": assets,
+                "liabilities": liabilities,
+                "insurance": insurance,
+            }
+        },
     )
 
 
@@ -370,18 +451,39 @@ def _continue_after_categories(
     return _finalize(state)
 
 
+def _handle_image_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
+    """이미지 한 장을 텍스트와 동일한 체크리스트 병합 로직으로 반영한다.
+    판독 자체가 실패하면(흐릿함/형식 불명/API 실패) 추측해서 채우지 않고
+    다시 올리거나 말로 알려달라고 재질문한다 — 이 턴에서는 카테고리
+    상태를 아예 건드리지 않는다."""
+    asset_result, liabilities, liability_missing = extractor.extract_from_image(
+        payload.image_base64, payload.image_media_type or "image/jpeg"
+    )
+    if any(item.get("kind") == "image_unreadable" for item in asset_result.missing):
+        return _output(state, _IMAGE_UNREADABLE_REPLY)
+
+    _merge_extraction(state, asset_result, liabilities, liability_missing)
+    state["pending_categories"] = []
+    return _continue_after_categories(payload, state)
+
+
 def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
     message = (payload.user_message or "").strip()
+    has_image = bool(payload.image_base64)
 
     is_first_turn = not (
         state["assets"]
         or state["liabilities"]
+        or state["insurance"]
         or state["checked_categories"]
         or state["pending_categories"]
         or state["pending_amounts"]
     )
-    if is_first_turn and not message:
+    if is_first_turn and not message and not has_image:
         return _output(state, _OPENING_PROMPT)
+
+    if has_image:
+        return _handle_image_turn(payload, state)
 
     # 0) 부채 정밀 모드 후속질문에 대한 답이면 그것부터 처리한다. current_age는
     #    더 이상 이 에이전트가 직접 모으지 않고, develop의 공유
@@ -414,30 +516,13 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
     if not resolved_via_bare_amount:
         asset_result = extractor.extract_financial_slots(message)
         liabilities, liability_missing = extractor.extract_liabilities(message)
-
-        for asset in asset_result.assets:
-            state["assets"].append(asset.model_dump(mode="json"))
-            _mark_checked(state, asset.type)
-            _drop_pending_amount(state, "asset_value", asset.type)
-
-        for liability in liabilities:
-            state["liabilities"].append(liability.model_dump(mode="json"))
-            _mark_checked(state, _LIABILITY_CATEGORY)
-            _drop_pending_amount(state, "liability_value", liability.type)
-
-        for item in asset_result.missing:
-            if item.get("kind") == "asset_value":
-                _mark_checked(state, item["asset_type"])
-                _add_pending_amount(state, item)
-
-        for item in liability_missing:
-            _mark_checked(state, _LIABILITY_CATEGORY)
-            _add_pending_amount(state, item)
+        found_new_items = _merge_extraction(
+            state, asset_result, liabilities, liability_missing
+        )
 
         # "없어요"처럼 순수 부정 답변일 때만 남은 대기 카테고리를 전부
         # 확정한다 — "아니요, 예금 3천 있어요"처럼 실제 항목이 섞여 있으면
         # 그 항목만 반영하고 나머지는 다음 라운드에 다시 되묻는다.
-        found_new_items = bool(asset_result.assets or liabilities)
         if (
             had_pending_categories
             and not found_new_items
