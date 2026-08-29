@@ -102,10 +102,21 @@ RECORDING_SUMMARY_MESSAGES = SummaryMessages(
 )
 
 
-def _summary_pending(count: int) -> str:
-    """D 케이스: PENDING 개수 n으로 동적 치환 (1개면 "한 가지"). will_type 공통."""
+def _summary_pending(count: int, total: int) -> str:
+    """D 케이스: PENDING 개수 n으로 동적 치환 (1개면 "한 가지"). will_type 공통.
+
+    사진 판독(#35)이 photo_draft 진행 상황을 확인 질문과 함께 노출하는 것과
+    동일하게, 텍스트 경로도 진행률("확인됨/전체")을 응답 문구에 노출한다 —
+    data.progress(#42)는 이미 있었지만 reply 텍스트에는 안 보이고 있었다.
+    total 은 summarize() 가 넘기는 formal_ids 길이라 progress() 와 같은
+    분모를 쓴다(간인처럼 법정 요건 아닌 항목은 포함 안 됨).
+    """
     count_word = "한 가지" if count == 1 else f"{count}가지"
-    return f"**{count_word}만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 항목입니다."
+    checked = total - count
+    return (
+        f"**{count_word}만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 "
+        f"항목입니다. ({checked}/{total} 확인됨)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +419,7 @@ def summarize(
 
     pending_count = grades.count("PENDING")
     if pending_count:
-        return _summary_pending(pending_count)
+        return _summary_pending(pending_count, len(formal_ids))
     if "RED" in grades:
         return messages.has_red
     if "YELLOW" in grades:
