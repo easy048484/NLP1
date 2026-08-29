@@ -19,6 +19,7 @@ class AgentName(str, Enum):
     HEIR_NAVIGATOR = "heir_navigator"  # 상속인 절차 내비게이터
     DECEDENT_ESTATE = "decedent_estate"  # 피상속인 유언장·자산정리
     TAX_CALCULATOR = "tax_calculator"  # 상속세 계산·설계
+    HEIR_SHARE_ANALYZER = "heir_share_analyzer"  # 법정상속분·유류분 위험 점검
 
 
 class AgentInput(BaseModel):

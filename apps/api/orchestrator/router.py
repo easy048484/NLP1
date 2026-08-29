@@ -46,7 +46,12 @@ from typing import Callable, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from agents import decedent_estate, heir_navigator, tax_calculator
+from agents import (
+    decedent_estate,
+    heir_navigator,
+    heir_share_analyzer,
+    tax_calculator,
+)
 from family_graph import get_heirs_dict
 from schemas import AgentInput, AgentName, AgentOutput
 
@@ -64,6 +69,8 @@ _DEFAULT_AGENT = AgentName.HEIR_NAVIGATOR
 _KEYWORD_ROUTES: dict[str, AgentName] = {
     "유언": AgentName.DECEDENT_ESTATE,
     "자산정리": AgentName.DECEDENT_ESTATE,
+    "유류분": AgentName.HEIR_SHARE_ANALYZER,
+    "법정상속분": AgentName.HEIR_SHARE_ANALYZER,
     "상속세": AgentName.TAX_CALCULATOR,
     "세금": AgentName.TAX_CALCULATOR,
 }
@@ -72,6 +79,7 @@ _AGENT_RUNNERS: dict[AgentName, Callable[[AgentInput], AgentOutput]] = {
     AgentName.HEIR_NAVIGATOR: heir_navigator.run,
     AgentName.DECEDENT_ESTATE: decedent_estate.run,
     AgentName.TAX_CALCULATOR: tax_calculator.run,
+    AgentName.HEIR_SHARE_ANALYZER: heir_share_analyzer.run,
 }
 
 
