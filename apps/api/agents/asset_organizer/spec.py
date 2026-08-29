@@ -18,5 +18,5 @@ SPEC = AgentSpec(
     requires=[],
     produces=["asset_inventory"],
     entrypoint=run,
-    is_stub=True,
+    is_stub=False,
 )
