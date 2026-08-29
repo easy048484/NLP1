@@ -293,3 +293,42 @@ def test_extract_from_image_liability_without_amount_is_flagged_not_guessed(
     assert liabilities == []
     assert liability_missing[0]["kind"] == "liability_value"
     assert liability_missing[0]["liability_type"] == "카드론"
+
+
+def test_extract_from_image_rejects_liability_type_containing_pii(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """모델이 프롬프트 지시를 무시하고 계좌번호·예금주명이 섞인 문자열을
+    "type"에 채워 보내는 경우를 흉내낸다 — 은행 앱 스크린샷은 잔액 외에
+    계좌번호·예금주명이 함께 찍혀 있는 경우가 흔해서 실제로 일어날 수 있는
+    입력이다. 화이트리스트 밖 값은 조용히 건너뛰어야지, 그대로 통과시키면
+    개인정보가 financial_profile.extra로 새어나간다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "unreadable": False,
+                "assets": [],
+                "liabilities": [
+                    {
+                        "type": "국민은행 대출(계좌 110-123-456789, 예금주 홍길동)",
+                        "remaining_balance": 20_000_000,
+                    },
+                    {"type": "대출", "remaining_balance": 10_000_000},
+                ],
+                "unclear": [],
+            }
+        ),
+    )
+
+    result, liabilities, liability_missing = extractor.extract_from_image(
+        "base64-image-data", "image/png"
+    )
+
+    # 화이트리스트 안(대출/카드론/전세자금대출/기타)만 통과 — PII가 섞인
+    # 항목은 조용히 건너뛰고, 정상 항목("대출")만 남는다.
+    assert len(liabilities) == 1
+    assert liabilities[0].type == "대출"
+    assert liabilities[0].remaining_balance == 10_000_000
+    assert not any("계좌" in liability.type for liability in liabilities)
+    assert not any("홍길동" in liability.type for liability in liabilities)

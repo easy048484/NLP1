@@ -423,15 +423,19 @@ _IMAGE_SYSTEM_PROMPT = (
     "화면이 흐릿하거나 무엇을 찍은 건지 알아보기 어려우면 절대 숫자를 "
     "지어내지 마라 — 그 항목은 생략하고 unclear 배열에 이유를 적어라. "
     "이미지 전체를 알아볼 수 없으면 unreadable을 true로 하라.\n"
+    "수집 최소화 원칙: 자산 유형·금액, 부채 유형·잔액, 보험 가입 여부·금액"
+    " 외에는 아무것도 추출하지 마라. 계좌번호·예금주명·주민등록번호·"
+    "은행/지점명·카드번호·전화번호 등은 화면에 보이더라도 절대 결과에 "
+    "옮기지 마라 — unclear 설명에도 그런 정보를 포함하지 마라.\n"
     "반드시 아래 JSON 형식으로만 답하라. 코드블록이나 다른 설명을 절대 "
     "덧붙이지 마라.\n"
     "{\n"
     '  "unreadable": true 또는 false,\n'
     '  "assets": [{"type": "예금|주식|펀드|부동산|기타", "value": 원단위 정수}],\n'
-    '  "liabilities": [{"type": "대출|카드론|전세자금대출 등", '
+    '  "liabilities": [{"type": "대출|카드론|전세자금대출|기타", '
     '"remaining_balance": 원단위 정수}],\n'
     '  "insurance": [{"value": 원단위 정수 또는 null}],\n'
-    '  "unclear": ["무엇을 확인하지 못했는지에 대한 짧은 설명"]\n'
+    '  "unclear": ["무엇을 확인하지 못했는지에 대한 짧은 설명(개인정보 제외)"]\n'
     "}"
 )
 
@@ -442,6 +446,17 @@ IMAGE_UNREADABLE_MISSING: dict[str, Any] = {
     "kind": "image_unreadable",
     "reason": "이미지를 읽지 못함 — 잘 안 보이거나 형식을 알아볼 수 없음",
 }
+
+
+#: 이미지 판독이 liability type으로 내놓을 수 있는 값의 전부 — extract_
+#: liabilities()의 정규식 경로(_LiabilityLabel)와 동일한 화이트리스트에
+#: "기타"만 더한 것(자산 쪽 _VALID_ASSET_TYPES와 같은 catch-all 관례).
+#: 프롬프트가 이 4개만 쓰라고 지시하지만, 모델이 그 지시를 무시하고
+#: "국민은행 대출(계좌 110-xxx, 홍길동)"처럼 계좌번호·이름이 섞인 문자열을
+#: 채워 보내는 경우를 대비해 여기서 한 번 더 막는다(수집 최소화 원칙,
+#: 4-6절) — 화이트리스트 밖 값은 asset 검증(_VALID_ASSET_TYPES)과 같은
+#: 방식으로 조용히 건너뛴다(추측해서 다른 값으로 바꿔치기하지 않는다).
+_VALID_LIABILITY_TYPES = ("대출", "카드론", "전세자금대출", "기타")
 
 
 def _apply_llm_liabilities(
@@ -458,7 +473,7 @@ def _apply_llm_liabilities(
             continue
         liability_type = raw.get("type")
         value = raw.get("remaining_balance")
-        if not isinstance(liability_type, str) or not liability_type.strip():
+        if liability_type not in _VALID_LIABILITY_TYPES:
             continue
         if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
             missing.append(
