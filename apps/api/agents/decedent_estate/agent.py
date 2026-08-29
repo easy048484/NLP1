@@ -41,6 +41,7 @@ from typing import Any, Optional
 from schemas import AgentInput, AgentName, AgentOutput
 
 from .date_parser import parse_dates
+from .image_reader import PHOTO_FIELD_IDS, extract_will_photo_fields
 
 from .recording_checker import (
     FORMAL_RECORDING_REQUIREMENT_IDS,
@@ -50,6 +51,7 @@ from .recording_checker import (
 from .requirement_checker import (
     RequirementResult,
     check_requirements,
+    photo_confirm_templates,
     validate_confirm_answers,
 )
 from .result_formatter import (
@@ -431,6 +433,139 @@ def _guidance_only_output(
     )
 
 
+def _resolve_photo_intake(
+    payload: AgentInput, state: DecedentState
+) -> tuple[Optional[AgentOutput], str, DecedentState]:
+    """유언장 사진 판독 개입 지점 (설계 방침 A/B/E/F).
+
+    사진과 전혀 무관하면(이번 턴 이미지도 없고, 진행 중이던 판독도 없음)
+    (None, payload.user_message, state) 를 그대로 돌려줘 기존 텍스트 경로를
+    한 글자도 건드리지 않는다 — 회귀 없음.
+
+    반환:
+    - (AgentOutput, _, _): 아직 확인이 안 끝났다(또는 판독 실패). 이걸 그대로
+      반환하고 요건 판정 파이프라인은 이번 턴에 돌지 않는다.
+    - (None, text, state): 사진이 없었거나, 확인까지 전부 끝났다. text 를
+      기존 check_requirements() 에 그대로 넘기면 된다 — 판독값을
+      "유언자: OOO" 같은 텍스트로 재구성해 payload.user_message 앞에
+      붙인 것뿐이라, requirement_checker.py 는 한 줄도 몰라도 된다(방침 A).
+      state 는 seal_answer 가 채워졌을 수 있고, photo_draft/
+      photo_confirm_answers 는 소비되어 비어 있다.
+
+    ⚠️ 원본 이미지(payload.image_base64)는 여기서 한 번 쓰이고 버려진다 —
+    state 어디에도 담기지 않는다(state.py 의 DecedentState 참고, 방침 B).
+    """
+    if payload.image_base64:
+        fields = (
+            extract_will_photo_fields(payload.image_base64, payload.image_media_type)
+            if payload.image_media_type
+            else None
+        )
+        if fields is None:
+            state = state.model_copy(
+                update={"photo_draft": {}, "photo_confirm_answers": {}}
+            )
+            reply = "사진을 판독하지 못했습니다. 유언장 내용을 직접 입력해 주세요."
+            return (
+                AgentOutput(
+                    agent=AgentName.DECEDENT_ESTATE,
+                    reply=reply,
+                    next_action=NEXT_ACTION_AWAIT_USER,
+                    data=_namespaced(state, {"warnings": []}),
+                ),
+                payload.user_message,
+                state,
+            )
+        state = state.model_copy(
+            update={"photo_draft": fields, "photo_confirm_answers": {}}
+        )
+
+    draft = state.photo_draft
+    if not draft:
+        return None, payload.user_message, state
+
+    templates_section = photo_confirm_templates()
+    templates = templates_section["fields"]
+    options = templates_section["options"]
+    answers = state.photo_confirm_answers
+
+    pending: list[dict[str, Any]] = []
+    for field_id in PHOTO_FIELD_IDS:
+        field_draft = draft.get(field_id) or {}
+        if field_draft.get("confidence") != "low" or field_id in answers:
+            continue
+        template = templates[field_id]
+        pending.append(
+            {
+                "requirement": template["requirement_name"],
+                "field": f"photo_confirm_answers.{field_id}",
+                "question": template["question_template"].format(
+                    value=field_draft.get("value")
+                ),
+                "options": options,
+            }
+        )
+
+    if pending:
+        reply = "사진에서 읽은 내용을 확인해 주세요.\n\n" + "\n".join(
+            f"- {q['question']}" for q in pending
+        )
+        return (
+            AgentOutput(
+                agent=AgentName.DECEDENT_ESTATE,
+                reply=reply,
+                next_action=NEXT_ACTION_AWAIT_USER,
+                data=_namespaced(
+                    state,
+                    {"pending_questions": pending, "warnings": []},
+                    pending_questions=pending,
+                ),
+            ),
+            payload.user_message,
+            state,
+        )
+
+    # 확인이 전부 끝났다 — 값을 확정하고 기존 파이프라인용 텍스트로 재구성한다.
+    lines: list[str] = []
+    seal_answer = state.seal_answer
+    for field_id in PHOTO_FIELD_IDS:
+        field_draft = draft.get(field_id) or {}
+        value = field_draft.get("value")
+        confidence = field_draft.get("confidence")
+        if confidence == "high":
+            accepted = value
+        elif confidence == "low":
+            accepted = value if answers.get(field_id) == "yes" else None
+        else:
+            accepted = None
+
+        if accepted is None:
+            continue
+        if field_id == "seal":
+            seal_answer = accepted
+        elif field_id == "name":
+            lines.append(f"유언자: {accepted}")
+        elif field_id == "address":
+            lines.append(f"주소: {accepted}")
+        elif field_id == "date":
+            lines.append(accepted)
+
+    reconstructed = "\n".join(lines)
+    text = (
+        f"{reconstructed}\n\n{payload.user_message}"
+        if payload.user_message
+        else reconstructed
+    )
+    resolved_state = state.model_copy(
+        update={
+            "photo_draft": {},
+            "photo_confirm_answers": {},
+            "seal_answer": seal_answer,
+        }
+    )
+    return None, text, resolved_state
+
+
 def _run_handwritten_pipeline(
     payload: AgentInput,
     state: DecedentState,
@@ -444,13 +579,21 @@ def _run_handwritten_pipeline(
     intent 는 _resolve_intent 가 정리한 "확정된" 값을 저장하기 위한 것이다 —
     클라이언트가 intent 를 아예 안 보냈을 때도 세션에는 review 로 남겨야
     "intent 미지정 == review" 가 다음 턴까지 그대로 유지된다.
+
+    사진이 있으면(payload.image_base64) _resolve_photo_intake 가 먼저
+    개입한다 — 확인이 안 끝났으면 여기서 조기 반환하고, 끝났으면 판독값이
+    반영된 text 로 아래 로직이 평소와 동일하게 돈다.
     """
+    photo_output, text, state = _resolve_photo_intake(payload, state)
+    if photo_output is not None:
+        return photo_output
+
     handwriting_answer = state.handwriting_answer
     seal_answer = state.seal_answer
     address_envelope_answer = state.address_envelope_answer
 
     results = check_requirements(
-        payload.user_message,
+        text,
         handwriting_answer=handwriting_answer,
         seal_answer=seal_answer,
         address_envelope_answer=address_envelope_answer,

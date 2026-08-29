@@ -284,6 +284,14 @@ def execute_plan(
                 family_graph_id=payload.family_graph_id,
                 financial_profile=profile,
                 context=context,
+                # 이미지는 세션에 저장되지 않는다 — extract_state_to_persist가
+                # output.data[agent.value]만 영속화하고, payload(이번 요청)는
+                # 애초에 저장 경로에 들어가지 않는다. 그대로 통과만 시킨다
+                # (라우터→플래너 재설계 이전에 orchestrator/router.py의
+                # node_build_context에 있던 예외 그대로, 위치만 옮겨왔다 —
+                # CLAUDE.md의 "router.py 절대 수정 금지" 원칙의 명시적 예외).
+                image_base64=payload.image_base64,
+                image_media_type=payload.image_media_type,
             )
             inputs[name] = agent_input
             layer_inputs.append((name, agent_input))

@@ -148,6 +148,21 @@ def test_state_model_has_no_field_for_raw_text() -> None:
     assert "will_text" not in fields
 
 
+def test_state_model_has_no_field_for_raw_image() -> None:
+    """사진 판독 1단계(방침 B) — 원본 이미지를 담을 필드 자체가 없어야 한다.
+
+    photo_draft/photo_confirm_answers는 판독 결과의 짧은 문자열/열거값만
+    담는 자리이지 이미지 데이터를 담는 자리가 아니다 — 별도 확인:
+    test_decedent_photo_intake.py::test_photo_draft_holds_only_short_extracted_values_not_raw_image
+    """
+    fields = set(DecedentState.model_fields)
+
+    assert "image" not in fields
+    assert "image_base64" not in fields
+    assert "photo" not in fields
+    assert "photo_base64" not in fields
+
+
 # ---------------------------------------------------------------------------
 # 2. agent.run() — 네임스페이스 / 평면 둘 다
 # ---------------------------------------------------------------------------

@@ -115,6 +115,19 @@ class AgentInput(BaseModel):
         ),
     )
     context: dict[str, Any] = Field(default_factory=dict)
+    image_base64: Optional[str] = Field(
+        default=None,
+        description=(
+            "판독할 이미지(예: 유언장 사진)의 base64 인코딩 데이터. "
+            "지원 포맷·용량 제한 등 세부 검증은 각 에이전트가 담당한다 — "
+            "이 스키마는 필드 존재 여부만 규약화한다. 서버는 이 값을 "
+            "저장하지 않고 판독 직후 폐기해야 한다."
+        ),
+    )
+    image_media_type: Optional[str] = Field(
+        default=None,
+        description="image_base64의 MIME 타입 (예: image/jpeg). image_base64와 함께 온다.",
+    )
 
 
 class AgentOutput(BaseModel):
