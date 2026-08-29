@@ -304,3 +304,23 @@ def test_namespaced_context_reads_witness_answers() -> None:
     )
 
     assert output.data["requirements"]["rec_witness_eligible"]["grade"] == "RED"
+
+
+def test_progress_pending_witness_answers_counted_as_unchecked() -> None:
+    """증인 참여/결격 확인 답변이 없으면 7개 중 5개(대본에서 바로 판정되는
+    항목)만 확인된 상태다."""
+    output = _run(_COMPLETE_TRANSCRIPT)  # witness_present/eligible 답변 없음
+
+    assert output.data["requirements"]["rec_witness_present"]["grade"] == "PENDING"
+    assert output.data["requirements"]["rec_witness_eligible"]["grade"] == "PENDING"
+    assert output.data["progress"] == {"checked": 5, "total": 7}
+
+
+def test_progress_all_checked_when_witness_answers_given() -> None:
+    output = _run(
+        _COMPLETE_TRANSCRIPT,
+        rec_witness_present_answer="yes",
+        rec_witness_eligible_answer="not_disqualified",
+    )
+
+    assert output.data["progress"] == {"checked": 7, "total": 7}

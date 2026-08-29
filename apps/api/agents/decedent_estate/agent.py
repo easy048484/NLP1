@@ -61,6 +61,7 @@ from .result_formatter import (
     format_result,
     guide_payload,
     pending_questions,
+    progress,
     red_label,
 )
 from .state import STATE_KEY, DecedentState, dump_state, load_state
@@ -466,6 +467,7 @@ def _run_handwritten_pipeline(
         "will_type": _HANDWRITTEN_WILL_TYPE,
         "requirements": requirements,
         "pending_questions": pending,
+        "progress": progress(results, _FORMAL_REQUIREMENT_IDS),
         # 화이트리스트에 없는 답변값이 와도 판정은 그대로 PENDING 유지(위 check_requirements
         # 호출과 동일 입력) — 여기서는 그 "조용한 무시"를 호출자가 알아채도록만 알려준다.
         "warnings": validate_confirm_answers(
@@ -521,6 +523,7 @@ def _run_recording_pipeline(
         "will_type": _RECORDING_WILL_TYPE,
         "requirements": requirements,
         "pending_questions": pending,
+        "progress": progress(results, FORMAL_RECORDING_REQUIREMENT_IDS),
         "warnings": validate_recording_confirm_answers(
             rec_witness_present_answer=rec_witness_present_answer,
             rec_witness_eligible_answer=rec_witness_eligible_answer,
