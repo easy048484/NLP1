@@ -56,6 +56,18 @@ def test_keyword_routes_to_matching_agent(monkeypatch):
     assert output.agent == AgentName.TAX_CALCULATOR
 
 
+def test_forced_share_keyword_routes_to_share_analyzer(monkeypatch):
+    monkeypatch.setitem(
+        router._AGENT_RUNNERS,
+        AgentName.HEIR_SHARE_ANALYZER,
+        _fake_agent(AgentName.HEIR_SHARE_ANALYZER),
+    )
+    output = router.route(
+        AgentInput(session_id="share-routing", user_message="유류분이 부족한가요?")
+    )
+    assert output.agent == AgentName.HEIR_SHARE_ANALYZER
+
+
 def test_handoff_next_action_routes_next_turn_to_target_agent(monkeypatch):
     monkeypatch.setitem(
         router._AGENT_RUNNERS,

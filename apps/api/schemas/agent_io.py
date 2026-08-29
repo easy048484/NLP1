@@ -31,6 +31,7 @@ class AgentName(str, Enum):
     HEIR_NAVIGATOR = "heir_navigator"  # 상속인 절차 내비게이터
     DECEDENT_ESTATE = "decedent_estate"  # 피상속인 유언장·자산정리
     TAX_CALCULATOR = "tax_calculator"  # 상속세 계산·설계
+    HEIR_SHARE_ANALYZER = "heir_share_analyzer"  # 법정상속분·유류분 위험 점검
     # ---- 아래 두 개는 껍데기(stub)만 등록돼 있습니다. 담당 팀원이 agents/<이름>/agent.py
     #      의 run()을 채우면 오케스트레이터 수정 없이 그대로 편입됩니다.
     RETIREMENT_PLANNER = "retirement_planner"  # 은퇴자금 설계 (생전준비)

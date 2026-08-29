@@ -9,6 +9,7 @@ export type AgentName =
   | "heir_navigator"
   | "decedent_estate"
   | "tax_calculator"
+  | "heir_share_analyzer"
   | "retirement_planner"
   | "asset_organizer";
 

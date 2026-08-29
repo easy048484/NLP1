@@ -46,6 +46,15 @@ export const AGENTS: Record<AgentName, AgentMeta> = {
     bg: "#ecfdf5",
     emoji: "🧮",
   },
+  heir_share_analyzer: {
+    name: "heir_share_analyzer",
+    label: "유류분 위험 점검",
+    shortLabel: "유류분 점검",
+    description: "법정상속분과 예정 배분을 비교해 위험 가능성을 점검해드려요",
+    color: "#be123c",
+    bg: "#fff1f2",
+    emoji: "⚖️",
+  },
   retirement_planner: {
     name: "retirement_planner",
     label: "은퇴자금 설계",
@@ -72,6 +81,7 @@ export const AGENT_LIST: AgentMeta[] = [
   AGENTS.heir_navigator,
   AGENTS.decedent_estate,
   AGENTS.tax_calculator,
+  AGENTS.heir_share_analyzer,
   AGENTS.retirement_planner,
   AGENTS.asset_organizer,
 ];
