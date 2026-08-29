@@ -164,9 +164,16 @@ export default function App() {
           role: "assistant",
           agent: output.agent,
           text: output.reply,
+          verification: output.verification ?? null,
           debug: {
             agent: output.agent,
+            agents: output.agents ?? [output.agent],
+            path: output.path ?? null,
             nextAction: output.next_action ?? null,
+            handoffs: (output.handoffs ?? []).map(
+              (h) => `${h.target}(p${h.priority})`,
+            ),
+            verification: output.verification ?? null,
             request: result.request,
             response: output,
             errorMessage: null,
@@ -187,7 +194,11 @@ export default function App() {
             "(개발자 모드를 켜면 자세한 오류 내용을 확인할 수 있어요.)",
           debug: {
             agent: null,
+            agents: [],
+            path: null,
             nextAction: null,
+            handoffs: [],
+            verification: null,
             request: result.request,
             response: null,
             errorMessage: result.errorMessage,

@@ -372,3 +372,32 @@ def test_check_requirements_address_regex_hit_reports_regex_method(
     results = check_requirements(text)
 
     assert results["address"].extracted["extraction_method"] == "regex"
+
+
+# ---------------------------------------------------------------------------
+# known_limitations.md §2-1 실측 (실제 Anthropic API 호출, --live 필요)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.live
+def test_known_limitations_2_1_example_still_returns_absent_on_real_api() -> None:
+    """known_limitations.md §2-1 대표 예시("서울 강남구에 사는 나는 내
+    아파트를 장남에게 상속한다")를 실제 API로 재측정한 결과를 고정한다.
+
+    2026-08-25(코드펜스 수정 직후), 2026-08-28(#36 도로명주소 수정 반영 후)
+    두 세션에 걸쳐 총 6회 반복 호출 전부 동일하게 `{"address_text": null}`을
+    반환했다 — 유언자 본인 주소와 재산(아파트) 소재지가 한 문장에 섞여 있을 때
+    모델이 확신 없이 보수적으로 null을 돌려주는 것으로 보인다. 이 테스트가
+    깨진다면(=이제 주소를 추출한다면) known_limitations.md §2-1 을 "해결됨"으로
+    되돌려야 한다는 신호다 — 문서와 코드가 다시 어긋나지 않도록 여기 고정해둔다.
+
+    `pytest -q`(기본 실행)에서는 --live 가 없어 deselect되어 돌지 않는다 —
+    ANTHROPIC_API_KEY 가 필요하고 실제 과금이 발생한다.
+    """
+    text = "서울 강남구에 사는 나는 내 아파트를 장남에게 상속한다."
+    assert requirement_checker.extract_address(text).case == "absent"  # 전제 확인
+
+    result, method = extract_address_with_fallback(text)
+
+    assert method == "none"
+    assert result.case == "absent"

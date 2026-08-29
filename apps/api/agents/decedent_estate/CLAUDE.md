@@ -51,15 +51,24 @@
 ## 계약
 - 입출력: apps/api/schemas/agent_io.py 의 AgentInput/AgentOutput 준수
 - run(payload: AgentInput) -> AgentOutput 시그니처 변경 금지
-- orchestrator/router.py 는 절대 수정하지 않음
+- orchestrator/router.py·planner.py 는 절대 수정하지 않음
   - ⚠️ **예외(2026-08-25, 팀 승인 필요/PR에서 확인)**: 사진 판독 기능이
     AgentInput 에 image_base64/image_media_type 필드를 추가하면서,
-    node_build_context 가 이 두 필드를 에이전트로 전달하도록 한 줄
-    수정했다 — 안 고치면 필드가 스키마에는 있어도 에이전트에는 절대
-    도달하지 못한다(오케스트레이터가 AgentInput 을 필드별로 재구성하기
-    때문). 세션 저장 경로(extract_state_to_persist)는 손대지 않았다 —
-    output.data[agent.value] 만 저장하는 기존 구조 덕분에 이미지가 세션에
-    새어 들어갈 길이 애초에 없다.
+    이 두 필드를 에이전트로 전달하는 두 줄을 추가했다 — 안 고치면 필드가
+    스키마에는 있어도 에이전트에는 절대 도달하지 못한다(오케스트레이터가
+    AgentInput 을 필드별로 재구성하기 때문). 세션 저장 경로
+    (extract_state_to_persist)는 손대지 않았다 — output.data[agent.value]
+    만 저장하는 기존 구조 덕분에 이미지가 세션에 새어 들어갈 길이 애초에
+    없다.
+    - **2026-08-29, 라우터→플래너 재설계(#41, docs/라우팅방식변경.md)로
+      위치 이동**: AgentInput 생성 지점이 router.py의 node_build_context
+      에서 planner.py의 execute_plan() 으로 옮겨가면서, 이 두 줄도 함께
+      옮겼다. 동작(이미지를 그대로 통과시킨다)은 바뀌지 않았다 — 다만
+      execute_plan() 은 한 턴에 여러 에이전트를 층(layer) 단위로 실행할
+      수 있어, 이번 턴에 실행되는 모든 에이전트에게 동일하게 전달된다
+      (이전 구조도 "어떤 에이전트든 이번 턴 것 하나"에 무조건 전달했으므로
+      기존 동작의 자연스러운 연장 — 이미지를 실제로 읽는 건 여전히
+      decedent_estate 뿐이고, 다른 에이전트는 필드를 그냥 무시한다).
 
 ## 빌드 순서
 1) rules/requirements.json → 2) 연월일 파서+요건 판정기+테스트 → 3) 마스킹 → 4) LLM 추출 연결

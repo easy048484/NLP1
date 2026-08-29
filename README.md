@@ -81,7 +81,7 @@ npm run dev
 
 - `apps/api/requirements.txt` — 자기 에이전트 로직에 필요한 패키지를 추가할 때 여기를 같이 건드리게 됩니다.
 - `apps/api/schemas/agent_io.py` — `AgentInput`/`AgentOutput` 자체를 바꿔야 하면(새 필드 추가 등) PR 설명에 꼭 이유를 적고, 다른 담당자에게 리뷰를 요청하세요. CI의 schema check job이 이 파일 변경 시 자동으로 알려줍니다.
-- `apps/api/orchestrator/router.py` — 라우팅 로직은 지원님 담당이니, 새 키워드/에이전트 추가가 필요하면 직접 고치지 말고 요청해주세요.
+- `apps/api/orchestrator/` — 라우팅은 레지스트리 기반입니다(`docs/라우팅방식변경.md`). 새 에이전트나 키워드는 `router.py`를 고치지 말고 자기 폴더의 `agents/<name>/spec.py`에 `AgentSpec`으로 선언하세요(키워드·설명·예시 문장·requires/produces). 오케스트레이터가 자동으로 편입합니다. 파이프라인 자체(`registry.py`/`planner.py`/`compose.py`/`router.py`)를 바꿔야 하면 정민에게 요청해주세요.
 
 각 에이전트는 `apps/api/tests/test_agents.py`에서 `run(AgentInput) -> AgentOutput` 계약을 지키는지 CI로 검증합니다. 로직을 mock에서 실제 구현으로 바꿀 때 이 테스트가 깨지면 병합 전에 바로 알 수 있습니다.
 
