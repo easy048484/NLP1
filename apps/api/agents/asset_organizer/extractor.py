@@ -310,9 +310,14 @@ def _apply_llm_payload(
         if not isinstance(raw, dict):
             continue
         asset_type = raw.get("type")
-        value = raw.get("value")
         if asset_type not in _VALID_ASSET_TYPES:
-            continue
+            # 화이트리스트 밖 값(오염 가능성 있는 원문)은 버리되, 항목
+            # 자체는 "기타"로 보존한다 — 통째로 드롭하면 실제 자산이
+            # 사용자 재무 상태에서 사라져 순자산이 실제보다 적어 보이게
+            # 왜곡된다(부채 쪽과 대칭 — 이쪽은 "실제보다 나빠 보임" 방향
+            # 이지만 마찬가지로 사실과 다른 왜곡이라 안전하지 않다).
+            asset_type = "기타"
+        value = raw.get("value")
         if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
             missing.append(
                 {
@@ -328,10 +333,11 @@ def _apply_llm_payload(
         if not isinstance(raw, dict):
             continue
         income_type = raw.get("type")
+        if income_type not in _VALID_INCOME_TYPES:
+            # 자산과 동일한 이유로 "기타"로 보존한다(항목 자체는 안 버림).
+            income_type = "기타"
         monthly = raw.get("monthly")
         start_age = raw.get("start_age")
-        if income_type not in _VALID_INCOME_TYPES:
-            continue
         valid_monthly = isinstance(monthly, (int, float)) and not isinstance(
             monthly, bool
         )
@@ -454,8 +460,11 @@ IMAGE_UNREADABLE_MISSING: dict[str, Any] = {
 #: 프롬프트가 이 4개만 쓰라고 지시하지만, 모델이 그 지시를 무시하고
 #: "국민은행 대출(계좌 110-xxx, 홍길동)"처럼 계좌번호·이름이 섞인 문자열을
 #: 채워 보내는 경우를 대비해 여기서 한 번 더 막는다(수집 최소화 원칙,
-#: 4-6절) — 화이트리스트 밖 값은 asset 검증(_VALID_ASSET_TYPES)과 같은
-#: 방식으로 조용히 건너뛴다(추측해서 다른 값으로 바꿔치기하지 않는다).
+#: 4-6절) — 화이트리스트 밖 값은 원문(오염 가능성 있는 문자열)만 버리고
+#: "기타"로 대체한다. 항목 자체를 통째로 드롭하면 실제 부채가 사용자
+#: 재무 상태에서 사라져 순자산이 실제보다 좋아 보이게 왜곡된다 — PII를
+#:막으려다 반대 방향으로 더 위험한 실수를 하는 셈이라, "기타"(이미 검증된
+#: 정상 카테고리라 새로 추측하는 게 아님)로 보존한다.
 _VALID_LIABILITY_TYPES = ("대출", "카드론", "전세자금대출", "기타")
 
 
@@ -472,9 +481,9 @@ def _apply_llm_liabilities(
         if not isinstance(raw, dict):
             continue
         liability_type = raw.get("type")
-        value = raw.get("remaining_balance")
         if liability_type not in _VALID_LIABILITY_TYPES:
-            continue
+            liability_type = "기타"
+        value = raw.get("remaining_balance")
         if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
             missing.append(
                 {

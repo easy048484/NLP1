@@ -295,14 +295,18 @@ def test_extract_from_image_liability_without_amount_is_flagged_not_guessed(
     assert liability_missing[0]["liability_type"] == "카드론"
 
 
-def test_extract_from_image_rejects_liability_type_containing_pii(
+def test_extract_from_image_liability_type_with_pii_is_kept_as_gita_not_dropped(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """모델이 프롬프트 지시를 무시하고 계좌번호·예금주명이 섞인 문자열을
     "type"에 채워 보내는 경우를 흉내낸다 — 은행 앱 스크린샷은 잔액 외에
     계좌번호·예금주명이 함께 찍혀 있는 경우가 흔해서 실제로 일어날 수 있는
-    입력이다. 화이트리스트 밖 값은 조용히 건너뛰어야지, 그대로 통과시키면
-    개인정보가 financial_profile.extra로 새어나간다."""
+    입력이다.
+
+    화이트리스트 밖의 오염된 원문 문자열은 버리지만, 부채 항목 자체(금액이
+    정상이면)까지 통째로 드롭하면 안 된다 — 그러면 실제로 있는 부채가
+    사용자 재무 상태에서 사라져 순자산이 실제보다 좋아 보이게 왜곡된다.
+    "기타"(이미 검증된 정상 카테고리)로 보존해야 한다."""
     _install_fake_llm(
         monkeypatch,
         text=json.dumps(
@@ -325,10 +329,75 @@ def test_extract_from_image_rejects_liability_type_containing_pii(
         "base64-image-data", "image/png"
     )
 
-    # 화이트리스트 안(대출/카드론/전세자금대출/기타)만 통과 — PII가 섞인
-    # 항목은 조용히 건너뛰고, 정상 항목("대출")만 남는다.
-    assert len(liabilities) == 1
-    assert liabilities[0].type == "대출"
-    assert liabilities[0].remaining_balance == 10_000_000
+    assert len(liabilities) == 2  # 둘 다 보존됨 — 부채 자체는 사라지지 않는다
     assert not any("계좌" in liability.type for liability in liabilities)
     assert not any("홍길동" in liability.type for liability in liabilities)
+
+    tainted = next(
+        liability
+        for liability in liabilities
+        if liability.remaining_balance == 20_000_000
+    )
+    assert tainted.type == "기타"  # 오염된 원문 대신 정상 카테고리로 대체
+
+    normal = next(
+        liability
+        for liability in liabilities
+        if liability.remaining_balance == 10_000_000
+    )
+    assert normal.type == "대출"
+
+
+def test_llm_fallback_asset_type_with_pii_is_kept_as_gita_not_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """_apply_llm_payload()는 extract_from_image()와 extract_financial_slots()
+    LLM 폴백 양쪽이 공유한다 — 부채와 동일한 이유로, 화이트리스트 밖 자산
+    유형도 통째로 드롭하면 안 되고 "기타"로 보존해야 한다(드롭하면 실제
+    자산이 사라져 순자산이 실제보다 적어 보이게 왜곡됨)."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "assets": [
+                    {
+                        "type": "국민은행 예금(계좌 110-123-456789, 홍길동)",
+                        "value": 30_000_000,
+                    }
+                ],
+                "incomes": [],
+                "insurance": [],
+                "unclear": [],
+            }
+        ),
+    )
+
+    result = extractor.extract_financial_slots("목돈이 좀 있어요")
+
+    assert len(result.assets) == 1
+    assert result.assets[0].type == "기타"
+    assert result.assets[0].value == 30_000_000
+    assert not any("계좌" in a.type for a in result.assets)
+
+
+def test_llm_fallback_income_type_outside_whitelist_is_kept_as_gita_not_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "assets": [],
+                "incomes": [{"type": "퇴직연금", "monthly": 500_000, "start_age": 65}],
+                "insurance": [],
+                "unclear": [],
+            }
+        ),
+    )
+
+    result = extractor.extract_financial_slots("목돈이 좀 있어요")
+
+    assert len(result.incomes) == 1
+    assert result.incomes[0].type == "기타"
+    assert result.incomes[0].monthly == 500_000
+    assert result.incomes[0].start_age == 65
