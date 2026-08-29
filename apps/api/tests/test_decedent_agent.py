@@ -244,6 +244,9 @@ def test_run_progress_reflects_pending_confirm_answers() -> None:
     output = decedent_estate.run(payload)
 
     assert output.data["progress"] == {"checked": 3, "total": 5}
+    # 사진 판독(#35)과 동일하게, 진행률이 reply 텍스트에도 노출돼야 한다 —
+    # data.progress만 있고 화면 문구엔 안 보이던 것을 이번에 붙였다.
+    assert "(3/5 확인됨)" in output.reply
 
 
 def test_run_progress_all_checked_when_confirm_answers_given() -> None:
