@@ -12,7 +12,7 @@ from auth import router as auth_router
 from family_graph import router as family_graph_router
 from orchestrator import route
 from orchestrator.session_store import PostgresSessionStore
-from schemas import AgentInput, AgentOutput
+from schemas import AgentInput, ChatResponse
 
 _parents = Path(__file__).resolve().parents
 _env_path = _parents[2] / ".env" if len(_parents) > 2 else None
@@ -45,6 +45,6 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/chat", response_model=AgentOutput)
-def chat(payload: AgentInput) -> AgentOutput:
+@app.post("/chat", response_model=ChatResponse)
+def chat(payload: AgentInput) -> ChatResponse:
     return route(payload)

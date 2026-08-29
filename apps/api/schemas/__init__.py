@@ -1,3 +1,21 @@
-from .agent_io import AgentInput, AgentName, AgentOutput
+from .agent_io import (
+    AgentAxis,
+    AgentInput,
+    AgentName,
+    AgentOutput,
+    ChatResponse,
+    FinancialProfile,
+    HandoffRequest,
+    VerificationResult,
+)
 
-__all__ = ["AgentInput", "AgentOutput", "AgentName"]
+__all__ = [
+    "AgentAxis",
+    "AgentInput",
+    "AgentName",
+    "AgentOutput",
+    "ChatResponse",
+    "FinancialProfile",
+    "HandoffRequest",
+    "VerificationResult",
+]
