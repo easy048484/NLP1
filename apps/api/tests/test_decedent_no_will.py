@@ -2,7 +2,11 @@
 유언장 없음 케이스(will_type="none") 테스트.
 
 "유언장이 없다/못 찾았다"는 요건 판정 대상이 아예 없으므로, 판정 파이프라인을
-돌지 않고 법정상속 안내 + 공정증서 고지만 하고 heir_navigator 로 넘긴다.
+돌지 않고 법정상속 안내 + 공정증서 고지만 한다. heir_navigator로의 직접
+next_action 핸드오프는 없다(2026-08-25 제거) — 웹 UI가 로그인 후 채팅창에서
+라우터가 적합한 에이전트를 선택하는 구조로 확정되면서, #20에서 넣었던
+handoff:heir_navigator는 받는 쪽이 없어 막다른 길이었다. 사용자가 채팅으로
+돌아가 다시 말하면 라우터가 알아서 보낸다.
 
 범위가 의도적으로 좁다는 점을 테스트로 고정한다:
 - 유언장 탐색 안내(어디에 뒀는지 찾는 법)는 하지 않는다 — 공정증서 고지만 예외
@@ -11,7 +15,6 @@
 """
 
 from agents import decedent_estate
-from agents.decedent_estate.agent import NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
 from agents.decedent_estate.will_types import no_will_guidance, selection_question
 from schemas import AgentInput, AgentName
 
@@ -163,25 +166,26 @@ def test_closing_lines_present_once() -> None:
 
 
 # ---------------------------------------------------------------------------
-# [4] heir_navigator 핸드오프 (스텁)
+# [4] heir_navigator로의 직접 핸드오프 없음 (2026-08-25 제거 — 라우터가 담당)
 # ---------------------------------------------------------------------------
 
 
-def test_hands_off_to_heir_navigator() -> None:
+def test_does_not_hand_off_to_heir_navigator() -> None:
+    """웹 UI가 라우터 방식으로 확정돼, #20에서 넣었던 handoff:heir_navigator를
+    제거했다 — 받는 쪽이 없어 막다른 길이었다. next_action은 다른 안내 전용
+    분기(secret/oral)와 마찬가지로 None이다."""
     output = _no_will_output()
 
-    assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
-    assert output.data["handoff_reason"] == no_will_guidance()["handoff_reason"]
+    assert output.next_action is None
+    assert "handoff_reason" not in output.data
 
 
-def test_handoff_signal_follows_the_established_format() -> None:
-    """포맷은 handoff.py 규약 2번("handoff:<에이전트이름>") 그대로다 — 이 경로가
-    임의 형식을 새로 만들지 않는지 오케스트레이터 파서로 직접 확인한다."""
-    from orchestrator.handoff import parse_handoff
+def test_guides_user_back_to_chat_for_legal_succession() -> None:
+    """직접 핸드오프 대신, 채팅으로 돌아가 다시 물어보라고 안내한다."""
+    reply = _no_will_output().reply
 
-    output = _no_will_output()
-
-    assert parse_handoff(output.next_action) == AgentName.HEIR_NAVIGATOR
+    assert no_will_guidance()["chat_return_notice"] in reply
+    assert "처음 화면에서 다시 문의해 주세요" in reply
 
 
 def test_no_will_state_is_persisted_to_session_namespace() -> None:

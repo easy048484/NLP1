@@ -41,6 +41,7 @@ from typing import Any, Optional
 from schemas import AgentInput, AgentName, AgentOutput
 
 from .date_parser import parse_dates
+from .image_reader import PHOTO_FIELD_IDS, extract_will_photo_fields
 
 from .recording_checker import (
     FORMAL_RECORDING_REQUIREMENT_IDS,
@@ -50,6 +51,7 @@ from .recording_checker import (
 from .requirement_checker import (
     RequirementResult,
     check_requirements,
+    photo_confirm_templates,
     validate_confirm_answers,
 )
 from .result_formatter import (
@@ -61,6 +63,7 @@ from .result_formatter import (
     format_result,
     guide_payload,
     pending_questions,
+    progress,
     red_label,
 )
 from .state import STATE_KEY, DecedentState, dump_state, load_state
@@ -353,7 +356,8 @@ def _run_no_will_pipeline(state: DecedentState) -> AgentOutput:
       공증사무소에 보관되어 고인이 정본을 갖고 있지 않아도 존재할 수 있다.
     - **상속인 범위·지분·유류분은 여기서 답하지 않는다.** heir_navigator 영역이라
       침범하면 두 에이전트가 서로 다른 답을 할 위험이 있다. "법정상속 절차를
-      따릅니다"까지만 말하고 넘긴다.
+      따릅니다"까지만 말하고, 필요하면 채팅으로 돌아가 다시 물어보라고 안내한다
+      (아래 router 안내 참고).
     - CLAUDE.md 절대 원칙 2(무단정)를 그대로 적용한다 — "유언장이 없으니
       법정상속입니다" 같은 단정 대신 "확인된 유언장이 없는 경우 일반적으로 ~
       따릅니다" 패턴을 쓴다. 문구는 rules/will_types.json 의 no_will 에 있다.
@@ -365,13 +369,21 @@ def _run_no_will_pipeline(state: DecedentState) -> AgentOutput:
     `{}` ) will_type="none" 이 세션에서 사라지고, 나중에 다시 decedent_estate로
     라우팅되면(예: 사용자가 heir_navigator 대화 중 "유언장" 키워드를 다시 언급) 방식
     질문을 처음부터 다시 하게 되는 회귀가 있었다. _namespaced()로 감싸 다른 분기와
-    동일하게 상태를 남긴다.
+    동일하게 상태를 남긴다. (이 문단은 will_type="none" 세션 저장 관련 — 아래
+    next_action 제거와는 무관하니 건드리지 않는다.)
+
+    ⚠️ (2026-08-25) heir_navigator로의 직접 next_action 핸드오프를 제거했다.
+    웹 UI가 "로그인 후 채팅창에서 라우터가 적합한 에이전트를 선택"하는 구조로
+    확정되면서, #20에서 넣었던 handoff:heir_navigator 는 받는 쪽이 없어 막다른
+    길이었다 — 사용자는 채팅으로 돌아가 다시 말하면 라우터가 알아서 보낸다.
+    next_action은 이제 다른 안내 전용 분기(secret/oral)와 마찬가지로 None이다.
     """
     guidance = no_will_guidance()
 
     reply = "\n\n".join(
         [
             guidance["legal_succession_guidance"],
+            guidance["chat_return_notice"],
             guidance["notarial_notice"],
             *closing_lines(),
         ]
@@ -379,21 +391,12 @@ def _run_no_will_pipeline(state: DecedentState) -> AgentOutput:
 
     data: dict[str, Any] = {
         "will_type": _NO_WILL_TYPE,
-        "handoff_reason": guidance["handoff_reason"],
         "warnings": [],
     }
 
     return AgentOutput(
         agent=AgentName.DECEDENT_ESTATE,
         reply=reply,
-        # 포맷은 handoff.py 규약 2번("handoff:<에이전트이름>")으로 확립돼 있어
-        # notarial 분기와 같은 상수를 그대로 쓴다.
-        # TODO(팀 협의 대기): heir_navigator 쪽 실제 연결은 정민님 담당이다.
-        # 지금은 신호만 내보내는 스텁이라, 넘겨받은 heir_navigator 가 "유언장
-        # 없음"을 어떻게 초기 상태로 반영할지(예: will_exists="no" 슬롯 채우기)는
-        # 아직 합의되지 않았다. 합의되면 이 함수의 data 에 그 필드를 추가하면
-        # 되도록 핸드오프 관련 값을 여기 한곳에 모아 두었다.
-        next_action=NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR,
         data=_namespaced(state, data, will_type=_NO_WILL_TYPE, pending_questions=[]),
     )
 
@@ -430,6 +433,139 @@ def _guidance_only_output(
     )
 
 
+def _resolve_photo_intake(
+    payload: AgentInput, state: DecedentState
+) -> tuple[Optional[AgentOutput], str, DecedentState]:
+    """유언장 사진 판독 개입 지점 (설계 방침 A/B/E/F).
+
+    사진과 전혀 무관하면(이번 턴 이미지도 없고, 진행 중이던 판독도 없음)
+    (None, payload.user_message, state) 를 그대로 돌려줘 기존 텍스트 경로를
+    한 글자도 건드리지 않는다 — 회귀 없음.
+
+    반환:
+    - (AgentOutput, _, _): 아직 확인이 안 끝났다(또는 판독 실패). 이걸 그대로
+      반환하고 요건 판정 파이프라인은 이번 턴에 돌지 않는다.
+    - (None, text, state): 사진이 없었거나, 확인까지 전부 끝났다. text 를
+      기존 check_requirements() 에 그대로 넘기면 된다 — 판독값을
+      "유언자: OOO" 같은 텍스트로 재구성해 payload.user_message 앞에
+      붙인 것뿐이라, requirement_checker.py 는 한 줄도 몰라도 된다(방침 A).
+      state 는 seal_answer 가 채워졌을 수 있고, photo_draft/
+      photo_confirm_answers 는 소비되어 비어 있다.
+
+    ⚠️ 원본 이미지(payload.image_base64)는 여기서 한 번 쓰이고 버려진다 —
+    state 어디에도 담기지 않는다(state.py 의 DecedentState 참고, 방침 B).
+    """
+    if payload.image_base64:
+        fields = (
+            extract_will_photo_fields(payload.image_base64, payload.image_media_type)
+            if payload.image_media_type
+            else None
+        )
+        if fields is None:
+            state = state.model_copy(
+                update={"photo_draft": {}, "photo_confirm_answers": {}}
+            )
+            reply = "사진을 판독하지 못했습니다. 유언장 내용을 직접 입력해 주세요."
+            return (
+                AgentOutput(
+                    agent=AgentName.DECEDENT_ESTATE,
+                    reply=reply,
+                    next_action=NEXT_ACTION_AWAIT_USER,
+                    data=_namespaced(state, {"warnings": []}),
+                ),
+                payload.user_message,
+                state,
+            )
+        state = state.model_copy(
+            update={"photo_draft": fields, "photo_confirm_answers": {}}
+        )
+
+    draft = state.photo_draft
+    if not draft:
+        return None, payload.user_message, state
+
+    templates_section = photo_confirm_templates()
+    templates = templates_section["fields"]
+    options = templates_section["options"]
+    answers = state.photo_confirm_answers
+
+    pending: list[dict[str, Any]] = []
+    for field_id in PHOTO_FIELD_IDS:
+        field_draft = draft.get(field_id) or {}
+        if field_draft.get("confidence") != "low" or field_id in answers:
+            continue
+        template = templates[field_id]
+        pending.append(
+            {
+                "requirement": template["requirement_name"],
+                "field": f"photo_confirm_answers.{field_id}",
+                "question": template["question_template"].format(
+                    value=field_draft.get("value")
+                ),
+                "options": options,
+            }
+        )
+
+    if pending:
+        reply = "사진에서 읽은 내용을 확인해 주세요.\n\n" + "\n".join(
+            f"- {q['question']}" for q in pending
+        )
+        return (
+            AgentOutput(
+                agent=AgentName.DECEDENT_ESTATE,
+                reply=reply,
+                next_action=NEXT_ACTION_AWAIT_USER,
+                data=_namespaced(
+                    state,
+                    {"pending_questions": pending, "warnings": []},
+                    pending_questions=pending,
+                ),
+            ),
+            payload.user_message,
+            state,
+        )
+
+    # 확인이 전부 끝났다 — 값을 확정하고 기존 파이프라인용 텍스트로 재구성한다.
+    lines: list[str] = []
+    seal_answer = state.seal_answer
+    for field_id in PHOTO_FIELD_IDS:
+        field_draft = draft.get(field_id) or {}
+        value = field_draft.get("value")
+        confidence = field_draft.get("confidence")
+        if confidence == "high":
+            accepted = value
+        elif confidence == "low":
+            accepted = value if answers.get(field_id) == "yes" else None
+        else:
+            accepted = None
+
+        if accepted is None:
+            continue
+        if field_id == "seal":
+            seal_answer = accepted
+        elif field_id == "name":
+            lines.append(f"유언자: {accepted}")
+        elif field_id == "address":
+            lines.append(f"주소: {accepted}")
+        elif field_id == "date":
+            lines.append(accepted)
+
+    reconstructed = "\n".join(lines)
+    text = (
+        f"{reconstructed}\n\n{payload.user_message}"
+        if payload.user_message
+        else reconstructed
+    )
+    resolved_state = state.model_copy(
+        update={
+            "photo_draft": {},
+            "photo_confirm_answers": {},
+            "seal_answer": seal_answer,
+        }
+    )
+    return None, text, resolved_state
+
+
 def _run_handwritten_pipeline(
     payload: AgentInput,
     state: DecedentState,
@@ -443,13 +579,21 @@ def _run_handwritten_pipeline(
     intent 는 _resolve_intent 가 정리한 "확정된" 값을 저장하기 위한 것이다 —
     클라이언트가 intent 를 아예 안 보냈을 때도 세션에는 review 로 남겨야
     "intent 미지정 == review" 가 다음 턴까지 그대로 유지된다.
+
+    사진이 있으면(payload.image_base64) _resolve_photo_intake 가 먼저
+    개입한다 — 확인이 안 끝났으면 여기서 조기 반환하고, 끝났으면 판독값이
+    반영된 text 로 아래 로직이 평소와 동일하게 돈다.
     """
+    photo_output, text, state = _resolve_photo_intake(payload, state)
+    if photo_output is not None:
+        return photo_output
+
     handwriting_answer = state.handwriting_answer
     seal_answer = state.seal_answer
     address_envelope_answer = state.address_envelope_answer
 
     results = check_requirements(
-        payload.user_message,
+        text,
         handwriting_answer=handwriting_answer,
         seal_answer=seal_answer,
         address_envelope_answer=address_envelope_answer,
@@ -466,6 +610,7 @@ def _run_handwritten_pipeline(
         "will_type": _HANDWRITTEN_WILL_TYPE,
         "requirements": requirements,
         "pending_questions": pending,
+        "progress": progress(results, _FORMAL_REQUIREMENT_IDS),
         # 화이트리스트에 없는 답변값이 와도 판정은 그대로 PENDING 유지(위 check_requirements
         # 호출과 동일 입력) — 여기서는 그 "조용한 무시"를 호출자가 알아채도록만 알려준다.
         "warnings": validate_confirm_answers(
@@ -521,6 +666,7 @@ def _run_recording_pipeline(
         "will_type": _RECORDING_WILL_TYPE,
         "requirements": requirements,
         "pending_questions": pending,
+        "progress": progress(results, FORMAL_RECORDING_REQUIREMENT_IDS),
         "warnings": validate_recording_confirm_answers(
             rec_witness_present_answer=rec_witness_present_answer,
             rec_witness_eligible_answer=rec_witness_eligible_answer,

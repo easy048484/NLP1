@@ -1,4 +1,5 @@
-import type { AgentInput, AgentOutput } from "../types";
+import type { AgentInput, ChatResponse } from "../types";
+import { authHeader } from "./auth";
 
 export const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8000";
@@ -7,7 +8,7 @@ export interface ChatCallResult {
   /** 실제로 서버에 전송한 요청 본문 (개발자 모드 JSON 뷰어용) */
   request: AgentInput;
   /** 서버가 돌려준 원본 응답. 실패 시 null */
-  response: AgentOutput | null;
+  response: ChatResponse | null;
   ok: boolean;
   status: number | null;
   errorMessage: string | null;
@@ -16,21 +17,24 @@ export interface ChatCallResult {
 
 /**
  * apps/api/main.py 의 POST /chat 을 호출합니다.
- * (AgentInput -> AgentOutput, apps/api/schemas/agent_io.py 참고)
+ * (AgentInput -> ChatResponse, apps/api/schemas/agent_io.py 참고)
  *
- * family_graph / family_graph_id는 이 프로토타입에서는 아직 다루지 않는
- * Phase 2(가족관계 그래프) 영역이라 보내지 않습니다 — 보내지 않으면
- * 오케스트레이터가 그대로 비워서 처리합니다 (orchestrator/router.py
- * node_build_context 참고).
+ * familyGraphId가 있으면 요청에 실어 보냅니다 — 오케스트레이터의
+ * node_build_context가 이 id로 family_graph를 자동 조회해서 채워주므로
+ * (family_graph_입력_플로우_계획_0823.md 1-1절), 프론트는 id만 들고
+ * 다니면 됩니다. localStorage에 저장된 id를 읽어 넘기는 건 호출부
+ * (App.tsx)의 책임입니다.
  */
 export async function sendChatMessage(
   sessionId: string,
   userMessage: string,
+  familyGraphId?: string | null,
 ): Promise<ChatCallResult> {
   const request: AgentInput = {
     session_id: sessionId,
     user_message: userMessage,
     context: {},
+    ...(familyGraphId ? { family_graph_id: familyGraphId } : {}),
   };
 
   const startedAt = performance.now();
@@ -38,7 +42,7 @@ export async function sendChatMessage(
   try {
     const res = await fetch(`${API_BASE_URL}/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeader() },
       body: JSON.stringify(request),
     });
 
@@ -69,7 +73,7 @@ export async function sendChatMessage(
 
     return {
       request,
-      response: json as AgentOutput,
+      response: json as ChatResponse,
       ok: true,
       status: res.status,
       errorMessage: null,

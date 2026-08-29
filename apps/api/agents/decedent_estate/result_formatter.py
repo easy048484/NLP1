@@ -30,6 +30,11 @@ precedent_id(_RED_REFERENCE_NOTES)는 카드가 아니라 들여쓴 참고 문�
 executor_not_disqualified). 이 참고 문구는 카드 인용(_precedent_citation)을
 거치지 않고 여기 문자열을 그대로 쓰므로, 근거가 판례인지 조문인지에 맞는
 표현을 문자열 자체에 담아야 한다.
+
+GREEN 항목에도 같은 패턴(_GREEN_REFERENCE_NOTES)이 있다 — 날인 GREEN(지장
+선택)의 fingerprint_identity_disputed_invalid: 무인 자체는 적법하므로 등급은
+GREEN을 유지하되, 무인이 본인 것인지가 다투어져 무효로 판단된 사례가 있다는
+참고 문구만 덧붙인다. RED 예외와 마찬가지로 카드 인용을 거치지 않는다.
 """
 
 from __future__ import annotations
@@ -124,6 +129,16 @@ _RED_REFERENCE_NOTES = {
     "executor_not_disqualified": "   ℹ️ 참고: 조문상 유언집행자는 증인 결격사유로 열거되어 있지 않습니다",
 }
 
+# GREEN 판정에 딸린 precedent_id 중 등급 자체는 바꾸지 않지만 별도 쟁점(본인
+# 확인 등)이 있음을 알려야 하는 것들 — RED와 동일한 패턴으로 카드가 아니라
+# 들여쓴 참고 문구로 보여준다.
+_GREEN_REFERENCE_NOTES = {
+    "fingerprint_identity_disputed_invalid": (
+        "   ℹ️ 참고: 무인이 고인 본인의 것임이 다투어지는 경우 유언증서가 무효로 "
+        "판단된 사례가 있습니다"
+    ),
+}
+
 # ---------------------------------------------------------------------------
 # §3-3 / §3-4 — 스펙 원문 그대로 (will_type 공통)
 # ---------------------------------------------------------------------------
@@ -202,6 +217,20 @@ def red_label(requirement_id: str) -> str:
     return requirement_id
 
 
+def term_note(requirement_id: str) -> Optional[str]:
+    """요건 id → 용어 설명 (rules/requirements.json 의 term_note 필드).
+
+    GREEN(충족)에는 붙이지 않는다 — 이미 확인된 요건에 "이게 뭔가요" 설명을
+    또 보여주는 건 불필요한 반복이다. RED/YELLOW(미충족·쟁점)에만
+    format_requirement_line 이 이 값을 붙인다.
+    """
+    rules = _load_rules()
+    for req in rules["requirements"]:
+        if req["id"] == requirement_id:
+            return req.get("term_note")
+    return None
+
+
 # GREEN 패턴의 "(+ 추출값 표시)" 부분에서 값을 어떻게 뽑아 보여줄지 요건 id별로 분기.
 _DATE_LIKE_REQUIREMENT_IDS = {"date", "rec_date"}
 _RAW_TEXT_DISPLAY_REQUIREMENT_IDS = {
@@ -237,7 +266,11 @@ def format_requirement_line(result: RequirementResult) -> Optional[str]:
     if result.grade == "GREEN":
         value = _extracted_display_value(result)
         suffix = f" ({value})" if value else ""
-        return f"✅ {name}: 기재 확인{suffix}"
+        lines = [f"✅ {name}: 기재 확인{suffix}"]
+        for precedent_id in result.precedent_ids:
+            if precedent_id in _GREEN_REFERENCE_NOTES:
+                lines.append(_GREEN_REFERENCE_NOTES[precedent_id])
+        return "\n".join(lines)
 
     if result.grade == "RED":
         label = red_label(result.requirement_id)
@@ -249,6 +282,9 @@ def format_requirement_line(result: RequirementResult) -> Optional[str]:
             card_line = _precedent_card_line(precedent_id)
             if card_line:
                 lines.append(card_line)
+        note = term_note(result.requirement_id)
+        if note:
+            lines.append(f"   ℹ️ {note}")
         return "\n".join(lines)
 
     if result.grade == "YELLOW":
@@ -257,6 +293,9 @@ def format_requirement_line(result: RequirementResult) -> Optional[str]:
             card_line = _precedent_card_line(precedent_id)
             if card_line:
                 lines.append(card_line)
+        note = term_note(result.requirement_id)
+        if note:
+            lines.append(f"   ℹ️ {note}")
         lines.append(_YELLOW_CTA)
         return "\n".join(lines)
 
@@ -435,6 +474,21 @@ def pending_questions(
             }
         )
     return questions
+
+
+def progress(
+    results: dict[str, RequirementResult],
+    formal_ids: tuple[str, ...] = _FORMAL_REQUIREMENT_IDS,
+) -> dict[str, int]:
+    """요약 진행률: formal_ids 중 PENDING이 아닌(=이미 확인된) 요건 수 / 전체 수.
+
+    interseal처럼 법정 요건이 아닌 항목(formal_ids 밖)은 세지 않는다 — 진행률은
+    "충족 여부를 따지는 요건"이 대상이지, 참고용 항목까지 포함하면 분모가
+    실제 판정 대상과 어긋난다. GREEN/RED/YELLOW는 전부 "확인됨"으로 센다 —
+    등급이 무엇이든 텍스트/사용자 답변으로 판정이 끝났다는 뜻이라서다.
+    """
+    checked = sum(1 for rid in formal_ids if results[rid].grade != "PENDING")
+    return {"checked": checked, "total": len(formal_ids)}
 
 
 def format_result(

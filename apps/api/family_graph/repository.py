@@ -26,9 +26,57 @@ from .models import FamilyGraph, FamilyMember, RelationType
 logger = logging.getLogger(__name__)
 
 
-def create_family_graph(db: Session) -> FamilyGraph:
-    graph = FamilyGraph()
+def create_family_graph(db: Session, *, user_id: Optional[str] = None) -> FamilyGraph:
+    graph = FamilyGraph(user_id=user_id)
     db.add(graph)
+    db.flush()
+    return graph
+
+
+def get_latest_for_user(db: Session, user_id: str) -> Optional[FamilyGraph]:
+    """이 사용자가 소유한 가족관계 그래프 중 가장 최근 것.
+
+    MVP에서는 한 사용자가 그래프 하나만 쓰는 것을 전제로 하지만, 과거에
+    익명으로 만든 그래프를 로그인 후 연결하는 흐름 등에서 여러 개가 생길 수
+    있어 "가장 최근 생성분"을 돌려줍니다.
+    """
+    stmt = (
+        select(FamilyGraph)
+        .where(FamilyGraph.user_id == user_id)
+        .order_by(FamilyGraph.created_at.desc())
+        .limit(1)
+    )
+    return db.scalar(stmt)
+
+
+def user_can_access(graph: FamilyGraph, user_id: Optional[str]) -> bool:
+    """요청자가 이 그래프를 조회·수정할 수 있는지.
+
+    - user_id가 NULL인 그래프: 누구나(id를 아는 사람) 접근 — 기존
+      capability-token 모델 유지(테스트·레거시).
+    - user_id가 채워진 그래프: 그 사용자 본인만.
+    """
+    if graph.user_id is None:
+        return True
+    return graph.user_id == user_id
+
+
+def claim_family_graph(
+    db: Session, family_graph_id: str, user_id: str
+) -> Optional[FamilyGraph]:
+    """소유자가 없는(user_id IS NULL) 그래프를 이 사용자 것으로 연결합니다.
+
+    로그인 전 익명으로 시작해 가족관계를 입력한 사용자가 나중에 가입/로그인
+    했을 때, 그 그래프를 계정에 붙이는 용도입니다. 이미 다른 사람 소유면
+    None(연결 불가), 대상이 없어도 None.
+    """
+    graph = db.get(FamilyGraph, family_graph_id)
+    if graph is None:
+        return None
+    if graph.user_id is not None and graph.user_id != user_id:
+        return None
+    graph.user_id = user_id
+    touch_family_graph(db, family_graph_id)
     db.flush()
     return graph
 
@@ -77,6 +125,66 @@ def list_members(db: Session, family_graph_id: str) -> list[FamilyMember]:
         .order_by(FamilyMember.created_at)
     )
     return list(db.scalars(stmt))
+
+
+def get_member(
+    db: Session, family_graph_id: str, member_id: int
+) -> Optional[FamilyMember]:
+    """구성원을 조회하되, 그 family_graph_id 소속이 아니면 못 찾은 것으로 취급합니다.
+
+    member_id(자동증가 정수)만으로 조회하면 다른 family_graph의 구성원을
+    실수로/악의적으로 수정·삭제할 수 있으므로, 두 값이 같이 맞아야만
+    돌려줍니다.
+    """
+    member = db.get(FamilyMember, member_id)
+    if member is None or member.family_graph_id != family_graph_id:
+        return None
+    return member
+
+
+def update_member(
+    db: Session,
+    family_graph_id: str,
+    member_id: int,
+    *,
+    name: Optional[str] = None,
+    relation: Optional[RelationType | str] = None,
+    is_alive: Optional[bool] = None,
+    is_minor: Optional[bool] = None,
+) -> Optional[FamilyMember]:
+    """구성원의 일부 필드만 갱신합니다. None인 필드는 건드리지 않습니다.
+
+    대상이 없으면(다른 family_graph 소속 포함) None을 돌려줘서, 라우터가
+    404로 응답할 수 있게 합니다.
+    """
+    member = get_member(db, family_graph_id, member_id)
+    if member is None:
+        return None
+
+    if name is not None:
+        member.name = name
+    if relation is not None:
+        member.relation = RelationType(relation)
+    if is_alive is not None:
+        member.is_alive = is_alive
+    if is_minor is not None:
+        member.is_minor = is_minor
+
+    touch_family_graph(db, family_graph_id)
+    db.flush()
+    return member
+
+
+def delete_member(db: Session, family_graph_id: str, member_id: int) -> bool:
+    """구성원을 삭제합니다. 실제로 지웠으면 True, 대상이 없었으면 False."""
+    member = get_member(db, family_graph_id, member_id)
+    if member is None:
+        return False
+
+    db.delete(member)
+    touch_family_graph(db, family_graph_id)
+    db.flush()
+    return True
 
 
 def member_to_heir_dict(member: FamilyMember) -> dict[str, Any]:

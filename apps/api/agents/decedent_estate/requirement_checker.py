@@ -41,7 +41,20 @@ from .masking import mask_text
 _RULES_PATH = Path(__file__).parent / "rules" / "requirements.json"
 
 _ADDRESS_UNIT_RE = re.compile(
-    r"\d+(?:-\d+)?\s*번지|\d+\s*동\s*\d+\s*호|\d+\s*호(?=[\s,)\.]|$)"
+    r"\d+(?:-\d+)?\s*번지"
+    r"|\d+\s*동\s*\d+\s*호"
+    r"|\d+\s*호(?=[\s,)\.]|$)"
+    # 도로명주소: "OO로/OO대로 123", "판교로 256번길 12"(간선로+번길+건물번호),
+    # "테헤란로 123-4"(부번). 번지 표기와 달리 "번지" 같은 리터럴 단어가 없어
+    # 별도 대안이 필요하다 (2026-08-26, 사진 판독 검증 중 발견 — 도로명주소가
+    # 전부 city_district_only(RED)로 오판정되고 있었다).
+    r"|[가-힣]+(?:로|길)\s*(?:\d+\s*번길\s*)?\d+(?:-\d+)?(?=[\s,)\.]|$)"
+    # 라벨(번지) 없는 지번: "역삼동 123-45", "우동 1234". "동/읍/면/리로 끝나는
+    # 토큰 바로 뒤의 숫자"로 문맥을 제한해 유언 내용의 금액·수량(예: "5000만원",
+    # "3개월")과 섞이지 않게 한다 — 숫자 뒤에 공백/쉼표/마침표/문자열 끝이 와야
+    # 매칭되므로, 한국어에서 숫자에 조사 없이 바로 붙는 단위 표현("15년",
+    # "3개월")은 걸리지 않는다.
+    r"|[가-힣]+(?:동|읍|면|리)\s*\d+(?:-\d+)?(?=[\s,)\.]|$)"
 )
 _ADDRESS_DISTRICT_RE = re.compile(
     r"[가-힣]{2,8}(?:특별시|광역시|특별자치시|특별자치도|도|시)?\s+[가-힣]{2,6}(?:구|군|시|읍|면)"
@@ -92,6 +105,16 @@ _CONFIRM_FIELD_ALLOWED_VALUES = {
 def _load_rules() -> dict[str, Any]:
     with _RULES_PATH.open(encoding="utf-8") as f:
         return json.load(f)
+
+
+def photo_confirm_templates() -> dict[str, Any]:
+    """rules/requirements.json 의 photo_confirm_templates 섹션을 그대로 돌려준다.
+
+    사진 판독(image_reader.py) 1단계 전용 동적 확인 질문 템플릿 — 기존
+    requirements[].followup 과 무관한 별도 최상위 키다. agent.py 가 이 값을
+    받아 question_template 의 {value} 자리에 판독값을 끼워 넣는다.
+    """
+    return _load_rules()["photo_confirm_templates"]
 
 
 def _find_requirement(rules: dict[str, Any], requirement_id: str) -> dict[str, Any]:

@@ -17,6 +17,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Optional
 
 from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -47,6 +48,17 @@ class FamilyGraph(Base):
     __tablename__ = "family_graphs"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid4_hex)
+    #: 이 가족관계를 소유한 사용자(auth.models.User). NULL이면 계정에 묶이지
+    #: 않은 그래프입니다 — 인증 도입 이전에 만들어진 데이터, 또는 테스트에서
+    #: 계정 없이 만든 경우. NULL인 그래프는 id(capability token)만으로 접근할
+    #: 수 있고, user_id가 채워진 그래프는 그 사용자만 조회·수정할 수 있습니다
+    #: (family_graph/router.py, repository.user_can_access).
+    user_id: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )
