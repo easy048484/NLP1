@@ -626,6 +626,12 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
             item = state["pending_amounts"].pop(0)
             _append_resolved_pending_item(state, item, bare_amount)
             resolved_via_bare_amount = True
+        elif _is_negative_answer(message) and not re.search(r"\d", message):
+            # "없어요"/"모르겠어요" — 그 항목은 '보유 안 함'으로 보고 대기에서 뺀다.
+            # ("주식 없어요"처럼 유형 키워드가 섞여 있어도, 숫자가 없고 순수
+            #  부정이면 되묻기 루프에 빠지지 않게 여기서 소비한다.)
+            state["pending_amounts"].pop(0)
+            resolved_via_bare_amount = True
 
     if not resolved_via_bare_amount:
         asset_result = extractor.extract_financial_slots(message)

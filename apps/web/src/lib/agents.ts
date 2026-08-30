@@ -59,12 +59,23 @@ export const AGENTS: Record<AgentName, AgentMeta> = {
   },
   asset_organizer: {
     name: "asset_organizer",
-    label: "생전 자산 정리",
-    shortLabel: "자산 정리",
-    description: "예금·보험·부동산·연금을 정리하고 은퇴자금 갭을 추정해요",
+    label: "상속재산 정리",
+    shortLabel: "재산 정리",
+    description: "예금·보험·부동산·부채를 정리하고, 안심상속 조회 결과도 읽어요",
     colorVar: "--agent-asset",
     bgVar: "--agent-asset-bg",
     emoji: "🗂️",
+  },
+  // 데모 비핵심. 백엔드가 "은퇴/노후/연금" 발화에 라우팅할 수 있어 메타만 둔다.
+  // AGENT_LIST(=FunctionRail)에는 넣지 않는다.
+  retirement_planner: {
+    name: "retirement_planner",
+    label: "은퇴자금 설계",
+    shortLabel: "은퇴 설계",
+    description: "은퇴 시점까지 필요한 자금과 준비 자금의 갭을 추정해요",
+    colorVar: "--agent-asset",
+    bgVar: "--agent-asset-bg",
+    emoji: "📈",
   },
 };
 

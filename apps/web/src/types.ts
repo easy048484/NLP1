@@ -16,7 +16,9 @@ export type AgentName =
   | "heir_share_analyzer"
   | "decedent_estate"
   | "tax_calculator"
-  | "asset_organizer";
+  | "asset_organizer"
+  // 데모 비핵심 — 백엔드엔 라우팅 가능하나 FunctionRail·데모 시나리오엔 안 뜸.
+  | "retirement_planner";
 
 /** 상담 축 — 온보딩 "상담 구분"에서 정하고 오케스트레이터 classify 힌트로 전달. */
 export type ConsultAxis = "pre_need" | "post_death";
