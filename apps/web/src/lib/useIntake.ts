@@ -1,7 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   addFamilyMember,
-  createFamilyGraph,
+  ensureFamilyGraph,
   getFamilyGraph,
   updateFamilyMember,
 } from "./familyGraph";
@@ -22,7 +22,6 @@ import {
 import {
   getIntakeAnswers,
   getIntakeProgress,
-  setFamilyGraphId as persistFamilyGraphId,
   setIntakeAnswers as persistIntakeAnswers,
   setIntakeProgress,
   clearIntakeAnswers,
@@ -80,6 +79,8 @@ export function useIntake({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [graphId, setGraphId] = useState<string | null>(familyGraphId);
+  //: ensureGraphId 가 이번 세션에 서버 존재를 한 번이라도 확인했는지.
+  const graphVerified = useRef(false);
 
   const persist = (next: IntakeAnswers) => {
     setAnswers(next);
@@ -100,15 +101,19 @@ export function useIntake({
   };
 
   const ensureGraphId = useCallback(async (): Promise<string | null> => {
-    if (graphId) return graphId;
-    const res = await createFamilyGraph();
+    if (graphId && graphVerified.current) return graphId;
+    // 저장된 id 를 서버에서 검증(없으면 새로 생성). 배포 시 DB 재생성 등으로
+    // 저장된 id 가 죽었을 때 "family_graph를 찾을 수 없습니다" 404 로 막히던 것 방지.
+    const res = await ensureFamilyGraph();
     if (!res.ok || !res.data) {
       setError(res.errorMessage ?? "가족 구성원 정보를 저장하지 못했어요.");
       return null;
     }
-    persistFamilyGraphId(res.data.id);
-    setGraphId(res.data.id);
-    onFamilyGraphIdChange(res.data.id);
+    graphVerified.current = true;
+    if (res.data.id !== graphId) {
+      setGraphId(res.data.id);
+      onFamilyGraphIdChange(res.data.id);
+    }
     return res.data.id;
   }, [graphId, onFamilyGraphIdChange]);
 
@@ -133,10 +138,10 @@ export function useIntake({
   };
 
   const answerChildrenCount = async (count: number) => {
-    const gid = graphId ?? (await ensureGraphId());
-    if (!gid) return;
     setBusy(true);
     setError(null);
+    const gid = await ensureGraphId();
+    if (!gid) return setBusy(false);
     const ids: number[] = [];
     for (const member of buildChildMembers(count)) {
       const res = await addFamilyMember(gid, member);
@@ -159,12 +164,13 @@ export function useIntake({
   };
 
   const answerChildrenMinor = async (minorCount: number) => {
-    if (!graphId) return;
     setBusy(true);
     setError(null);
+    const gid = await ensureGraphId();
+    if (!gid) return setBusy(false);
     let ids = childMemberIds;
     if (ids.length === 0) {
-      const res = await getFamilyGraph(graphId);
+      const res = await getFamilyGraph(gid);
       if (!res.ok || !res.data) {
         setError(res.errorMessage ?? "자녀 정보를 불러오지 못했어요.");
         return setBusy(false);
@@ -173,7 +179,7 @@ export function useIntake({
       setChildMemberIds(ids);
     }
     for (const memberId of ids.slice(0, minorCount)) {
-      const res = await updateFamilyMember(graphId, memberId, { is_minor: true });
+      const res = await updateFamilyMember(gid, memberId, { is_minor: true });
       if (!res.ok) {
         setError(res.errorMessage ?? "미성년 여부를 저장하지 못했어요.");
         return setBusy(false);
@@ -188,11 +194,12 @@ export function useIntake({
   };
 
   const answerParents = async (value: boolean) => {
-    if (!graphId) return;
     setBusy(true);
     setError(null);
+    const gid = await ensureGraphId();
+    if (!gid) return setBusy(false);
     if (value) {
-      const res = await addFamilyMember(graphId, buildParentMember());
+      const res = await addFamilyMember(gid, buildParentMember());
       if (!res.ok) {
         setError(res.errorMessage ?? "부모님 정보를 저장하지 못했어요.");
         return setBusy(false);

@@ -6,6 +6,11 @@ import type {
 } from "../types";
 import { API_BASE_URL } from "./api";
 import { authHeader } from "./auth";
+import {
+  clearFamilyGraphId,
+  getFamilyGraphId,
+  setFamilyGraphId as persistFamilyGraphId,
+} from "./familyGraphStorage";
 
 /**
  * apps/api/family_graph/router.py 의 REST API를 호출하는 클라이언트입니다.
@@ -64,6 +69,31 @@ async function request<T>(
 /** POST /family-graph — 새 가족관계 그래프를 만듭니다. */
 export function createFamilyGraph(): Promise<FamilyGraphCallResult<FamilyGraphOut>> {
   return request<FamilyGraphOut>("/family-graph", { method: "POST" });
+}
+
+/**
+ * 지금 쓸 수 있는 가족관계 그래프를 확보합니다.
+ * - localStorage 에 id 가 있고 서버에도 아직 있으면 그 그래프를 그대로 반환.
+ * - id 가 없거나, 서버에서 사라졌으면(배포 시 DB 재생성·만료 배치 등 → 404)
+ *   저장된 id 를 지우고 새로 만들어 반환. 새 id 는 localStorage 에 반영됨.
+ *
+ * "family_graph를 찾을 수 없습니다" 404 로 인테이크가 막히던 문제의 근본 해결.
+ */
+export async function ensureFamilyGraph(): Promise<
+  FamilyGraphCallResult<FamilyGraphOut>
+> {
+  const stored = getFamilyGraphId();
+  if (stored) {
+    const existing = await getFamilyGraph(stored);
+    if (existing.ok && existing.data) return existing;
+    // 404 = 서버에서 사라진 id → 지우고 새로 만든다.
+    // 그 외(503·네트워크 등 일시적 오류)는 id 를 지우지 않고 그 오류를 그대로 올린다.
+    if (existing.status !== 404) return existing;
+    clearFamilyGraphId();
+  }
+  const created = await createFamilyGraph();
+  if (created.ok && created.data) persistFamilyGraphId(created.data.id);
+  return created;
 }
 
 /** GET /family-graph/{id} — 현재 구성원 목록을 조회합니다. */

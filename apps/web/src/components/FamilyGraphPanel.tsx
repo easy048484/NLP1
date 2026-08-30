@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import {
   addFamilyMember,
-  createFamilyGraph,
   deleteFamilyMember,
+  ensureFamilyGraph,
   getFamilyGraph,
   updateFamilyMember,
 } from "../lib/familyGraph";
-import { setFamilyGraphId as persistFamilyGraphId } from "../lib/familyGraphStorage";
+import { clearFamilyGraphId } from "../lib/familyGraphStorage";
 import { RELATION_LABELS, RELATION_OPTIONS } from "../lib/relations";
 import type { FamilyGraphOut, FamilyMemberOut, RelationType } from "../types";
 import { Button, Dialog } from "./ui";
@@ -75,6 +75,11 @@ export function FamilyGraphPanel({
       if (res.ok && res.data) {
         setMembers(res.data.members);
         onGraphChange(res.data);
+      } else if (res.status === 404) {
+        // 저장된 id 가 서버에서 사라짐 → 조용히 비우고 새로 추가할 때 새 그래프 생성.
+        clearFamilyGraphId();
+        onGraphChange(null);
+        setMembers([]);
       } else {
         setError(res.errorMessage ?? "가족 구성원 정보를 불러오지 못했어요.");
         setMembers([]);
@@ -128,18 +133,15 @@ export function FamilyGraphPanel({
   const handleAdd = async () => {
     setAddingMember(true);
     setError(null);
-    let graphId = familyGraphId;
-    if (!graphId) {
-      const created = await createFamilyGraph();
-      if (!created.ok || !created.data) {
-        setError(created.errorMessage ?? "가족 구성원 정보를 저장하지 못했어요.");
-        setAddingMember(false);
-        return;
-      }
-      graphId = created.data.id;
-      persistFamilyGraphId(graphId);
-      onFamilyGraphIdChange(graphId);
+    // 저장된 id 를 서버에서 검증(없으면 새로 생성) — 죽은 id 로 인한 404 방지.
+    const ensured = await ensureFamilyGraph();
+    if (!ensured.ok || !ensured.data) {
+      setError(ensured.errorMessage ?? "가족 구성원 정보를 저장하지 못했어요.");
+      setAddingMember(false);
+      return;
     }
+    const graphId = ensured.data.id;
+    if (graphId !== familyGraphId) onFamilyGraphIdChange(graphId);
     const res = await addFamilyMember(graphId, {
       name: newName.trim() || RELATION_LABELS[newRelation],
       relation: newRelation,
