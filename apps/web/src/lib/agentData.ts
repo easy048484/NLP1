@@ -120,6 +120,11 @@ export function parsePendingQuestions(
   return out.length ? out : null;
 }
 
+/** 이 data 에 후속 질문(선택지)이 들어있는지. */
+export function hasPendingQuestions(data: Record<string, unknown>): boolean {
+  return (parsePendingQuestions(data) ?? []).length > 0;
+}
+
 export function parseTaxResult(data: Record<string, unknown>): TaxResult | null {
   const raw =
     deepFind(data, "last_result") ?? deepFind(data, "tax_result") ?? deepFind(data, "result");

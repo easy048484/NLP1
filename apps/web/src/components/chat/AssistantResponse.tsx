@@ -1,6 +1,7 @@
 import { agentMeta } from "../../lib/agents";
 import { Markdown } from "../../lib/markdown";
 import type { ChatResponse } from "../../types";
+import { hasPendingQuestions } from "../../lib/agentData";
 import { AgentAvatar, NeedsReviewBadge } from "../ui";
 import { AgentCards } from "./AgentCards";
 
@@ -13,6 +14,9 @@ import { AgentCards } from "./AgentCards";
  */
 export function AssistantResponse({ response }: { response: ChatResponse }) {
   const agents = dedupeAgents(response);
+  const followups = response.contributions.filter((c) =>
+    hasPendingQuestions(c.data ?? {}),
+  );
 
   return (
     <div className="assistant-response">
@@ -41,12 +45,21 @@ export function AssistantResponse({ response }: { response: ChatResponse }) {
       )}
 
       {response.contributions.map((c, i) => (
-        <AgentCards
-          key={`${c.agent}-${i}`}
-          contribution={c}
-          topLevelPlan={c.agent === "heir_navigator" ? response.plan : null}
-        />
+        <AgentCards key={`${c.agent}-${i}`} contribution={c} mode="results" />
       ))}
+
+      {followups.length > 0 && (
+        <div className="followup-block">
+          <p className="followup-head">몇 가지만 더 확인할게요</p>
+          {followups.map((c, i) => (
+            <AgentCards
+              key={`fq-${c.agent}-${i}`}
+              contribution={c}
+              mode="questions"
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
