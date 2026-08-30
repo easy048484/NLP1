@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode, type Ref } from "react";
 import { useApp, type Turn } from "../../lib/appState";
 import { useDevMode } from "../AppShell";
 import { AssistantResponse } from "./AssistantResponse";
@@ -12,17 +12,16 @@ export function MessageList({ children }: { children?: ReactNode }) {
 
   const lastTurn = turns[turns.length - 1];
   useEffect(() => {
-    const scroller = scrollRef.current;
-    if (!scroller) return;
-    // 사용자가 방금 보냈으면 맨 아래로(내 말풍선 보이게), 에이전트 답변이
-    // 도착했으면 그 답변의 '윗부분'이 화면 상단에 오도록 — 긴 답변에서
-    // 끝만 보이는 걸 막는다.
+    // 새 답변이 오면 그 답변의 첫머리가 보이도록, 그 외에는 맨 아래로.
     if (lastTurn?.role === "assistant" && lastRowRef.current) {
       lastRowRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     } else {
-      scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+      scrollRef.current?.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: "smooth",
+      });
     }
-  }, [turns.length, loading, lastTurn?.role]);
+  }, [turns, loading, lastTurn?.role]);
 
   return (
     <div className="chat-scroll" ref={scrollRef}>
@@ -65,7 +64,7 @@ function MessageRow({
 }: {
   turn: Turn;
   devMode: boolean;
-  rowRef?: React.Ref<HTMLDivElement>;
+  rowRef?: Ref<HTMLDivElement>;
 }) {
   if (turn.role === "user") {
     return (
@@ -73,7 +72,6 @@ function MessageRow({
         <div className="user-note">
           <span className="user-note-tag">나</span>
           {turn.text}
-          {turn.hasImage && <span className="user-note-img">🖼️ 사진</span>}
         </div>
       </div>
     );

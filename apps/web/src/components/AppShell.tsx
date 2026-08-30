@@ -10,6 +10,7 @@ import { useFamilyGraphSync } from "../lib/useFamilyGraph";
 import { AppHeader } from "./AppHeader";
 import { ContextPanel } from "./ContextPanel";
 import { FamilyGraphPanel } from "./FamilyGraphPanel";
+import { SchedulePanel } from "./SchedulePanel";
 import { Disclaimer } from "./ui";
 
 const DevModeContext = createContext(false);
@@ -34,7 +35,7 @@ function readTheme(): AppTheme {
  * 상담 앱 전용 스킨(금색 · 어두운/밝은 두 버전)을 data-app-theme 로 토글.
  */
 export function AppShell({ children }: { children: ReactNode }) {
-  const { familyGraphId, setFamilyGraphId, setFamilyGraph } = useApp();
+  const { familyGraphId, setFamilyGraphId, setFamilyGraph, plan } = useApp();
   const [devMode, setDevMode] = useState(false);
   const [familyPanelOpen, setFamilyPanelOpen] = useState(false);
   const [panelExpanded, setPanelExpanded] = useState(false);
@@ -63,7 +64,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         />
 
-        <div className="app-body">
+        <div className={`app-body${plan ? " has-schedule" : ""}`}>
           <button
             type="button"
             className="context-panel-toggle"
@@ -73,13 +74,19 @@ export function AppShell({ children }: { children: ReactNode }) {
             준비 현황 {panelExpanded ? "접기 ▲" : "펼치기 ▼"}
           </button>
 
-          <div className={`context-panel-wrap${panelExpanded ? " expanded" : ""}`}>
-            <ContextPanel onEditFamily={() => setFamilyPanelOpen(true)} />
-          </div>
+          {plan && (
+            <div className="schedule-panel-wrap">
+              <SchedulePanel />
+            </div>
+          )}
 
           <main id="main" className="app-main">
             {children}
           </main>
+
+          <div className={`context-panel-wrap${panelExpanded ? " expanded" : ""}`}>
+            <ContextPanel onEditFamily={() => setFamilyPanelOpen(true)} />
+          </div>
         </div>
 
         <Disclaimer variant="global" />
