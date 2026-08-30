@@ -397,6 +397,28 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* 상담 화면은 글자를 살짝 줄여 한 화면에 더 담는다 (셸 기본 1.08 → 0.96). */
+  --font-scale: 0.96;
+  --leading-body: 1.65;
+}
+
+/* 대화가 시작되면 상단 기능 영역을 접어 메시지에 세로 공간을 넘긴다. */
+.fn-rail-head.compact {
+  padding: var(--sp-3) var(--sp-6) var(--sp-2);
+}
+.fn-rail-head.compact h1,
+.fn-rail-head.compact .fn-rail-lede {
+  display: none;
+}
+.fn-rail-head.compact .fn-tile {
+  min-height: 0;
+  padding: var(--sp-2) var(--sp-3);
+}
+.fn-rail-head.compact .fn-tile-blurb {
+  display: none;
+}
+.fn-rail-head.compact .fn-rail {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
 }
 
 /* ---- 상단 기능 영역 ---- */
@@ -515,7 +537,9 @@
 /* ---- message list ---- */
 .chat-scroll {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--sp-5);
 }
 .chat-log {
@@ -679,6 +703,49 @@
 .composer-send {
   flex-shrink: 0;
 }
+.composer-attach {
+  flex-shrink: 0;
+  min-width: var(--control-min);
+  min-height: var(--control-min);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-page);
+  font-size: 1.1rem;
+}
+.composer-attach:hover:not(:disabled) {
+  border-color: var(--brand-navy);
+}
+.composer-attach:disabled {
+  opacity: 0.5;
+}
+.composer-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  max-width: 760px;
+  margin: 0 auto var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-caption);
+  color: var(--ink-muted);
+}
+.composer-attachment-x {
+  color: var(--ink-faint);
+  font-size: 0.8rem;
+}
+.composer-img-error {
+  max-width: 760px;
+  margin: 0 auto var(--sp-2);
+  font-size: var(--text-caption);
+  color: var(--danger, #b4232a);
+}
+.user-note-img {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--ink-faint);
+  margin-left: var(--sp-2);
+}
 
 /* ---- institution wizard ---- */
 .inst-wizard {
@@ -706,12 +773,17 @@
   font-weight: 700;
   font-size: var(--text-sm);
 }
-.inst-note {
+.inst-note,
+.inst-amount {
   min-height: 44px;
   padding: 0 var(--sp-3);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   font-size: var(--text-caption);
+}
+.inst-amount {
+  border-color: var(--brand-navy);
+  font-size: var(--text-sm);
 }
 .inst-example {
   font-size: var(--text-caption);

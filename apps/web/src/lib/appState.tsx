@@ -33,6 +33,8 @@ export interface Turn {
   role: "user" | "assistant";
   /** user 턴의 텍스트 */
   text?: string;
+  /** user 턴에 사진을 첨부했는지 (원본 base64 는 보관하지 않는다) */
+  hasImage?: boolean;
   /** assistant 턴의 합성 응답 */
   response?: ChatResponse;
   isError?: boolean;
@@ -68,7 +70,13 @@ interface AppStateValue {
 
   turns: Turn[];
   loading: boolean;
-  send: (text: string, extraContext?: Record<string, unknown>) => Promise<void>;
+  send: (
+    text: string,
+    opts?: {
+      context?: Record<string, unknown>;
+      image?: { base64: string; mediaType: string };
+    },
+  ) => Promise<void>;
 
   /** 최근 응답에서 뽑은 컨텍스트 패널용 상태 */
   plan: AgentPlan | null;
@@ -150,15 +158,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const send = useCallback(
-    async (rawText: string, extraContext?: Record<string, unknown>) => {
+    async (
+      rawText: string,
+      opts?: {
+        context?: Record<string, unknown>;
+        image?: { base64: string; mediaType: string };
+      },
+    ) => {
       const text = rawText.trim();
-      if (!text || loading) return;
+      if ((!text && !opts?.image) || loading) return;
+      const message = text || "사진을 올렸어요";
 
-      setTurns((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text }]);
+      setTurns((prev) => [
+        ...prev,
+        {
+          id: `u-${Date.now()}`,
+          role: "user",
+          text: message,
+          hasImage: !!opts?.image,
+        },
+      ]);
       setLoading(true);
 
-      const result = await sendChatMessage(sessionId, text, {
-        context: extraContext,
+      const result = await sendChatMessage(sessionId, message, {
+        context: opts?.context,
+        image: opts?.image,
         familyGraphId: fgRef.current,
         axis: axisRef.current,
       });
