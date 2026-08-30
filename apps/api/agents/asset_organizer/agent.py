@@ -43,7 +43,14 @@ STATE_KEY = AgentName.ASSET_ORGANIZER.value
 
 #: "기타"는 catch-all이라 콕 집어 되묻지 않는다 — 특정 유형 없이 뭉뚱그려
 #: 말한 항목을 담는 그릇일 뿐, 빠짐을 확인할 대상이 아니다.
-_ASSET_CATEGORIES: tuple[str, ...] = ("예금", "주식", "펀드", "부동산")
+_ASSET_CATEGORIES: tuple[str, ...] = (
+    "예금",
+    "주식",
+    "펀드",
+    "부동산",
+    "자동차",
+    "퇴직연금",
+)
 _LIABILITY_CATEGORY = "부채"
 _INSURANCE_CATEGORY = "보험"
 _ALL_CATEGORIES: tuple[str, ...] = (

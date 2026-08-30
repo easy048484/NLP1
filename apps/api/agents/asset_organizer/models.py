@@ -16,7 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-AssetType = Literal["예금", "주식", "펀드", "부동산", "기타"]
+AssetType = Literal["예금", "주식", "펀드", "부동산", "자동차", "퇴직연금", "기타"]
 IncomeType = Literal["국민연금", "개인연금", "기타"]
 LiabilityType = str
 
@@ -29,7 +29,7 @@ class Asset(BaseModel):
     value: int = Field(ge=0, description="평가액 (원)")
     liquid: bool | None = Field(
         default=None,
-        description="None이면 유형별 기본값 적용 (부동산=False, 그 외=True)",
+        description="None이면 유형별 기본값 적용 (부동산·자동차·퇴직연금=False, 그 외=True)",
     )
     return_rate: float | None = Field(
         default=None,

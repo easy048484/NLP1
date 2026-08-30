@@ -36,7 +36,7 @@ from .models import Asset, AssetType, IncomeStream, InsuranceTag, Liability
 #: extractor가 실제로 알아보는 부채 유형. models.Liability.type은
 #: tax_calculator 등 다른 소비자를 고려해 plain str로 열려 있지만, 여기서는
 #: 정규식 키워드 사전의 키를 좁혀두기 위한 로컬 타입일 뿐이다.
-_LiabilityLabel = Literal["대출", "카드론", "전세자금대출"]
+_LiabilityLabel = Literal["대출", "카드론", "전세자금대출", "임대보증금반환채무"]
 
 _MODEL = "claude-haiku-4-5-20251001"
 _TIMEOUT_SECONDS = 8.0
@@ -51,7 +51,7 @@ _SYSTEM_PROMPT = (
     "반드시 아래 JSON 형식으로만 답하라. 코드블록이나 다른 설명을 절대 덧붙이지 "
     "마라.\n"
     "{\n"
-    '  "assets": [{"type": "예금|주식|펀드|부동산|기타", "value": 원단위 정수}],\n'
+    '  "assets": [{"type": "예금|주식|펀드|부동산|자동차|퇴직연금|기타", "value": 원단위 정수}],\n'
     '  "incomes": [{"type": "국민연금|개인연금|기타", "monthly": 원단위 정수, '
     '"start_age": 정수}],\n'
     '  "insurance": [{"value": 원단위 정수 또는 null}],\n'
@@ -112,6 +112,8 @@ _ASSET_KEYWORDS: dict[AssetType, tuple[str, ...]] = {
     "주식": ("주식",),
     "펀드": ("펀드",),
     "부동산": ("집", "아파트", "주택", "부동산", "건물"),
+    "자동차": ("자동차", "차량"),
+    "퇴직연금": ("퇴직연금",),
 }
 _INSURANCE_KEYWORDS = ("보험",)
 # 마침표는 소수점과 구분해야 해서 숫자 사이 마침표는 분리 대상에서 뺀다("3.5억" 보존).
@@ -190,6 +192,7 @@ _LIABILITY_KEYWORDS: dict[_LiabilityLabel, tuple[str, ...]] = {
     "대출": ("대출", "융자", "빚"),
     "카드론": ("카드론",),
     "전세자금대출": ("전세자금대출", "전세대출"),
+    "임대보증금반환채무": ("임대보증금", "보증금반환", "보증금 반환"),
 }
 
 
@@ -437,8 +440,8 @@ _IMAGE_SYSTEM_PROMPT = (
     "덧붙이지 마라.\n"
     "{\n"
     '  "unreadable": true 또는 false,\n'
-    '  "assets": [{"type": "예금|주식|펀드|부동산|기타", "value": 원단위 정수}],\n'
-    '  "liabilities": [{"type": "대출|카드론|전세자금대출|기타", '
+    '  "assets": [{"type": "예금|주식|펀드|부동산|자동차|퇴직연금|기타", "value": 원단위 정수}],\n'
+    '  "liabilities": [{"type": "대출|카드론|전세자금대출|임대보증금반환채무|기타", '
     '"remaining_balance": 원단위 정수}],\n'
     '  "insurance": [{"value": 원단위 정수 또는 null}],\n'
     '  "unclear": ["무엇을 확인하지 못했는지에 대한 짧은 설명(개인정보 제외)"]\n'
@@ -457,7 +460,7 @@ IMAGE_UNREADABLE_MISSING: dict[str, Any] = {
 #: 이미지 판독이 liability type으로 내놓을 수 있는 값의 전부 — extract_
 #: liabilities()의 정규식 경로(_LiabilityLabel)와 동일한 화이트리스트에
 #: "기타"만 더한 것(자산 쪽 _VALID_ASSET_TYPES와 같은 catch-all 관례).
-#: 프롬프트가 이 4개만 쓰라고 지시하지만, 모델이 그 지시를 무시하고
+#: 프롬프트가 이 5개만 쓰라고 지시하지만, 모델이 그 지시를 무시하고
 #: "국민은행 대출(계좌 110-xxx, 홍길동)"처럼 계좌번호·이름이 섞인 문자열을
 #: 채워 보내는 경우를 대비해 여기서 한 번 더 막는다(수집 최소화 원칙,
 #: 4-6절) — 화이트리스트 밖 값은 원문(오염 가능성 있는 문자열)만 버리고
@@ -465,7 +468,16 @@ IMAGE_UNREADABLE_MISSING: dict[str, Any] = {
 #: 재무 상태에서 사라져 순자산이 실제보다 좋아 보이게 왜곡된다 — PII를
 #:막으려다 반대 방향으로 더 위험한 실수를 하는 셈이라, "기타"(이미 검증된
 #: 정상 카테고리라 새로 추측하는 게 아님)로 보존한다.
-_VALID_LIABILITY_TYPES = ("대출", "카드론", "전세자금대출", "기타")
+#: ⚠️ 자산 쪽 _VALID_ASSET_TYPES와 달리 이 튜플은 _LIABILITY_KEYWORDS.keys()에서
+#: 자동 파생되지 않는다 — 부채 유형을 추가할 때는 _LiabilityLabel/
+#: _LIABILITY_KEYWORDS와 함께 이 튜플도 수동으로 갱신해야 한다.
+_VALID_LIABILITY_TYPES = (
+    "대출",
+    "카드론",
+    "전세자금대출",
+    "임대보증금반환채무",
+    "기타",
+)
 
 
 def _apply_llm_liabilities(

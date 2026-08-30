@@ -26,6 +26,40 @@ def test_real_estate_explicit_liquid_override_respected():
     assert engine_profile.assets[0].liquid is True
 
 
+def test_vehicle_defaults_to_non_liquid():
+    """감가상각되고 즉시 현금화하기 어려운 자산이라 부동산과 같은 이유로
+    기본 비유동 처리한다."""
+    profile = FinancialProfile(
+        current_age=60,
+        monthly_expense=2_000_000,
+        assets=[Asset(type="자동차", value=30_000_000)],
+    )
+    engine_profile = to_engine_profile(profile)
+    assert engine_profile.assets[0].liquid is False
+
+
+def test_pension_defaults_to_non_liquid():
+    """중도 인출 시 불이익이 커 실질적으로 못 쓰는 돈인 경우가 많아 기본
+    비유동 처리한다."""
+    profile = FinancialProfile(
+        current_age=60,
+        monthly_expense=2_000_000,
+        assets=[Asset(type="퇴직연금", value=80_000_000)],
+    )
+    engine_profile = to_engine_profile(profile)
+    assert engine_profile.assets[0].liquid is False
+
+
+def test_vehicle_explicit_liquid_override_respected():
+    profile = FinancialProfile(
+        current_age=60,
+        monthly_expense=2_000_000,
+        assets=[Asset(type="자동차", value=30_000_000, liquid=True)],
+    )
+    engine_profile = to_engine_profile(profile)
+    assert engine_profile.assets[0].liquid is True
+
+
 def test_non_real_estate_defaults_to_liquid():
     profile = FinancialProfile(
         current_age=60,

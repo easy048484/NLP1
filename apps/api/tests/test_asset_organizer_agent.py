@@ -266,6 +266,62 @@ def test_parse_end_age_rejects_calendar_year_expression():
     assert agent._parse_end_age("2030년까지 갚아요", current_age=58) is None
 
 
+# ================================================ 자동차/퇴직연금/임대보증금반환채무
+
+
+def test_vehicle_and_pension_mentions_are_not_reasked_as_missing():
+    output = agent.run(
+        AgentInput(
+            session_id="v1", user_message="자동차 3천만원, 퇴직연금 8천만원 있어요"
+        )
+    )
+    state = output.data[STATE_KEY]
+
+    assert any(
+        a["type"] == "자동차" and a["value"] == 30_000_000 for a in state["assets"]
+    )
+    assert any(
+        a["type"] == "퇴직연금" and a["value"] == 80_000_000 for a in state["assets"]
+    )
+    assert "자동차" in state["checked_categories"]
+    assert "퇴직연금" in state["checked_categories"]
+    assert "자동차" not in output.reply and "퇴직연금" not in output.reply
+
+
+def test_lease_deposit_liability_recognized_under_debt_category_simple_mode():
+    """임대보증금반환채무는 새 카테고리가 아니라 기존 "부채" 카테고리 안에서
+    인식되어야 하고, monthly_payment가 없는 성격이라 자연히 단순 모드로
+    남아야 한다(정밀 모드 후속질문을 강제로 만들지 않음)."""
+    session_id = "v2"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="임대보증금 반환채무 2억 있어요")
+    ).data[STATE_KEY]
+
+    assert any(
+        liability["type"] == "임대보증금반환채무"
+        and liability["remaining_balance"] == 200_000_000
+        for liability in state["liabilities"]
+    )
+    assert "부채" in state["checked_categories"]
+    # 새 체크리스트 카테고리가 아니라 기존 "부채" 하나로 묶인다.
+    assert "임대보증금반환채무" not in agent._ALL_CATEGORIES
+
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    assert (
+        state["liability_followup_asked"] is True
+    )  # 기존 부채 이중 모드 로직 그대로 동작
+
+    # 이 유형은 보통 "월 상환액"이라는 개념이 없어 후속질문에 답을 못 하고
+    # 자연히 단순 모드(정밀 모드 강제 없음)로 남는다.
+    output = agent.run(_continue(session_id, "몰라요", state))
+    state2 = output.data[STATE_KEY]
+
+    assert state2["status"] == "done"
+    liability = state2["liabilities"][0]
+    assert liability["monthly_payment"] is None
+    assert liability["end_age"] is None
+
+
 # ============================================================ 보험 카테고리
 
 
@@ -290,7 +346,8 @@ def test_insurance_is_the_only_remaining_category_gets_asked_specifically():
     output = agent.run(
         _continue(
             session_id,
-            "주식 5천만원, 펀드 1천만원, 부동산 5억, 대출 3천만원 있어요",
+            "주식 5천만원, 펀드 1천만원, 부동산 5억, 자동차 3천만원, "
+            "퇴직연금 8천만원, 대출 3천만원 있어요",
             state,
         )
     )
@@ -301,6 +358,8 @@ def test_insurance_is_the_only_remaining_category_gets_asked_specifically():
         "주식",
         "펀드",
         "부동산",
+        "자동차",
+        "퇴직연금",
         "부채",
     }
     assert output.reply == (

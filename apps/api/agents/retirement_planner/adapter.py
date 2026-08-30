@@ -23,8 +23,20 @@ _ASSET_TYPE_MAP: dict[str, str] = {
     "주식": "stock",
     "펀드": "fund",
     "부동산": "real_estate",
+    "자동차": "vehicle",
+    # 나중에 필요해지면: 수령 시작 나이가 되면 자산에서 소득 흐름(incomes)으로
+    # 전환하는 로직을 추가할 수 있다 — 이번 범위는 아니며, 지금은 그냥
+    # 비유동 자산 하나로만 잡아서 목록·순자산 계산에 반영한다.
+    "퇴직연금": "pension",
     "기타": "other",
 }
+
+#: 명시적 liquid override가 없을 때 기본 비유동으로 처리하는 kind들.
+#: 부동산(즉시 현금화 어려움)에 자동차(감가상각·즉시 현금화 어려움)와
+#: 퇴직연금(중도 인출 시 불이익이 커 실질적으로 못 쓰는 돈인 경우가 많음)을
+#: 같은 이유로 추가했다 — 노후자금 계산에서 "실제보다 좋아 보이는" 쪽으로
+#: 왜곡되지 않게 안전한 방향(제외)을 기본값으로 둔다.
+_ILLIQUID_BY_DEFAULT_KINDS = frozenset({"real_estate", "vehicle", "pension"})
 
 _INCOME_TYPE_MAP: dict[str, str] = {
     "국민연금": "national_pension",
@@ -36,11 +48,11 @@ _INCOME_TYPE_MAP: dict[str, str] = {
 def _to_engine_asset(asset: ExtAsset) -> EngineAsset:
     kind = _ASSET_TYPE_MAP[asset.type]
 
-    # 확정 사항: 부동산은 기본 유동화 불가. 명시적 override만 예외.
+    # 확정 사항: 부동산·자동차·퇴직연금은 기본 유동화 불가. 명시적 override만 예외.
     if asset.liquid is not None:
         liquid = asset.liquid
     else:
-        liquid = kind != "real_estate"
+        liquid = kind not in _ILLIQUID_BY_DEFAULT_KINDS
 
     return EngineAsset(
         kind=kind,  # type: ignore[arg-type]

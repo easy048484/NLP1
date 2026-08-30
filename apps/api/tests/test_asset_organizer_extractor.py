@@ -348,6 +348,35 @@ def test_extract_from_image_liability_type_with_pii_is_kept_as_gita_not_dropped(
     assert normal.type == "대출"
 
 
+def test_extract_from_image_lease_deposit_liability_type_passes_whitelist(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """_VALID_LIABILITY_TYPES는 자산 쪽과 달리 수동으로 유지되는 튜플이라,
+    새 부채 유형을 추가할 때 이 목록을 빠뜨리면 정상 값까지 "기타"로
+    뭉개진다 — 그렇게 되지 않았는지 회귀로 고정해둔다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "unreadable": False,
+                "assets": [],
+                "liabilities": [
+                    {"type": "임대보증금반환채무", "remaining_balance": 200_000_000}
+                ],
+                "unclear": [],
+            }
+        ),
+    )
+
+    result, liabilities, liability_missing = extractor.extract_from_image(
+        "base64-image-data", "image/png"
+    )
+
+    assert liability_missing == []
+    assert liabilities[0].type == "임대보증금반환채무"
+    assert liabilities[0].remaining_balance == 200_000_000
+
+
 def test_llm_fallback_asset_type_with_pii_is_kept_as_gita_not_dropped(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -378,6 +407,39 @@ def test_llm_fallback_asset_type_with_pii_is_kept_as_gita_not_dropped(
     assert result.assets[0].type == "기타"
     assert result.assets[0].value == 30_000_000
     assert not any("계좌" in a.type for a in result.assets)
+
+
+def test_vehicle_and_pension_recognized_by_regex_without_llm_fallback():
+    """자동차/퇴직연금은 키워드 사전에 있으니 LLM 폴백 없이 정규식만으로
+    확정돼야 한다 — API 키가 없어도(delenv) 성공해야 함을 확인한다."""
+    result = extractor.extract_financial_slots(
+        "자동차 3천만원, 퇴직연금 8천만원 있어요"
+    )
+
+    assert result.status == "ok"
+    assert any(a.type == "자동차" and a.value == 30_000_000 for a in result.assets)
+    assert any(a.type == "퇴직연금" and a.value == 80_000_000 for a in result.assets)
+
+
+def test_lease_deposit_liability_recognized_by_regex():
+    liabilities, missing = extractor.extract_liabilities(
+        "임대보증금 반환채무 2억 있어요"
+    )
+
+    assert any(
+        liability.type == "임대보증금반환채무"
+        and liability.remaining_balance == 200_000_000
+        for liability in liabilities
+    )
+    assert missing == []
+
+
+def test_new_asset_types_are_automatically_covered_by_pii_whitelist():
+    """_VALID_ASSET_TYPES는 _ASSET_KEYWORDS.keys()에서 자동 파생되므로,
+    새 자산 유형을 키워드 사전에 추가하기만 하면 별도 코드 수정 없이
+    화이트리스트 방어(LLM payload 검증)에도 자동으로 포함돼야 한다."""
+    assert "자동차" in extractor._VALID_ASSET_TYPES
+    assert "퇴직연금" in extractor._VALID_ASSET_TYPES
 
 
 def test_llm_fallback_income_type_outside_whitelist_is_kept_as_gita_not_dropped(
