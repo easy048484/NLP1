@@ -17,6 +17,10 @@ develop의 공유 schemas.FinancialProfile(flat 집계)에서 두 가지를 읽�
    바로 말을 건 경우) real_estate_value/financial_assets/other_assets/
    total_debts 같은 flat 합계만으로 단순화된 자산·부채 1건씩을 합성한다
    (부동산은 이때도 기본 비유동 처리 — _synthesize_assets_from_flat 참고).
+   같은 extra 안의 "incomes"는 퇴직연금을 연금형으로 받기로 확인됐을
+   때만 asset_organizer가 채워두는 소득 흐름이다 — flat 집계엔 대응
+   필드가 없어 itemized 데이터가 없으면 합성할 방법도 없으므로 그냥
+   빈 목록으로 둔다(_build_engine_input 참고).
 """
 
 from __future__ import annotations
@@ -169,6 +173,7 @@ def _build_engine_input(state: dict[str, Any], shared: SharedProfile | None):
     ) or {}
     raw_assets = extra_asset_organizer.get("assets")
     raw_liabilities = extra_asset_organizer.get("liabilities")
+    raw_incomes = extra_asset_organizer.get("incomes")
 
     if raw_assets is not None:
         assets = [models.Asset(**a) for a in raw_assets]
@@ -184,11 +189,21 @@ def _build_engine_input(state: dict[str, Any], shared: SharedProfile | None):
     else:
         liabilities = []
 
+    # flat 집계엔 소득 정보를 담을 자리가 없어 itemized 데이터가 없을 때
+    # 합성할 방법이 없다 — 없으면 그냥 빈 목록(퇴직연금을 연금형으로
+    # 받기로 확인된 적이 없다는 뜻이라 소득 흐름 자체가 없는 게 맞다).
+    incomes = (
+        [models.IncomeStream(**income) for income in raw_incomes]
+        if raw_incomes is not None
+        else []
+    )
+
     return models.FinancialProfile(
         current_age=state["current_age"],
         monthly_expense=state["monthly_expense"],
         assets=assets,
         liabilities=liabilities,
+        incomes=incomes,
     )
 
 

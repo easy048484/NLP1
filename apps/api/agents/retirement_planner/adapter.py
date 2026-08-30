@@ -24,9 +24,6 @@ _ASSET_TYPE_MAP: dict[str, str] = {
     "펀드": "fund",
     "부동산": "real_estate",
     "자동차": "vehicle",
-    # 나중에 필요해지면: 수령 시작 나이가 되면 자산에서 소득 흐름(incomes)으로
-    # 전환하는 로직을 추가할 수 있다 — 이번 범위는 아니며, 지금은 그냥
-    # 비유동 자산 하나로만 잡아서 목록·순자산 계산에 반영한다.
     "퇴직연금": "pension",
     "기타": "other",
 }
@@ -41,6 +38,10 @@ _ILLIQUID_BY_DEFAULT_KINDS = frozenset({"real_estate", "vehicle", "pension"})
 _INCOME_TYPE_MAP: dict[str, str] = {
     "국민연금": "national_pension",
     "개인연금": "private_pension",
+    # asset_organizer가 퇴직연금 수령 방식 후속질문에서 연금형으로 확인된
+    # 경우에만 만드는 소득 흐름 — 자산 목록의 퇴직연금 원금(liquid=False)과는
+    # 겹치지 않는다(잔액 계산엔 원금이 애초에 안 들어감, engine.py 참고).
+    "퇴직연금": "retirement_pension",
     "기타": "other",
 }
 

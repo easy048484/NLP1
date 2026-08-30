@@ -143,6 +143,72 @@ def test_synthesizes_from_flat_aggregate_when_no_itemized_extra():
     assert liability.end_age is None
 
 
+def test_pension_income_from_extra_is_wired_into_engine_profile():
+    """asset_organizer가 퇴직연금을 연금형으로 전환해 extra["asset_organizer"]
+    ["incomes"]에 남긴 IncomeStream이 그대로 엔진 입력으로 재구성돼야
+    한다 — retirement_pension kind로 매핑되고, 자산 목록의 퇴직연금
+    원금(itemized)도 그대로 유지된다."""
+    shared = FinancialProfile(
+        current_age=60,
+        monthly_expense=1_000_000,
+        extra={
+            "asset_organizer": {
+                "assets": [
+                    {
+                        "type": "퇴직연금",
+                        "value": 500_000_000,
+                        "liquid": None,
+                        "return_rate": None,
+                    },
+                ],
+                "liabilities": [],
+                "incomes": [
+                    {
+                        "type": "퇴직연금",
+                        "monthly": 2_000_000,
+                        "start_age": 65,
+                        "end_age": None,
+                    }
+                ],
+            }
+        },
+    )
+    profile = agent._build_engine_input(
+        {"current_age": 60, "monthly_expense": 1_000_000}, shared
+    )
+
+    assert len(profile.incomes) == 1
+    income = profile.incomes[0]
+    assert income.type == "퇴직연금"
+    assert income.monthly == 2_000_000
+    assert income.start_age == 65
+    assert income.end_age is None
+
+    pension_asset = next(a for a in profile.assets if a.type == "퇴직연금")
+    assert pension_asset.value == 500_000_000  # 원금은 그대로 유지(정보 손실 없음)
+
+
+def test_no_incomes_key_in_extra_synthesizes_empty_income_list():
+    """asset_organizer가 애초에 퇴직연금을 연금형으로 전환한 적이 없으면
+    extra에 "incomes" 자체가 없다 — flat 집계엔 소득을 담을 자리가 없어
+    합성할 방법도 없으므로 빈 목록이어야 한다(조용히 추측해 채우지 않음)."""
+    shared = FinancialProfile(
+        current_age=60,
+        monthly_expense=1_000_000,
+        extra={
+            "asset_organizer": {
+                "assets": [],
+                "liabilities": [],
+            }
+        },
+    )
+    profile = agent._build_engine_input(
+        {"current_age": 60, "monthly_expense": 1_000_000}, shared
+    )
+
+    assert profile.incomes == []
+
+
 def test_flat_fallback_does_not_reclassify_financial_vs_other_assets():
     """asset_organizer를 거치지 않고 flat 집계만 온 경우(financial_assets가
     이미 0으로 주어진 임의의 입력) — 이 폴백 함수는 financial_assets/

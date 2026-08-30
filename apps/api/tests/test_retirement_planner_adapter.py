@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from agents.retirement_planner.adapter import to_engine_profile
-from agents.retirement_planner.models import Asset, FinancialProfile, Liability
+from agents.retirement_planner.models import (
+    Asset,
+    FinancialProfile,
+    IncomeStream,
+    Liability,
+)
 
 
 def test_real_estate_defaults_to_non_liquid():
@@ -78,6 +83,45 @@ def test_missing_return_rate_maps_to_zero():
     )
     engine_profile = to_engine_profile(profile)
     assert engine_profile.assets[0].nominal_return == 0.0
+
+
+def test_pension_income_maps_to_retirement_pension_kind():
+    """국민연금/개인연금과 구분되는 별도 kind("retirement_pension")로
+    매핑돼야 engine.py가 (kind는 안 쓰지만) 향후 구분이 필요해질 때
+    국민연금/개인연금과 섞이지 않는다."""
+    profile = FinancialProfile(
+        current_age=60,
+        monthly_expense=2_000_000,
+        incomes=[
+            IncomeStream(type="퇴직연금", monthly=2_000_000, start_age=65),
+        ],
+    )
+    engine_profile = to_engine_profile(profile)
+
+    assert engine_profile.incomes[0].kind == "retirement_pension"
+    assert engine_profile.incomes[0].monthly_amount == 2_000_000
+    assert engine_profile.incomes[0].start_age == 65
+    assert engine_profile.incomes[0].end_age is None
+
+
+def test_pension_principal_excluded_from_liquid_balance_even_with_income():
+    """퇴직연금이 연금형으로 전환돼 incomes에도 들어가지만, 자산 목록의
+    퇴직연금 원금은 liquid=False라 유동자산 합계(엔진이 인출 대상으로
+    보는 잔액)에는 애초에 포함되지 않는다 — 원금과 소득 흐름이 이중으로
+    반영되지 않는다는 것을 직접 확인한다."""
+    profile = FinancialProfile(
+        current_age=60,
+        monthly_expense=2_000_000,
+        assets=[Asset(type="퇴직연금", value=500_000_000)],
+        incomes=[
+            IncomeStream(type="퇴직연금", monthly=2_000_000, start_age=65),
+        ],
+    )
+    engine_profile = to_engine_profile(profile)
+
+    liquid_balance = sum(a.value for a in engine_profile.assets if a.liquid)
+    assert liquid_balance == 0  # 퇴직연금 원금 5억이 잔액 계산에 안 들어감
+    assert engine_profile.assets[0].value == 500_000_000  # 자산 자체는 그대로 보존
 
 
 def test_liability_fields_pass_through_unchanged():

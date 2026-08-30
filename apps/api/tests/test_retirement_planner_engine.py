@@ -207,6 +207,49 @@ def test_multiple_liabilities_apply_modes_independently():
     assert balances[61] - balances[62] == 12_000_000
 
 
+# ======================================================= 퇴직연금 소득 전환
+
+
+def test_pension_principal_excluded_but_income_kicks_in_from_start_age():
+    """퇴직연금 원금(liquid=False)은 유동자산 잔액 계산에 전혀 기여하지
+    않고(이중 계산 방지), 연금형 전환으로 생긴 소득만 start_age부터
+    반영돼야 한다."""
+    profile = _profile(
+        current_age=60,
+        monthly_expense=1_000_000,
+        assets=[
+            EngineAsset(
+                kind="deposit", value=50_000_000, liquid=True, nominal_return=0.0
+            ),
+            EngineAsset(
+                kind="pension", value=500_000_000, liquid=False, nominal_return=0.0
+            ),
+        ],
+        incomes=[
+            EngineIncome(
+                kind="retirement_pension",
+                monthly_amount=2_000_000,
+                start_age=65,
+                end_age=None,
+            )
+        ],
+        assumptions=EngineAssumptions(inflation=0.0),
+    )
+    result = simulate(profile, target_age=66)
+    balances = dict(result.yearly_balances)
+
+    # 시작 잔액은 유동자산 5천만원뿐 — 퇴직연금 원금 5억은 전혀 반영 안 됨.
+    assert balances[60] == 38_000_000  # 50M - 12M(생활비)
+    assert balances[63] == 2_000_000
+    assert result.depletion_age == 64  # start_age(65) 전에 유동자산만으로 고갈
+    assert balances[64] == 0
+
+    # start_age(65)부터 소득(연 2400만원)이 생활비(연 1200만원)를 초과해
+    # 고갈 이후에도 잔액이 회복·증가한다 — 소득이 실제로 반영된다는 증거.
+    assert balances[65] == 12_000_000
+    assert balances[66] == 24_000_000
+
+
 def test_precise_mode_end_age_beyond_target_age_keeps_payment_throughout():
     """end_age가 target_age보다 늦으면 시뮬레이션 구간 전체에서 상환액이
     계속 반영되고, target_age를 넘는 나이는 애초에 계산되지 않는다."""

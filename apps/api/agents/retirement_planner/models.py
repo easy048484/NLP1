@@ -21,7 +21,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 AssetType = Literal["예금", "주식", "펀드", "부동산", "자동차", "퇴직연금", "기타"]
-IncomeType = Literal["국민연금", "개인연금", "기타"]
+IncomeType = Literal["국민연금", "개인연금", "퇴직연금", "기타"]
 
 
 class Asset(BaseModel):

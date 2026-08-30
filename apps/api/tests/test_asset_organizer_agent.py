@@ -241,7 +241,10 @@ def test_other_and_vehicle_and_pension_classified_as_other_assets():
             user_message="자동차 3천만원, 퇴직연금 8천만원 있어요",
         )
     ).data[STATE_KEY]
-    output = agent.run(_continue(session_id, "없어요", state))
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    assert state["pension_followup_asked"] is True  # 퇴직연금이 있어 후속질문
+
+    output = agent.run(_continue(session_id, "일시금으로 받을게요", state))
 
     assert output.financial_profile.other_assets == 110_000_000
     assert output.financial_profile.financial_assets == 0
@@ -332,6 +335,163 @@ def test_ambiguous_followup_answer_falls_back_to_simple_mode_without_loop():
 
 def test_parse_end_age_rejects_calendar_year_expression():
     assert agent._parse_end_age("2030년까지 갚아요", current_age=58) is None
+
+
+# =============================================== 퇴직연금 수령 방식 후속질문
+
+
+def test_pension_followup_asked_once_when_pension_asset_present():
+    session_id = "pen1"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="퇴직연금 8천만원 있어요")
+    ).data[STATE_KEY]
+    output = agent.run(_continue(session_id, "없어요", state))
+
+    assert output.data[STATE_KEY]["pension_followup_asked"] is True
+    assert "일시금" in output.reply and "연금" in output.reply
+
+
+def test_pension_annuity_with_absolute_start_age_creates_income_stream():
+    """정밀 모드: 연금형 의사 + 절대 나이 표현 + 월액이 모두 확인되면
+    IncomeStream을 만들고, 자산 목록의 퇴직연금 원금은 그대로 유지된다
+    (정보 손실 없음)."""
+    session_id = "pen2"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="퇴직연금 8천만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    assert state["pension_followup_asked"] is True
+
+    output = agent.run(
+        _continue(session_id, "연금으로 65살부터 월 100만원씩 받을 거예요", state)
+    )
+    state2 = output.data[STATE_KEY]
+
+    assert state2["incomes"] == [
+        {"type": "퇴직연금", "monthly": 1_000_000, "start_age": 65, "end_age": None}
+    ]
+    assert any(
+        a["type"] == "퇴직연금" and a["value"] == 80_000_000 for a in state2["assets"]
+    )
+    assert state2["status"] == "done"
+
+    extra = output.financial_profile.extra["asset_organizer"]
+    assert extra["incomes"] == state2["incomes"]
+
+
+def test_pension_annuity_with_relative_start_age_uses_shared_current_age():
+    """상대 나이 표현("3년 뒤")은 부채 정밀 모드와 동일하게 공유
+    financial_profile.current_age를 기준으로 절대 나이로 변환된다."""
+    session_id = "pen3"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="퇴직연금 8천만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+
+    output = agent.run(
+        _continue(
+            session_id,
+            "연금으로 3년 뒤부터 월 80만원씩 받을 것 같아요",
+            state,
+            financial_profile=FinancialProfile(current_age=62),
+        )
+    )
+    state2 = output.data[STATE_KEY]
+
+    assert state2["incomes"] == [
+        {"type": "퇴직연금", "monthly": 800_000, "start_age": 65, "end_age": None}
+    ]
+
+
+def test_pension_relative_start_age_without_shared_current_age_skips_conversion():
+    """부채 정밀 모드와 동일하게, current_age를 아직 모르면 상대 나이
+    표현은 추측하지 않고 포기한다 — 이 경우 소득 전환도 안 된다."""
+    session_id = "pen4"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="퇴직연금 8천만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+
+    output = agent.run(
+        _continue(session_id, "연금으로 3년 뒤부터 월 80만원씩 받을 거예요", state)
+    )
+    state2 = output.data[STATE_KEY]
+
+    assert state2["incomes"] == []
+    assert state2["status"] == "done"  # 재질문 없이 단순 모드로 진행
+
+
+def test_pension_lump_sum_answer_skips_income_conversion():
+    """단순 모드: 일시금이면 소득 전환 없이 기존처럼 비유동 자산으로만
+    남고, 재질문 없이 바로 다음 단계로 진행된다."""
+    session_id = "pen5"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="퇴직연금 8천만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+
+    output = agent.run(_continue(session_id, "일시금으로 받을 거예요", state))
+    state2 = output.data[STATE_KEY]
+
+    assert state2["incomes"] == []
+    assert state2["status"] == "done"
+    assert any(
+        a["type"] == "퇴직연금" and a["value"] == 80_000_000 for a in state2["assets"]
+    )
+
+
+def test_pension_dont_know_answer_skips_income_conversion_without_reasking():
+    """단순 모드: "몰라요"처럼 연금/일시금 의사 자체가 안 드러나면 소득
+    전환 없이 바로 진행된다 — 재질문하지 않는다."""
+    session_id = "pen6"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="퇴직연금 8천만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+
+    output = agent.run(_continue(session_id, "몰라요", state))
+    state2 = output.data[STATE_KEY]
+
+    assert state2["incomes"] == []
+    assert state2["status"] == "done"
+
+
+def test_pension_annuity_intent_without_amount_or_age_still_skips_conversion():
+    """연금형 의사는 밝혔지만 시작 나이·월액을 둘 다 안 알려주면(부분
+    정보만으로는 정밀 모드로 못 감) 소득 전환 없이 단순 모드로 남는다 —
+    재질문하지 않는다(부채 정밀 모드의 "몰라요"/"나중에요" 처리와 동일)."""
+    session_id = "pen7"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="퇴직연금 8천만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+
+    output = agent.run(
+        _continue(
+            session_id,
+            "연금으로 받고 싶긴 한데 아직 잘 모르겠어요",
+            state,
+            financial_profile=FinancialProfile(current_age=60),
+        )
+    )
+    state2 = output.data[STATE_KEY]
+
+    assert state2["incomes"] == []
+    assert state2["status"] == "done"
+
+
+def test_no_pension_asset_skips_followup_entirely():
+    """퇴직연금 자산이 아예 없으면 후속질문 자체가 뜨지 않고 바로
+    마무리된다."""
+    session_id = "pen8"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 1억 있어요")
+    ).data[STATE_KEY]
+    output = agent.run(_continue(session_id, "없어요", state))
+    state2 = output.data[STATE_KEY]
+
+    assert state2["pension_followup_asked"] is False
+    assert state2["status"] == "done"
 
 
 # ================================================ 자동차/퇴직연금/임대보증금반환채무

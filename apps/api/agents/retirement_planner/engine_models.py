@@ -19,7 +19,9 @@ from pydantic import BaseModel, Field
 EngineAssetKind = Literal[
     "deposit", "stock", "fund", "real_estate", "vehicle", "pension", "other"
 ]
-EngineIncomeKind = Literal["national_pension", "private_pension", "other"]
+EngineIncomeKind = Literal[
+    "national_pension", "private_pension", "retirement_pension", "other"
+]
 
 
 class EngineAsset(BaseModel):

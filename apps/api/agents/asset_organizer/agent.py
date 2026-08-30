@@ -16,6 +16,11 @@ agents/retirement_planner/로 그대로 옮겼고, 이 파일에는 체크리스
 _merge_extraction 참고). 부채는 remaining_balance가 확인된 뒤,
 monthly_payment/end_age가 비어 있으면 한 번만(강제로 캐묻지 않고) 후속
 질문을 던진다 — 답을 안 하거나 애매하면 재질문 없이 단순 모드로 남긴다.
+퇴직연금도 완전히 같은 패턴으로, 확인되면 수령 방식을 한 번만 후속
+질문한다 — 연금형+시작나이+월액이 다 확인되면 자산은 그대로 두고
+추가로 IncomeStream을 만들어 시뮬레이션에 반영하고(정밀 모드), 아니면
+지금처럼 비유동 자산으로만 남긴다(단순 모드, _apply_pension_followup_answer
+참고).
 
 사용자가 텍스트 대신 이미지(은행 앱 잔액 화면, 안심상속 조회 결과 캡처
 등)를 올리면 extractor.extract_from_image()로 같은 체크리스트 흐름에
@@ -74,6 +79,16 @@ _IMAGE_UNREADABLE_REPLY = (
     "이미지가 잘 안 보이는데 다시 올려주시거나 말씀으로 알려주실 수 있을까요?"
 )
 
+#: 부채 정밀/단순 이중 모드와 완전히 같은 패턴(한 번만 묻고, 강제로 재질문
+#: 안 함, current_age 기준 상대 표현 해석 재사용)으로 퇴직연금 수령 방식을
+#: 확인한다 — _apply_pension_followup_answer() 참고.
+_PENSION_FOLLOWUP_QUESTION = (
+    "퇴직연금은 일시금으로 받으실 예정인가요, 아니면 연금으로 나눠 받으실 "
+    "예정인가요? 연금으로 받으실 경우 언제부터·월 얼마씩 받으실지 아시면 "
+    "같이 알려주세요. 모르셔도 괜찮아요."
+)
+_PENSION_ANNUITY_RE = re.compile(r"연금")
+
 _NEGATIVE_ANSWER_RE = re.compile(r"없|아니")
 
 # 부채 정밀 모드 후속질문 답변 해석용. "(?<!\d)...(?!\d)"로 앞뒤에 숫자가
@@ -116,10 +131,13 @@ def _empty_state() -> dict[str, Any]:
         "assets": [],
         "liabilities": [],
         "insurance": [],
+        "incomes": [],
         "checked_categories": [],
         "pending_categories": [],
         "pending_amounts": [],
         "liability_followup_asked": False,
+        "pension_followup_asked": False,
+        "pension_followup_resolved": False,
         "status": "collecting",
     }
 
@@ -315,6 +333,55 @@ def _apply_liability_followup_answer(
         target["end_age"] = end_age
 
 
+# ============================================================ 퇴직연금 소득 전환
+
+
+def _has_pension_asset(state: dict[str, Any]) -> bool:
+    return any(a["type"] == "퇴직연금" for a in state["assets"])
+
+
+def _wants_pension_annuity(message: str) -> bool:
+    return bool(_PENSION_ANNUITY_RE.search(message))
+
+
+def _parse_pension_start_age(message: str, current_age: int | None) -> int | None:
+    """퇴직연금 수령 시작 나이 파싱. 부채 정밀 모드의 _parse_end_age()와
+    나이 표현 해석 로직이 완전히 같다(절대 "OO살/세" 우선, 없으면
+    current_age 기준 상대 "N년" 변환, current_age 없으면 상대 표현 포기) —
+    "종료 나이"든 "시작 나이"든 나이 표현 자체를 해석하는 로직은 동일해서
+    새로 만들지 않고 그대로 재사용한다."""
+    return _parse_end_age(message, current_age)
+
+
+def _apply_pension_followup_answer(
+    state: dict[str, Any], message: str, current_age: int | None
+) -> None:
+    """퇴직연금 수령 방식 후속질문 답변을 해석한다. 부채 정밀 모드와 같은
+    원칙 — 연금형 의사 + 시작 나이 + 월 수령액이 전부 확인돼야 정밀 모드로
+    보고 IncomeStream을 만든다. 하나라도 못 알아들었으면(일시금, "몰라요",
+    무응답 등) 아무것도 만들지 않고 단순 모드(퇴직연금은 그대로 비유동
+    자산으로만 유지)로 남긴다 — 재질문하지 않는다. 자산 목록 자체는 이
+    함수가 건드리지 않으므로 정보 손실이 없다(_to_shared_profile 참고)."""
+    state["pension_followup_resolved"] = True
+
+    if not _wants_pension_annuity(message):
+        return
+
+    start_age = _parse_pension_start_age(message, current_age)
+    monthly_amount = extractor.parse_monthly_expense_answer(message)
+    if start_age is None or monthly_amount is None:
+        return
+
+    state["incomes"].append(
+        {
+            "type": "퇴직연금",
+            "monthly": monthly_amount,
+            "start_age": start_age,
+            "end_age": None,  # 국민연금과 동일 기본값 — 종신, 종료 나이는 안 물어봄
+        }
+    )
+
+
 def _format_summary(state: dict[str, Any]) -> str:
     lines = ["확정된 자산·부채 목록입니다."]
 
@@ -389,6 +456,13 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
        monthly_payment/end_age(2번)와 같은 방식으로 extra["asset_organizer"]
        ["insurance"]에 원본 그대로 보존한다. flat 필드만 보는 소비자에게는
        여전히 안 보이지만, 최소한 조회는 가능하다.
+    6. 퇴직연금을 연금형으로 받기로 확인되면(수령 방식 후속질문 참고)
+       생기는 IncomeStream도 flat 스키마에 대응 필드가 없다 — insurance와
+       같은 방식으로 extra["asset_organizer"]["incomes"]에 원본 그대로
+       보존한다. retirement_planner가 이 리스트를 읽어 시뮬레이션에
+       반영한다(assets에 남아 있는 퇴직연금 원금과는 이중 계산되지 않음 —
+       liquid=False라 잔액 계산엔 애초에 원금이 안 들어가고 소득 흐름만
+       추가되는 구조, adapter.py 참고).
 
     checked_categories에 있는 카테고리만 값을 채운다(전부는 아니어도
     최소 하나는 확인된 상태) — 아직 안 물어본 카테고리까지 0으로 채우면
@@ -425,6 +499,7 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
                 "assets": assets,
                 "liabilities": liabilities,
                 "insurance": insurance,
+                "incomes": state["incomes"],
             }
         },
     )
@@ -467,6 +542,10 @@ def _continue_after_categories(
     if not state["liability_followup_asked"] and _liabilities_needing_followup(state):
         state["liability_followup_asked"] = True
         return _output(state, _liability_followup_question(state))
+
+    if not state["pension_followup_asked"] and _has_pension_asset(state):
+        state["pension_followup_asked"] = True
+        return _output(state, _PENSION_FOLLOWUP_QUESTION)
 
     return _finalize(state)
 
@@ -519,6 +598,21 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
             else None
         )
         _apply_liability_followup_answer(state, message, current_age)
+        return _continue_after_categories(payload, state)
+
+    # 0-2) 퇴직연금 수령 방식 후속질문에 대한 답이면 그것부터 처리한다 —
+    #      0)과 완전히 같은 이유로 current_age를 공유 financial_profile에서
+    #      가져온다.
+    was_awaiting_pension_followup = (
+        state["pension_followup_asked"] and not state["pension_followup_resolved"]
+    )
+    if was_awaiting_pension_followup:
+        current_age = (
+            payload.financial_profile.current_age
+            if payload.financial_profile is not None
+            else None
+        )
+        _apply_pension_followup_answer(state, message, current_age)
         return _continue_after_categories(payload, state)
 
     had_pending_categories = bool(state["pending_categories"])
