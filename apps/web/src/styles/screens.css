@@ -397,9 +397,6 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  /* 상담 화면은 글자를 살짝 줄여 한 화면에 더 담는다 (셸 기본 1.08 → 0.96). */
-  --font-scale: 0.96;
-  --leading-body: 1.65;
 }
 
 /* 대화가 시작되면 상단 기능 영역을 접어 메시지에 세로 공간을 넘긴다. */
