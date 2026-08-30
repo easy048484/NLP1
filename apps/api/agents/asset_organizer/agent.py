@@ -136,6 +136,7 @@ def _empty_state() -> dict[str, Any]:
         "pending_categories": [],
         "pending_amounts": [],
         "liability_followup_asked": False,
+        "liability_followup_resolved": False,
         "pension_followup_asked": False,
         "pension_followup_resolved": False,
         "status": "collecting",
@@ -326,7 +327,18 @@ def _apply_liability_followup_answer(
     """후속질문 답변을 해석해 가장 먼저 대기 중인 부채 하나에만 반영한다
     (부채가 여러 개여도 뭉뚱그려 물어본 것이라 특정 부채를 가리키지 않는다).
     monthly_payment/end_age 둘 다 못 알아들었으면(예: "몰라요", "나중에요")
-    아무것도 채우지 않는다 — 재질문하지 않고 단순 모드로 남긴다."""
+    아무것도 채우지 않는다 — 재질문하지 않고 단순 모드로 남긴다.
+
+    ⚠️ 답을 받았으면(설령 "모름"이어도) 이 시점에 liability_followup_resolved를
+    반드시 True로 마킹한다 — 실측으로 발견된 버그: 이 플래그 없이
+    _liabilities_needing_followup(state)(부채 필드가 여전히 비어 있는지)만으로
+    "아직 답변 대기 중인지"를 판단하면, 단순 모드로 확정된 뒤에도(필드가
+    영구히 비어 있으므로) 그 조건이 계속 True로 남아 이후 모든 턴을 이
+    함수가 계속 가로챈다 — 그 결과 뒤에 대기 중인 다른 후속질문(퇴직연금
+    등)이 자기 차례를 영영 못 받는다. "재질문 금지" 원칙과 반대 방향
+    문제라, 답을 받은 시점에 명확히 종결 처리하는 게 핵심이다."""
+    state["liability_followup_resolved"] = True
+
     targets = _liabilities_needing_followup(state)
     if not targets:
         return
@@ -610,9 +622,14 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
     #    더 이상 이 에이전트가 직접 모으지 않고, develop의 공유
     #    financial_profile에서 온다(retirement_planner가 먼저 물어봤을 때만
     #    존재) — 없으면 절대 나이 표현만 해석하고 상대 표현은 포기한다.
-    was_awaiting_liability_followup = state[
-        "liability_followup_asked"
-    ] and _liabilities_needing_followup(state)
+    #    ⚠️ "아직 답변을 못 받았는지"는 _liabilities_needing_followup(state)
+    #    (필드가 비어 있는지)가 아니라 liability_followup_resolved로 판단한다
+    #    — 단순 모드로 확정돼도 필드는 영구히 비어 있으므로, 필드 상태만
+    #    보면 이후 모든 턴에서 계속 "아직 답변 대기 중"으로 오판해 다른
+    #    후속질문(퇴직연금 등)의 차례를 영영 못 오게 만드는 버그가 있었다.
+    was_awaiting_liability_followup = (
+        state["liability_followup_asked"] and not state["liability_followup_resolved"]
+    )
     if was_awaiting_liability_followup:
         current_age = (
             payload.financial_profile.current_age

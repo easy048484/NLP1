@@ -113,13 +113,13 @@
   있다. 이 에이전트 입장에서는 `extra["asset_organizer"]["incomes"]`에 들어온
   것만 그대로 반영하므로 영향은 없지만, 두 번째 이후 퇴직연금 건은 소득 전환
   기회 자체가 없다는 점은 알아둘 것.
-- ⚠️ **asset_organizer 쪽 상호작용 버그로 incomes가 비어 있을 수 있다(미수정)**
-  — 같은 대화에 단순 모드 부채(필드가 끝내 안 채워진 경우)와 퇴직연금이
-  함께 있으면, 부채 후속질문 게이트가 매 턴 다시 발동해 퇴직연금 후속질문
-  답변을 가로채는 상호작용 버그가 실측으로 발견됐다(`agents/asset_organizer/
-  CLAUDE.md` 미해결 항목 참고). 이 에이전트 입장에서 증상은 "분명 연금형으로
-  답했다는데 `extra["asset_organizer"]["incomes"]`가 비어 있음"으로 나타난다
-  — `_build_engine_input()` 자체의 버그가 아니라 상류(asset_organizer) 문제.
+- ~~asset_organizer 쪽 상호작용 버그로 incomes가 비어 있을 수 있다~~ —
+  **수정 완료**(`asset_organizer/CLAUDE.md` 빌드 히스토리 참고). 같은 대화에
+  단순 모드 부채(필드가 끝내 안 채워진 경우)와 퇴직연금이 함께 있으면 부채
+  후속질문 게이트가 매 턴 다시 발동해 퇴직연금 후속질문 답변을 가로채던
+  버그였다 — `liability_followup_resolved` 플래그 추가로 해결됨. 이
+  에이전트 입장에서 증상은 "분명 연금형으로 답했다는데
+  `extra["asset_organizer"]["incomes"]`가 비어 있음"으로 나타났었다.
 - ⚠️ **"연금" 키워드 제거로 순수 연금 질의가 라우팅 안 됨(알려진 트레이드오프)**
   — `spec.py`의 라우팅 키워드에서 "연금"이 완전히 빠지면서, "연금
   계산해줘"/"제 예상 연금이 얼마나 될까요"처럼 "은퇴"/"노후"가 없는 순수
@@ -158,3 +158,8 @@
     이제 키워드 후보 0개가 되어 default_agent(heir_navigator)로 새는
     회귀를 발견했다(위 "미해결 항목" 참고) — "데모 비핵심" 스코프
     결정상 당장은 허용된 트레이드오프로 보인다.
+- **부채 후속질문 게이트가 퇴직연금 후속질문을 가로채던 버그 수정** —
+  asset_organizer 쪽 `liability_followup_resolved` 플래그 추가로 해결됨
+  (자세한 내용은 asset_organizer/CLAUDE.md의 빌드 히스토리 참고). 이
+  에이전트 입장에서는 `extra["asset_organizer"]["incomes"]`가 조용히
+  비어 있던 증상이 없어졌다.

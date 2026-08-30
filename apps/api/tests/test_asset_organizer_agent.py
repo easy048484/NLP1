@@ -353,6 +353,92 @@ def test_parse_end_age_rejects_calendar_year_expression():
     assert agent._parse_end_age("2030년까지 갚아요", current_age=58) is None
 
 
+# ================================ 부채 후속질문 게이트가 다른 후속질문을 안 가로채는지
+
+
+def test_liability_simple_mode_resolved_flag_prevents_reasking():
+    """부채가 단순 모드로 확정되면(예: "몰라요") liability_followup_resolved가
+    True로 마킹돼, 다음 턴에 같은 후속질문이 다시 뜨지 않아야 한다 — 실측
+    재현됐던 버그: monthly_payment/end_age 필드가 영구히 비어 있어서
+    _liabilities_needing_followup()만으로 판단하면 계속 "아직 답변
+    대기 중"으로 오판했다."""
+    session_id = "gate1"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="대출 5천만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    assert state["liability_followup_asked"] is True
+    assert state["liability_followup_resolved"] is False  # 아직 답변 전
+
+    output = agent.run(_continue(session_id, "몰라요", state))
+    state2 = output.data[STATE_KEY]
+    assert state2["liability_followup_resolved"] is True
+    assert state2["status"] == "done"
+
+    # 다음 턴에 아무 말이나 보내도 부채 후속질문이 다시 뜨면 안 된다.
+    output2 = agent.run(_continue(session_id, "네 알겠습니다", state2))
+    assert "월 얼마씩 갚고" not in output2.reply
+
+
+def test_pension_followup_gets_asked_after_liability_simple_mode_resolves():
+    """이전엔 버그로 인해 부채가 단순 모드로 남으면(필드가 계속 비어 있어)
+    liability 게이트가 매 턴 재발동해서 퇴직연금 후속질문 차례가 영영 안
+    왔다 — 이제는 부채 답변 직후 곧바로 퇴직연금 후속질문이 나와야 한다
+    (버그가 재현되던 시나리오를 그대로 재검증)."""
+    session_id = "gate2"
+    state = agent.run(
+        AgentInput(
+            session_id=session_id,
+            user_message="대출 5천만원, 퇴직연금 8천만원 있어요",
+        )
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    assert state["liability_followup_asked"] is True
+
+    output = agent.run(_continue(session_id, "몰라요", state))  # 부채 후속질문 답변
+    state2 = output.data[STATE_KEY]
+
+    assert "퇴직연금은 일시금으로 받으실 예정인가요" in output.reply
+    assert state2["pension_followup_asked"] is True
+    assert state2["status"] == "collecting"  # 아직 안 끝남 — 퇴직연금 답변 대기 중
+
+
+def test_liability_and_pension_followups_each_asked_exactly_once():
+    """부채·퇴직연금이 같은 대화에 함께 있어도 각자 후속질문을 정확히 한
+    번씩만 받고, 둘 다 해결된 뒤에는 어느 쪽도 다시 뜨지 않아야 한다."""
+    session_id = "gate3"
+    state = agent.run(
+        AgentInput(
+            session_id=session_id,
+            user_message="대출 5천만원, 퇴직연금 8천만원 있어요",
+        )
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+
+    output = agent.run(_continue(session_id, "몰라요", state))
+    assert "퇴직연금은 일시금으로 받으실 예정인가요" in output.reply
+    state = output.data[STATE_KEY]
+
+    output = agent.run(
+        _continue(session_id, "연금으로 65살부터 월 100만원씩 받을 거예요", state)
+    )
+    state = output.data[STATE_KEY]
+
+    assert state["status"] == "done"
+    assert state["liability_followup_asked"] is True
+    assert state["liability_followup_resolved"] is True
+    assert state["pension_followup_asked"] is True
+    assert state["pension_followup_resolved"] is True
+    assert state["incomes"] == [
+        {"type": "퇴직연금", "monthly": 1_000_000, "start_age": 65, "end_age": None}
+    ]
+
+    # 마무리 이후 아무 말이나 보내도 두 후속질문 다 다시 뜨면 안 된다.
+    output2 = agent.run(_continue(session_id, "감사합니다", state))
+    assert "월 얼마씩 갚고" not in output2.reply
+    assert "퇴직연금은 일시금으로" not in output2.reply
+
+
 # =============================================== 퇴직연금 수령 방식 후속질문
 
 
