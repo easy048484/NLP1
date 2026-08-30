@@ -14,7 +14,7 @@ SPEC = AgentSpec(
         "자산 현황을 한 번에 보고 싶어요",
         "부채까지 포함해서 재산을 정리해주세요",
     ],
-    keywords=["자산목록", "재산목록", "자산현황", "재산현황"],
+    keywords=["자산목록", "재산목록", "자산현황", "재산현황", "자산", "재산", "정리"],
     requires=[],
     produces=["asset_inventory"],
     entrypoint=run,
