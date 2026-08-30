@@ -144,7 +144,8 @@ def test_case_d_pending_summary_lists_question() -> None:
     )  # handwriting만 미답변 → 1개
 
     assert summarize(results) == (
-        "**한 가지만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 항목입니다."
+        "**한 가지만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 "
+        "항목입니다. (4/5 확인됨)"
     )
 
     questions = pending_questions(results)
@@ -217,7 +218,8 @@ def test_pending_takes_priority_over_red() -> None:
     assert results["handwriting"].grade == "PENDING"
     assert results["seal"].grade == "PENDING"
     assert summarize(results) == (
-        "**2가지만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 항목입니다."
+        "**2가지만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 "
+        "항목입니다. (3/5 확인됨)"
     )
 
 
@@ -233,7 +235,8 @@ def test_summary_pending_count_scales_with_three_pending_items() -> None:
     assert results["handwriting"].grade == "PENDING"
     assert results["seal"].grade == "PENDING"
     assert summarize(results) == (
-        "**3가지만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 항목입니다."
+        "**3가지만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 "
+        "항목입니다. (2/5 확인됨)"
     )
 
 

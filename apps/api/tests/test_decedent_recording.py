@@ -162,6 +162,10 @@ def test_pending_case_lists_both_confirm_questions_with_options() -> None:
         output.reply.count("2가지만 직접 확인해주세요") == 1
         or "2가지만 직접 확인해주세요" in output.reply
     )
+    # 진행률(#42의 data.progress와 같은 분모)이 reply 텍스트에도 노출된다 —
+    # 녹음은 7요건이라 나머지 5개는 이미 확인된 상태.
+    assert "(5/7 확인됨)" in output.reply
+    assert output.data["progress"] == {"checked": 5, "total": 7}
 
     fields = {q["field"] for q in output.data["pending_questions"]}
     assert fields == {"rec_witness_present_answer", "rec_witness_eligible_answer"}

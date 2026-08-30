@@ -12,6 +12,7 @@ from agents import (
     asset_organizer,
     decedent_estate,
     heir_navigator,
+    heir_share_analyzer,
     retirement_planner,
     tax_calculator,
 )
@@ -23,6 +24,7 @@ _AGENTS = [
     (tax_calculator, AgentName.TAX_CALCULATOR),
     (asset_organizer, AgentName.ASSET_ORGANIZER),
     (retirement_planner, AgentName.RETIREMENT_PLANNER),
+    (heir_share_analyzer, AgentName.HEIR_SHARE_ANALYZER),
 ]
 
 
