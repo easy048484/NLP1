@@ -1,4 +1,4 @@
-import type { AgentInput, AgentOutput } from "../types";
+import type { AgentInput, ChatResponse } from "../types";
 import { authHeader } from "./auth";
 
 export const API_BASE_URL: string =
@@ -8,7 +8,7 @@ export interface ChatCallResult {
   /** 실제로 서버에 전송한 요청 본문 (개발자 모드 JSON 뷰어용) */
   request: AgentInput;
   /** 서버가 돌려준 원본 응답. 실패 시 null */
-  response: AgentOutput | null;
+  response: ChatResponse | null;
   ok: boolean;
   status: number | null;
   errorMessage: string | null;
@@ -17,7 +17,7 @@ export interface ChatCallResult {
 
 /**
  * apps/api/main.py 의 POST /chat 을 호출합니다.
- * (AgentInput -> AgentOutput, apps/api/schemas/agent_io.py 참고)
+ * (AgentInput -> ChatResponse, apps/api/schemas/agent_io.py 참고)
  *
  * familyGraphId가 있으면 요청에 실어 보냅니다 — 오케스트레이터의
  * node_build_context가 이 id로 family_graph를 자동 조회해서 채워주므로
@@ -73,7 +73,7 @@ export async function sendChatMessage(
 
     return {
       request,
-      response: json as AgentOutput,
+      response: json as ChatResponse,
       ok: true,
       status: res.status,
       errorMessage: null,

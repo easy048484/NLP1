@@ -233,3 +233,28 @@ def test_namespaced_context_reads_confirm_answers() -> None:
     assert output.data["requirements"]["handwriting"]["grade"] == "RED"
     assert output.data["requirements"]["seal"]["grade"] == "RED"
     assert output.next_action is None
+
+
+def test_run_progress_reflects_pending_confirm_answers() -> None:
+    """진행률 체크리스트: 자서·날인 확인 답변이 없으면 5개 중 3개만 확인된 상태다
+    (연월일·주소·성명은 텍스트에서 바로 판정되고, 자서·날인은 PENDING)."""
+    payload = AgentInput(
+        session_id="s1", user_message=_WILL_TEXT_COMPLETE, context=_ctx()
+    )
+    output = decedent_estate.run(payload)
+
+    assert output.data["progress"] == {"checked": 3, "total": 5}
+    # 사진 판독(#35)과 동일하게, 진행률이 reply 텍스트에도 노출돼야 한다 —
+    # data.progress만 있고 화면 문구엔 안 보이던 것을 이번에 붙였다.
+    assert "(3/5 확인됨)" in output.reply
+
+
+def test_run_progress_all_checked_when_confirm_answers_given() -> None:
+    payload = AgentInput(
+        session_id="s1",
+        user_message=_WILL_TEXT_COMPLETE,
+        context=_ctx(handwriting_answer="yes", seal_answer="seal_or_fingerprint"),
+    )
+    output = decedent_estate.run(payload)
+
+    assert output.data["progress"] == {"checked": 5, "total": 5}

@@ -9,13 +9,15 @@
 ⚠️ 저장 정책 — C안 (docs/privacy_notes.md 확정)
 --------------------------------------------------
 담는 것: will_type, intent, 확인 답변, 요건별 판정 결과(등급·condition_id·
-red_label·precedent_ids·추출값), pending_questions.
+red_label·precedent_ids·추출값), pending_questions, 사진 판독 임시값
+(photo_draft — 4개 필드의 짧은 문자열/열거값뿐).
 
-**담지 않는 것: 유언장 원문(user_message)과 마스킹 이전 텍스트.**
+**담지 않는 것: 유언장 원문(user_message), 마스킹 이전 텍스트, 원본 이미지.**
 판정이 끝나면 원문은 메모리에서만 쓰고 버린다. 그래서 이 모델에는 원문을 담을
 필드 자체가 없다 — 실수로라도 흘러 들어가지 않게 하기 위해서다. 추출값
 (성명·주소 조각 등)은 판정 결과의 일부라 포함되지만, 전문(全文)은 포함되지
-않는다.
+않는다. 사진 판독(image_reader.py)도 같은 원칙 — base64 이미지 데이터를 담을
+필드 자체가 없어 구조적으로 저장이 막혀 있다.
 
 평면(flat) 키 폴백
 ------------------
@@ -76,6 +78,17 @@ class DecedentState(BaseModel):
     requirements: dict[str, Any] = Field(default_factory=dict)
     #: 아직 답을 못 받은 확인 질문들 (프론트가 버튼을 다시 그릴 수 있게).
     pending_questions: list[dict[str, Any]] = Field(default_factory=list)
+
+    #: 사진 판독 1단계 — image_reader.extract_will_photo_fields() 결과를
+    #: 확인 질문 완료 전까지 왕복시키는 임시 자리. {field_id: {"value":...,
+    #: "confidence":...}} 4개(name/address/date/seal) 뿐이며, **원본 이미지는
+    #: 절대 담지 않는다**(image_reader.py 모듈 docstring 참고). 확인 질문이
+    #: 전부 답변되면(photo_confirm_answers 완성) 소비되어 빈 dict로 되돌아간다.
+    photo_draft: dict[str, Any] = Field(default_factory=dict)
+    #: photo_draft 중 confidence="low"인 필드에 대한 사용자 답변.
+    #: {field_id: "yes"|"no"}. 평면 폴백 대상이 아니다 — 네임스페이스로만
+    #: 주고받는다(사용자가 직접 이 dict를 타이핑해 보낼 일이 없으므로).
+    photo_confirm_answers: dict[str, str] = Field(default_factory=dict)
 
 
 def _flat_overrides(context: dict[str, Any]) -> dict[str, Any]:

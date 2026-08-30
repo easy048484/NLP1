@@ -162,6 +162,10 @@ def test_pending_case_lists_both_confirm_questions_with_options() -> None:
         output.reply.count("2가지만 직접 확인해주세요") == 1
         or "2가지만 직접 확인해주세요" in output.reply
     )
+    # 진행률(#42의 data.progress와 같은 분모)이 reply 텍스트에도 노출된다 —
+    # 녹음은 7요건이라 나머지 5개는 이미 확인된 상태.
+    assert "(5/7 확인됨)" in output.reply
+    assert output.data["progress"] == {"checked": 5, "total": 7}
 
     fields = {q["field"] for q in output.data["pending_questions"]}
     assert fields == {"rec_witness_present_answer", "rec_witness_eligible_answer"}
@@ -304,3 +308,23 @@ def test_namespaced_context_reads_witness_answers() -> None:
     )
 
     assert output.data["requirements"]["rec_witness_eligible"]["grade"] == "RED"
+
+
+def test_progress_pending_witness_answers_counted_as_unchecked() -> None:
+    """증인 참여/결격 확인 답변이 없으면 7개 중 5개(대본에서 바로 판정되는
+    항목)만 확인된 상태다."""
+    output = _run(_COMPLETE_TRANSCRIPT)  # witness_present/eligible 답변 없음
+
+    assert output.data["requirements"]["rec_witness_present"]["grade"] == "PENDING"
+    assert output.data["requirements"]["rec_witness_eligible"]["grade"] == "PENDING"
+    assert output.data["progress"] == {"checked": 5, "total": 7}
+
+
+def test_progress_all_checked_when_witness_answers_given() -> None:
+    output = _run(
+        _COMPLETE_TRANSCRIPT,
+        rec_witness_present_answer="yes",
+        rec_witness_eligible_answer="not_disqualified",
+    )
+
+    assert output.data["progress"] == {"checked": 7, "total": 7}

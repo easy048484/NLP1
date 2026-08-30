@@ -102,10 +102,21 @@ RECORDING_SUMMARY_MESSAGES = SummaryMessages(
 )
 
 
-def _summary_pending(count: int) -> str:
-    """D 케이스: PENDING 개수 n으로 동적 치환 (1개면 "한 가지"). will_type 공통."""
+def _summary_pending(count: int, total: int) -> str:
+    """D 케이스: PENDING 개수 n으로 동적 치환 (1개면 "한 가지"). will_type 공통.
+
+    사진 판독(#35)이 photo_draft 진행 상황을 확인 질문과 함께 노출하는 것과
+    동일하게, 텍스트 경로도 진행률("확인됨/전체")을 응답 문구에 노출한다 —
+    data.progress(#42)는 이미 있었지만 reply 텍스트에는 안 보이고 있었다.
+    total 은 summarize() 가 넘기는 formal_ids 길이라 progress() 와 같은
+    분모를 쓴다(간인처럼 법정 요건 아닌 항목은 포함 안 됨).
+    """
     count_word = "한 가지" if count == 1 else f"{count}가지"
-    return f"**{count_word}만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 항목입니다."
+    checked = total - count
+    return (
+        f"**{count_word}만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 "
+        f"항목입니다. ({checked}/{total} 확인됨)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +228,20 @@ def red_label(requirement_id: str) -> str:
     return requirement_id
 
 
+def term_note(requirement_id: str) -> Optional[str]:
+    """요건 id → 용어 설명 (rules/requirements.json 의 term_note 필드).
+
+    GREEN(충족)에는 붙이지 않는다 — 이미 확인된 요건에 "이게 뭔가요" 설명을
+    또 보여주는 건 불필요한 반복이다. RED/YELLOW(미충족·쟁점)에만
+    format_requirement_line 이 이 값을 붙인다.
+    """
+    rules = _load_rules()
+    for req in rules["requirements"]:
+        if req["id"] == requirement_id:
+            return req.get("term_note")
+    return None
+
+
 # GREEN 패턴의 "(+ 추출값 표시)" 부분에서 값을 어떻게 뽑아 보여줄지 요건 id별로 분기.
 _DATE_LIKE_REQUIREMENT_IDS = {"date", "rec_date"}
 _RAW_TEXT_DISPLAY_REQUIREMENT_IDS = {
@@ -268,6 +293,9 @@ def format_requirement_line(result: RequirementResult) -> Optional[str]:
             card_line = _precedent_card_line(precedent_id)
             if card_line:
                 lines.append(card_line)
+        note = term_note(result.requirement_id)
+        if note:
+            lines.append(f"   ℹ️ {note}")
         return "\n".join(lines)
 
     if result.grade == "YELLOW":
@@ -276,6 +304,9 @@ def format_requirement_line(result: RequirementResult) -> Optional[str]:
             card_line = _precedent_card_line(precedent_id)
             if card_line:
                 lines.append(card_line)
+        note = term_note(result.requirement_id)
+        if note:
+            lines.append(f"   ℹ️ {note}")
         lines.append(_YELLOW_CTA)
         return "\n".join(lines)
 
@@ -388,7 +419,7 @@ def summarize(
 
     pending_count = grades.count("PENDING")
     if pending_count:
-        return _summary_pending(pending_count)
+        return _summary_pending(pending_count, len(formal_ids))
     if "RED" in grades:
         return messages.has_red
     if "YELLOW" in grades:
@@ -454,6 +485,21 @@ def pending_questions(
             }
         )
     return questions
+
+
+def progress(
+    results: dict[str, RequirementResult],
+    formal_ids: tuple[str, ...] = _FORMAL_REQUIREMENT_IDS,
+) -> dict[str, int]:
+    """요약 진행률: formal_ids 중 PENDING이 아닌(=이미 확인된) 요건 수 / 전체 수.
+
+    interseal처럼 법정 요건이 아닌 항목(formal_ids 밖)은 세지 않는다 — 진행률은
+    "충족 여부를 따지는 요건"이 대상이지, 참고용 항목까지 포함하면 분모가
+    실제 판정 대상과 어긋난다. GREEN/RED/YELLOW는 전부 "확인됨"으로 센다 —
+    등급이 무엇이든 텍스트/사용자 답변으로 판정이 끝났다는 뜻이라서다.
+    """
+    checked = sum(1 for rid in formal_ids if results[rid].grade != "PENDING")
+    return {"checked": checked, "total": len(formal_ids)}
 
 
 def format_result(
