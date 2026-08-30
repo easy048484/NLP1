@@ -448,7 +448,7 @@ IMAGE_UNREADABLE_MISSING: dict[str, Any] = {
 #: 이미지 판독이 liability type으로 내놓을 수 있는 값의 전부 — extract_
 #: liabilities()의 정규식 경로(_LiabilityLabel)와 동일한 화이트리스트에
 #: "기타"만 더한 것(자산 쪽 _VALID_ASSET_TYPES와 같은 catch-all 관례).
-#: 프롬프트가 이 5개만 쓰라고 지시하지만, 모델이 그 지시를 무시하고
+#: 프롬프트가 이 값들만 쓰라고 지시하지만, 모델이 그 지시를 무시하고
 #: "국민은행 대출(계좌 110-xxx, 홍길동)"처럼 계좌번호·이름이 섞인 문자열을
 #: 채워 보내는 경우를 대비해 여기서 한 번 더 막는다(수집 최소화 원칙,
 #: 4-6절) — 화이트리스트 밖 값은 원문(오염 가능성 있는 문자열)만 버리고
@@ -456,25 +456,19 @@ IMAGE_UNREADABLE_MISSING: dict[str, Any] = {
 #: 재무 상태에서 사라져 순자산이 실제보다 좋아 보이게 왜곡된다 — PII를
 #:막으려다 반대 방향으로 더 위험한 실수를 하는 셈이라, "기타"(이미 검증된
 #: 정상 카테고리라 새로 추측하는 게 아님)로 보존한다.
-#: ⚠️ 자산 쪽 _VALID_ASSET_TYPES와 달리 이 튜플은 _LIABILITY_KEYWORDS.keys()에서
-#: 자동 파생되지 않는다 — 부채 유형을 추가할 때는 _LiabilityLabel/
-#: _LIABILITY_KEYWORDS와 함께 이 튜플도 수동으로 갱신해야 한다.
-_VALID_LIABILITY_TYPES = (
-    "대출",
-    "카드론",
-    "전세자금대출",
-    "임대보증금반환채무",
-    "기타",
-)
+#: 자산 쪽 _VALID_ASSET_TYPES와 동일하게 _LIABILITY_KEYWORDS.keys()에서
+#: 자동 파생된다 — 새 부채 유형은 _LiabilityLabel/_LIABILITY_KEYWORDS에만
+#: 추가하면 이 화이트리스트와 프롬프트 문구까지 자동으로 따라온다.
+_VALID_LIABILITY_TYPES = (*_LIABILITY_KEYWORDS.keys(), "기타")
 
 
 def _build_image_system_prompt() -> str:
     """이미지 판독용 시스템 프롬프트. assets/liabilities 필드의 허용 유형
     목록을 각각 _VALID_ASSET_TYPES/_VALID_LIABILITY_TYPES에서 직접
     파생한다 — _build_system_prompt()와 같은 이유(수동 동기화 불필요).
-    _VALID_LIABILITY_TYPES 자체는 수동 유지 튜플이지만(위 주석 참고),
-    이 함수는 그 튜플 하나만 보고 조립하므로 새 부채 유형을 추가할 때
-    거기 한 곳만 갱신하면 프롬프트 문구까지 같이 따라온다."""
+    두 화이트리스트 모두 키워드 사전(_ASSET_KEYWORDS/_LIABILITY_KEYWORDS)
+    에서 자동 파생되므로, 새 유형을 그 사전에만 추가하면 화이트리스트와
+    프롬프트 문구가 함께 따라온다."""
     asset_types = "|".join(_VALID_ASSET_TYPES)
     liability_types = "|".join(_VALID_LIABILITY_TYPES)
     return (

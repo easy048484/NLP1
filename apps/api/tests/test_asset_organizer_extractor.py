@@ -351,9 +351,10 @@ def test_extract_from_image_liability_type_with_pii_is_kept_as_gita_not_dropped(
 def test_extract_from_image_lease_deposit_liability_type_passes_whitelist(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """_VALID_LIABILITY_TYPES는 자산 쪽과 달리 수동으로 유지되는 튜플이라,
-    새 부채 유형을 추가할 때 이 목록을 빠뜨리면 정상 값까지 "기타"로
-    뭉개진다 — 그렇게 되지 않았는지 회귀로 고정해둔다."""
+    """_VALID_LIABILITY_TYPES는 _LIABILITY_KEYWORDS.keys()에서 자동
+    파생되지만, 이미지 판독 검증(_apply_llm_liabilities)이 실제로 그
+    목록을 보고 새 부채 유형을 정상 값으로 통과시키는지("기타"로
+    뭉개지지 않는지)는 회귀로 따로 고정해둔다."""
     _install_fake_llm(
         monkeypatch,
         text=json.dumps(
@@ -472,6 +473,18 @@ def test_new_asset_types_are_automatically_covered_by_pii_whitelist():
     화이트리스트 방어(LLM payload 검증)에도 자동으로 포함돼야 한다."""
     assert "자동차" in extractor._VALID_ASSET_TYPES
     assert "퇴직연금" in extractor._VALID_ASSET_TYPES
+
+
+def test_new_liability_types_are_automatically_covered_by_pii_whitelist():
+    """_VALID_LIABILITY_TYPES도 이제 자산 쪽과 같은 패턴으로
+    _LIABILITY_KEYWORDS.keys()에서 자동 파생된다 — 새 부채 유형을 키워드
+    사전에 추가하기만 하면 별도로 화이트리스트 튜플을 손으로 갱신하지
+    않아도 이미지 판독 검증에 자동으로 포함돼야 한다."""
+    assert "임대보증금반환채무" in extractor._VALID_LIABILITY_TYPES
+    assert set(extractor._VALID_LIABILITY_TYPES) == {
+        *extractor._LIABILITY_KEYWORDS.keys(),
+        "기타",
+    }
 
 
 def test_llm_fallback_income_type_outside_whitelist_is_kept_as_gita_not_dropped(
