@@ -198,6 +198,22 @@ def test_full_checklist_exports_flat_financial_profile_with_extra_detail():
     assert "순자산: 7,000만원" in output.reply
 
 
+def test_finalize_hands_off_to_retirement_planner():
+    """체크리스트가 끝나면 develop 재작업 전 원래 의도대로 retirement_planner에
+    핸드오프를 걸어야 한다 — 실제 오케스트레이터로 실행해서 확인한 결과,
+    이 신호가 없으면 사용자가 "은퇴"/"노후"/"연금" 키워드를 새로 말하지
+    않는 한 asset_organizer에 계속 머물러 있었다(체크리스트 완료 응답만
+    반복). handoffs가 비어 있지 않아야 오케스트레이터의 Fast Path가
+    다음 턴을 자동으로 retirement_planner에 보낸다(orchestrator/handoff.py
+    규약)."""
+    output = agent.run(AgentInput(session_id="ho1", user_message="예금 1억 있어요"))
+    output = agent.run(_continue("ho1", "없어요", output.data[STATE_KEY]))
+
+    assert output.data[STATE_KEY]["status"] == "done"
+    assert len(output.handoffs) == 1
+    assert output.handoffs[0].target == AgentName.RETIREMENT_PLANNER
+
+
 # ======================================= financial_assets/other_assets 분류
 
 
@@ -335,6 +351,92 @@ def test_ambiguous_followup_answer_falls_back_to_simple_mode_without_loop():
 
 def test_parse_end_age_rejects_calendar_year_expression():
     assert agent._parse_end_age("2030년까지 갚아요", current_age=58) is None
+
+
+# ================================ 부채 후속질문 게이트가 다른 후속질문을 안 가로채는지
+
+
+def test_liability_simple_mode_resolved_flag_prevents_reasking():
+    """부채가 단순 모드로 확정되면(예: "몰라요") liability_followup_resolved가
+    True로 마킹돼, 다음 턴에 같은 후속질문이 다시 뜨지 않아야 한다 — 실측
+    재현됐던 버그: monthly_payment/end_age 필드가 영구히 비어 있어서
+    _liabilities_needing_followup()만으로 판단하면 계속 "아직 답변
+    대기 중"으로 오판했다."""
+    session_id = "gate1"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="대출 5천만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    assert state["liability_followup_asked"] is True
+    assert state["liability_followup_resolved"] is False  # 아직 답변 전
+
+    output = agent.run(_continue(session_id, "몰라요", state))
+    state2 = output.data[STATE_KEY]
+    assert state2["liability_followup_resolved"] is True
+    assert state2["status"] == "done"
+
+    # 다음 턴에 아무 말이나 보내도 부채 후속질문이 다시 뜨면 안 된다.
+    output2 = agent.run(_continue(session_id, "네 알겠습니다", state2))
+    assert "월 얼마씩 갚고" not in output2.reply
+
+
+def test_pension_followup_gets_asked_after_liability_simple_mode_resolves():
+    """이전엔 버그로 인해 부채가 단순 모드로 남으면(필드가 계속 비어 있어)
+    liability 게이트가 매 턴 재발동해서 퇴직연금 후속질문 차례가 영영 안
+    왔다 — 이제는 부채 답변 직후 곧바로 퇴직연금 후속질문이 나와야 한다
+    (버그가 재현되던 시나리오를 그대로 재검증)."""
+    session_id = "gate2"
+    state = agent.run(
+        AgentInput(
+            session_id=session_id,
+            user_message="대출 5천만원, 퇴직연금 8천만원 있어요",
+        )
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    assert state["liability_followup_asked"] is True
+
+    output = agent.run(_continue(session_id, "몰라요", state))  # 부채 후속질문 답변
+    state2 = output.data[STATE_KEY]
+
+    assert "퇴직연금은 일시금으로 받으실 예정인가요" in output.reply
+    assert state2["pension_followup_asked"] is True
+    assert state2["status"] == "collecting"  # 아직 안 끝남 — 퇴직연금 답변 대기 중
+
+
+def test_liability_and_pension_followups_each_asked_exactly_once():
+    """부채·퇴직연금이 같은 대화에 함께 있어도 각자 후속질문을 정확히 한
+    번씩만 받고, 둘 다 해결된 뒤에는 어느 쪽도 다시 뜨지 않아야 한다."""
+    session_id = "gate3"
+    state = agent.run(
+        AgentInput(
+            session_id=session_id,
+            user_message="대출 5천만원, 퇴직연금 8천만원 있어요",
+        )
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+
+    output = agent.run(_continue(session_id, "몰라요", state))
+    assert "퇴직연금은 일시금으로 받으실 예정인가요" in output.reply
+    state = output.data[STATE_KEY]
+
+    output = agent.run(
+        _continue(session_id, "연금으로 65살부터 월 100만원씩 받을 거예요", state)
+    )
+    state = output.data[STATE_KEY]
+
+    assert state["status"] == "done"
+    assert state["liability_followup_asked"] is True
+    assert state["liability_followup_resolved"] is True
+    assert state["pension_followup_asked"] is True
+    assert state["pension_followup_resolved"] is True
+    assert state["incomes"] == [
+        {"type": "퇴직연금", "monthly": 1_000_000, "start_age": 65, "end_age": None}
+    ]
+
+    # 마무리 이후 아무 말이나 보내도 두 후속질문 다 다시 뜨면 안 된다.
+    output2 = agent.run(_continue(session_id, "감사합니다", state))
+    assert "월 얼마씩 갚고" not in output2.reply
+    assert "퇴직연금은 일시금으로" not in output2.reply
 
 
 # =============================================== 퇴직연금 수령 방식 후속질문
@@ -691,3 +793,43 @@ def test_image_api_failure_asks_to_reupload_without_guessing(
 
     assert output.reply == agent._IMAGE_UNREADABLE_REPLY
     assert output.data[STATE_KEY]["assets"] == []
+
+
+def test_image_unclear_field_pii_never_reaches_reply_or_state(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """ "unclear"는 화이트리스트가 없는 완전 자유텍스트라 모델이 계좌번호·
+    이름·주민등록번호 같은 걸 그대로 적어 보낼 수 있다 — 프롬프트가
+    금지해도 실측으로 확인해야 하는 지점(PR 열린 이슈 참고). 이 값이
+    reply나 세션 저장 데이터(output.data) 어디에도 그대로 노출되지
+    않아야 한다."""
+    pii_text = (
+        "계좌번호 110-123-456789, 예금주 홍길동, 주민등록번호 900101-1234567 확인됨"
+    )
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "unreadable": False,
+                "assets": [{"type": "예금", "value": 50_000_000}],
+                "liabilities": [],
+                "insurance": [],
+                "unclear": [pii_text],
+            }
+        ),
+    )
+
+    output = agent.run(
+        AgentInput(
+            session_id="img_pii1",
+            user_message="",
+            image_base64="fake-base64-data",
+            image_media_type="image/png",
+        )
+    )
+
+    haystack = repr(output.reply) + repr(output.data)
+    assert pii_text not in haystack
+    assert "계좌번호" not in haystack
+    assert "홍길동" not in haystack
+    assert "주민등록번호" not in haystack

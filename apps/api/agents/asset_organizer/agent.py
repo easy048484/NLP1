@@ -39,7 +39,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from schemas import AgentInput, AgentName, AgentOutput, FinancialProfile
+from schemas import AgentInput, AgentName, AgentOutput, FinancialProfile, HandoffRequest
 
 from . import extractor
 
@@ -136,6 +136,7 @@ def _empty_state() -> dict[str, Any]:
         "pending_categories": [],
         "pending_amounts": [],
         "liability_followup_asked": False,
+        "liability_followup_resolved": False,
         "pension_followup_asked": False,
         "pension_followup_resolved": False,
         "status": "collecting",
@@ -157,11 +158,13 @@ def _output(
     reply: str,
     *,
     financial_profile: FinancialProfile | None = None,
+    handoffs: list[HandoffRequest] | None = None,
 ) -> AgentOutput:
     return AgentOutput(
         agent=AgentName.ASSET_ORGANIZER,
         reply=reply,
         next_action=None,
+        handoffs=handoffs or [],
         financial_profile=financial_profile,
         data={STATE_KEY: state},
     )
@@ -249,6 +252,12 @@ def _merge_extraction(
         state["insurance"].append(tag.model_dump(mode="json"))
         _mark_checked(state, _INSURANCE_CATEGORY)
 
+    # kind=="asset_value"만 처리한다 — 나머지(예: "unclear")는 extractor.py의
+    # _apply_llm_payload()가 LLM 원문을 화이트리스트 없이 그대로 담아 보낼 수
+    # 있는 자유텍스트라, 여기서 의도적으로 건너뛰어 state/reply 어디에도
+    # 노출시키지 않는다(이미지 PII 잔여 위험 조사 결과 — extractor.py의
+    # 관련 주석 참고). 나중에 다른 kind를 처리하게 되면 그 reason 원문을
+    # 그대로 노출하지 말 것.
     for item in asset_result.missing:
         if item.get("kind") == "asset_value":
             _mark_checked(state, item["asset_type"])
@@ -318,7 +327,18 @@ def _apply_liability_followup_answer(
     """후속질문 답변을 해석해 가장 먼저 대기 중인 부채 하나에만 반영한다
     (부채가 여러 개여도 뭉뚱그려 물어본 것이라 특정 부채를 가리키지 않는다).
     monthly_payment/end_age 둘 다 못 알아들었으면(예: "몰라요", "나중에요")
-    아무것도 채우지 않는다 — 재질문하지 않고 단순 모드로 남긴다."""
+    아무것도 채우지 않는다 — 재질문하지 않고 단순 모드로 남긴다.
+
+    ⚠️ 답을 받았으면(설령 "모름"이어도) 이 시점에 liability_followup_resolved를
+    반드시 True로 마킹한다 — 실측으로 발견된 버그: 이 플래그 없이
+    _liabilities_needing_followup(state)(부채 필드가 여전히 비어 있는지)만으로
+    "아직 답변 대기 중인지"를 판단하면, 단순 모드로 확정된 뒤에도(필드가
+    영구히 비어 있으므로) 그 조건이 계속 True로 남아 이후 모든 턴을 이
+    함수가 계속 가로챈다 — 그 결과 뒤에 대기 중인 다른 후속질문(퇴직연금
+    등)이 자기 차례를 영영 못 받는다. "재질문 금지" 원칙과 반대 방향
+    문제라, 답을 받은 시점에 명확히 종결 처리하는 게 핵심이다."""
+    state["liability_followup_resolved"] = True
+
     targets = _liabilities_needing_followup(state)
     if not targets:
         return
@@ -509,11 +529,25 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
 
 
 def _finalize(state: dict[str, Any]) -> AgentOutput:
+    """체크리스트가 끝나면 develop 재작업 전 원래 의도("체크리스트 끝나면
+    자연스럽게 시뮬레이션까지 이어짐")대로 retirement_planner에 핸드오프를
+    건다. handoff.py 규약대로 AgentOutput.handoffs에 담으면(레거시
+    next_action 문자열이 아니라) 오케스트레이터가 다음 턴을 Fast Path로
+    바로 retirement_planner에 보낸다 — 실제로 실행해서 확인한 결과, 이
+    신호가 없으면 사용자가 "은퇴"/"노후"/"연금" 같은 키워드를 새로 말하지
+    않는 한 asset_organizer에 계속 머물러 있었다(체크리스트 완료 응답만
+    반복)."""
     state["status"] = "done"
     return _output(
         state,
         _format_summary(state),
         financial_profile=_to_shared_profile(state),
+        handoffs=[
+            HandoffRequest(
+                target=AgentName.RETIREMENT_PLANNER,
+                reason="자산·부채 체크리스트 완료 — 은퇴자금 시뮬레이션으로 이어감",
+            )
+        ],
     )
 
 
@@ -588,9 +622,14 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
     #    더 이상 이 에이전트가 직접 모으지 않고, develop의 공유
     #    financial_profile에서 온다(retirement_planner가 먼저 물어봤을 때만
     #    존재) — 없으면 절대 나이 표현만 해석하고 상대 표현은 포기한다.
-    was_awaiting_liability_followup = state[
-        "liability_followup_asked"
-    ] and _liabilities_needing_followup(state)
+    #    ⚠️ "아직 답변을 못 받았는지"는 _liabilities_needing_followup(state)
+    #    (필드가 비어 있는지)가 아니라 liability_followup_resolved로 판단한다
+    #    — 단순 모드로 확정돼도 필드는 영구히 비어 있으므로, 필드 상태만
+    #    보면 이후 모든 턴에서 계속 "아직 답변 대기 중"으로 오판해 다른
+    #    후속질문(퇴직연금 등)의 차례를 영영 못 오게 만드는 버그가 있었다.
+    was_awaiting_liability_followup = (
+        state["liability_followup_asked"] and not state["liability_followup_resolved"]
+    )
     if was_awaiting_liability_followup:
         current_age = (
             payload.financial_profile.current_age
