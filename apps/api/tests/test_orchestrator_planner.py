@@ -61,23 +61,35 @@ def _patch(monkeypatch, *fakes):
 
 
 def test_registry_discovers_every_agent_name():
+    """retirement_planner/asset_organizer 껍데기에 실제 구현이 채워지면서
+    (agents/retirement_planner, agents/asset_organizer의 agent.py) 두
+    스펙 모두 is_stub=False로 바뀌었다 — 원래 이 테스트가 확인하던 "아직
+    껍데기인 에이전트가 있다"는 registry 시점 상태는 더 이상 유효하지
+    않다. 지금은 등록된 5개 에이전트 전부가 실제 구현을 가진다."""
     specs = registry.all_specs()
     assert set(specs) == set(AgentName)
-    assert specs[AgentName.RETIREMENT_PLANNER].is_stub is True
+    assert specs[AgentName.RETIREMENT_PLANNER].is_stub is False
+    assert specs[AgentName.ASSET_ORGANIZER].is_stub is False
     assert specs[AgentName.HEIR_NAVIGATOR].is_stub is False
 
 
-def test_stub_agent_is_routable_by_keyword_without_touching_orchestrator():
+def test_new_agent_is_routable_by_keyword_without_touching_orchestrator():
+    """원래 이 테스트는 retirement_planner의 "껍데기" placeholder 응답
+    (data["stub"]=True, turns 카운터)으로 registry의 자동 편입 자체를
+    검증했다. 이제 실제 구현이 들어와 그 placeholder는 사라졌지만,
+    "spec.py만 선언하면 router.py 수정 없이 키워드로 라우팅된다"는
+    원래 취지는 실제 대화 흐름으로 그대로 확인된다."""
     output = router.route(
         AgentInput(session_id="st1", user_message="은퇴 자금 얼마나 필요해요?")
     )
     assert output.agent == AgentName.RETIREMENT_PLANNER
     assert output.path == "standard"
-    assert output.data.get("stub") is True
-    # 껍데기도 네임스페이스 규약대로 상태를 남겨야 다음 턴에 이어진다.
-    second = router.route(AgentInput(session_id="st1", user_message="네"))
+    assert "나이" in output.reply  # 실제 구현의 첫 질문
+
+    # 네임스페이스 규약대로 상태를 남겨야 다음 턴에 이어진다.
+    second = router.route(AgentInput(session_id="st1", user_message="60살이에요"))
     assert second.agent == AgentName.RETIREMENT_PLANNER
-    assert second.data[AgentName.RETIREMENT_PLANNER.value]["turns"] == 2
+    assert second.data[AgentName.RETIREMENT_PLANNER.value]["current_age"] == 60
 
 
 # ------------------------------------------------------------- classify

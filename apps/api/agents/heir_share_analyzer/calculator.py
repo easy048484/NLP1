@@ -1,18 +1,22 @@
-"""법정상속분과 기본 유류분을 계산하는 결정론적 엔진."""
+"""법정상속분과 기본 유류분을 계산하는 결정론적 엔진.
+
+법정상속인 선택·법정상속분 계산은 공용 모듈(family_graph.heirs)에 위임한다 —
+tax_calculator/heir_navigator 와 같은 규칙을 쓰기 위해서다. 이 파일은 유류분
+쪽 계산(기초액·유류분율·예정취득액 비교·전문가 핸드오프 요약)만 담당한다.
+"""
 
 from __future__ import annotations
 
-from collections import Counter
 from fractions import Fraction
 from typing import Any
 
-from pydantic import ValidationError
+from family_graph.heirs import UnsupportedFamilyCase as UnsupportedFamilyCase
+from family_graph.heirs import classify_heirs, select_legal_heirs
 
 from .models import (
     AnalysisStage,
     AnalysisStatus,
     ExpertHandoffSummary,
-    FamilyMember,
     HeirShareBreakdown,
     HeirShareInput,
     HeirShareResult,
@@ -26,9 +30,12 @@ from .rules import (
     RULE_VERSION,
 )
 
-
-class UnsupportedFamilyCase(ValueError):
-    """현재 family_graph만으로 안전하게 지분을 계산할 수 없는 경우."""
+# 하위호환: 이 두 이름을 calculator 에서 import 하던 코드가 계속 동작하도록 re-export.
+__all__ = [
+    "UnsupportedFamilyCase",
+    "select_legal_heirs",
+    "calculate_heir_share",
+]
 
 
 def _fraction_text(value: Fraction) -> str:
@@ -39,110 +46,22 @@ def _money_by_fraction(amount: int, fraction: Fraction) -> int:
     return amount * fraction.numerator // fraction.denominator
 
 
-def _family_members(family_graph: dict[str, Any] | None) -> list[FamilyMember]:
-    if not isinstance(family_graph, dict) or not isinstance(
-        family_graph.get("heirs"), list
-    ):
-        raise UnsupportedFamilyCase(
-            "가족관계 정보가 없어 법정상속분을 계산할 수 없습니다."
-        )
-
-    members: list[FamilyMember] = []
-    try:
-        for raw_member in family_graph["heirs"]:
-            if isinstance(raw_member, dict):
-                members.append(FamilyMember.model_validate(raw_member))
-    except ValidationError as exc:
-        raise UnsupportedFamilyCase("가족관계 정보 형식을 확인해주세요.") from exc
-
-    alive_members = [member for member in members if member.alive]
-    if not alive_members:
-        raise UnsupportedFamilyCase("생존 가족 정보가 없어 계산할 수 없습니다.")
-
-    duplicate_names = [
-        name
-        for name, count in Counter(member.name for member in alive_members).items()
-        if count > 1
-    ]
-    if duplicate_names:
-        raise UnsupportedFamilyCase(
-            "동일한 이름의 가족이 있어 예정 취득액을 구분할 수 없습니다: "
-            + ", ".join(duplicate_names)
-        )
-    return members
-
-
-def select_legal_heirs(family_graph: dict[str, Any] | None) -> list[FamilyMember]:
-    """현재 MVP가 안전하게 구분할 수 있는 법정상속인만 선택한다."""
-
-    members = _family_members(family_graph)
-    alive = [member for member in members if member.alive]
-    spouse = [member for member in alive if member.relation == "spouse"]
-    children = [member for member in alive if member.relation == "child"]
-    parents = [member for member in alive if member.relation == "parent"]
-    grandchildren = [member for member in alive if member.relation == "grandchild"]
-    grandparents = [member for member in alive if member.relation == "grandparent"]
-    siblings = [member for member in alive if member.relation == "sibling"]
-
-    if len(spouse) > 1:
-        raise UnsupportedFamilyCase(
-            "배우자가 두 명 이상으로 입력되어 확인이 필요합니다."
-        )
-
-    # 살아 있는 자녀가 있으면 손자녀는 이번 상속의 법정상속인이 아니므로 제외한다.
-    if children:
-        return spouse + children
-
-    # 자녀 없이 손자녀가 있으면 어느 자녀의 지분을 대신하는지 현재 그래프로는
-    # 알 수 없다. 잘못 균등분할하지 말고 전문가 검토 대상으로 돌린다.
-    if grandchildren:
-        raise UnsupportedFamilyCase(
-            "손자녀가 상속인이 될 수 있는 경우에는 대습상속 관계 확인이 필요합니다."
-        )
-
-    if parents:
-        return spouse + parents
-
-    if grandparents:
-        raise UnsupportedFamilyCase(
-            "조부모가 상속인이 될 수 있는 경우에는 최근친 직계존속 확인이 필요합니다."
-        )
-
-    # 배우자는 직계비속·직계존속이 없으면 단독상속인이므로 형제자매를 제외한다.
-    if spouse:
-        return spouse
-
-    if siblings:
-        return siblings
-
-    raise UnsupportedFamilyCase("현재 가족관계만으로 법정상속인을 확인할 수 없습니다.")
-
-
-def calculate_statutory_shares(
-    legal_heirs: list[FamilyMember],
-) -> dict[str, Fraction]:
-    """동순위 1, 배우자 1.5의 가중치로 법정상속분을 계산한다."""
-
-    has_co_heir = len(legal_heirs) > 1
-    weights: dict[str, Fraction] = {}
-    for heir in legal_heirs:
-        if heir.relation == "spouse" and has_co_heir:
-            weights[heir.name] = Fraction(3, 2)
-        else:
-            weights[heir.name] = Fraction(1, 1)
-
-    total_weight = sum(weights.values(), start=Fraction(0, 1))
-    return {name: weight / total_weight for name, weight in weights.items()}
-
-
 def calculate_heir_share(
     data: HeirShareInput,
     family_graph: dict[str, Any] | None,
 ) -> HeirShareResult:
     """기본 유류분과 유언상 예정 취득액의 단순 차이를 계산한다."""
 
-    legal_heirs = select_legal_heirs(family_graph)
-    statutory_shares = calculate_statutory_shares(legal_heirs)
+    classification = classify_heirs(family_graph)
+    if not classification.has_family_data:
+        raise UnsupportedFamilyCase(
+            "가족관계 정보가 없어 법정상속분을 계산할 수 없습니다."
+        )
+    if classification.unsupported_reason:
+        raise UnsupportedFamilyCase(classification.unsupported_reason)
+
+    legal_heirs = classification.legal_heirs
+    statutory_shares = classification.statutory_shares
     basis_amount = max(
         0, data.estate_value + data.confirmed_included_gifts - data.debts
     )

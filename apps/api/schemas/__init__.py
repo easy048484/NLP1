@@ -4,9 +4,11 @@ from .agent_io import (
     AgentName,
     AgentOutput,
     ChatResponse,
+    Estate,
     FinancialProfile,
     HandoffRequest,
     VerificationResult,
+    WillStatus,
 )
 
 __all__ = [
@@ -15,7 +17,9 @@ __all__ = [
     "AgentName",
     "AgentOutput",
     "ChatResponse",
+    "Estate",
     "FinancialProfile",
     "HandoffRequest",
     "VerificationResult",
+    "WillStatus",
 ]

@@ -56,6 +56,7 @@ def run(payload: AgentInput) -> AgentOutput:
     graph_input: dict[str, Any] = {
         "user_message": payload.user_message,
         "family_graph": payload.family_graph,
+        "estate": payload.financial_profile,
         "session_id": payload.session_id,
         "today": _today(payload),
         "use_llm": _use_llm(),

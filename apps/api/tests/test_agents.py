@@ -8,13 +8,22 @@ mock에서 실제 구현으로 바꿀 때 이 테스트가 깨지면 병합 전�
 
 import pytest
 
-from agents import decedent_estate, heir_navigator, heir_share_analyzer, tax_calculator
+from agents import (
+    asset_organizer,
+    decedent_estate,
+    heir_navigator,
+    heir_share_analyzer,
+    retirement_planner,
+    tax_calculator,
+)
 from schemas import AgentInput, AgentName
 
 _AGENTS = [
     (heir_navigator, AgentName.HEIR_NAVIGATOR),
     (decedent_estate, AgentName.DECEDENT_ESTATE),
     (tax_calculator, AgentName.TAX_CALCULATOR),
+    (asset_organizer, AgentName.ASSET_ORGANIZER),
+    (retirement_planner, AgentName.RETIREMENT_PLANNER),
     (heir_share_analyzer, AgentName.HEIR_SHARE_ANALYZER),
 ]
 

@@ -1,0 +1,474 @@
+/**
+ * 상담 앱(3-zone 셸: /home · /chat) 스킨.
+ *
+ * data-app-theme="light" — 공개 사이트와 같은 기본 톤(크림 + 네이비 + 골드). 특수 효과 없음.
+ * data-app-theme="dark"  — 남색 배경 + 금색 포인트 + 글래스 패널.
+ * 두 버전 공통: 주요 버튼은 solid 금색.
+ */
+
+.app-shell {
+  --font-scale: 1.08;
+}
+
+/* ============ 두 버전 공통 ============ */
+
+/* 주요 버튼 = solid 금색 */
+.app-shell .btn-primary,
+.app-shell .btn-gold {
+  background: var(--brand-gold);
+  color: #fff;
+  border: none;
+}
+.app-shell .btn-primary:hover:not(:disabled),
+.app-shell .btn-gold:hover:not(:disabled) {
+  background: var(--brand-gold-hover);
+}
+.app-shell .btn-primary:disabled,
+.app-shell .btn-gold:disabled {
+  opacity: 0.45;
+}
+
+/* 준비 현황 토글 · 컨텍스트 링크 = 금색 강조 */
+.app-shell .context-panel-toggle {
+  color: var(--brand-gold);
+  font-weight: 700;
+}
+.app-shell .ctx-link {
+  color: var(--brand-gold);
+}
+.app-shell .fn-tile-status {
+  background: var(--brand-gold-soft);
+  color: var(--brand-gold);
+}
+.app-shell .fn-rail-extra,
+.app-shell .chat-entry-secondary {
+  color: var(--brand-gold);
+}
+
+/* ============ 에이전트 톤 (구조, 두 버전 공통) ============ */
+.agent-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+  line-height: 1;
+  position: relative;
+  background: var(--surface-card);
+  border: 1.5px solid currentColor;
+  background-clip: padding-box;
+}
+.agent-avatar-sm {
+  width: 28px;
+  height: 28px;
+  font-size: 0.85rem;
+}
+.agent-avatar-md {
+  width: 36px;
+  height: 36px;
+  font-size: 1rem;
+}
+.agent-avatar-lg {
+  width: 46px;
+  height: 46px;
+  font-size: 1.2rem;
+}
+.agent-avatar-pulse {
+  animation: agent-glow 1.6s ease-in-out infinite;
+  color: var(--brand-gold);
+}
+@keyframes agent-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 6px rgba(176, 137, 61, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(176, 137, 61, 0.75);
+  }
+}
+.agent-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.agent-header-avatars {
+  display: inline-flex;
+}
+.agent-header-avatars .agent-avatar + .agent-avatar {
+  margin-left: -9px;
+}
+.agent-header-label {
+  font-size: var(--text-caption);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--brand-gold);
+}
+.agent-header-sub {
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+.agent-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.agent-thinking-text {
+  font-size: var(--text-caption);
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+.topic-card-icon {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-avatar-pulse {
+    animation: none;
+  }
+}
+
+/* ============ DARK: 남색 + 금색 + 글래스 ============ */
+.app-shell[data-app-theme="dark"] {
+  --surface-page: #0e1626;
+  --surface-card: rgba(26, 38, 62, 0.62);
+  --surface-solid: #17233c;
+  --surface-sunken: rgba(10, 18, 32, 0.72);
+  --overlay: rgba(4, 8, 18, 0.66);
+
+  --ink: #eef1f8;
+  --ink-muted: #aab3c9;
+  --ink-faint: #7a86a0;
+  --ink-inverse: #f2ede0;
+  --ink-inverse-muted: #b9c0d6;
+
+  --line: rgba(210, 180, 120, 0.16);
+  --line-strong: rgba(220, 190, 130, 0.32);
+
+  --holo-rgb: 226, 192, 120;
+  --holo: linear-gradient(115deg, #c89a4c 0%, #f4e4bb 46%, #b58637 100%);
+  --holo-soft: linear-gradient(
+    115deg,
+    rgba(226, 192, 120, 0.26) 0%,
+    rgba(244, 228, 187, 0.12) 50%,
+    rgba(185, 138, 63, 0.26) 100%
+  );
+  --holo-3: #b98a3f;
+
+  --brand-gold: #d8b877;
+  --brand-gold-hover: #e6c98f;
+  --brand-gold-soft: rgba(216, 184, 119, 0.16);
+
+  --state-ok: #6fe0b0;
+  --state-ok-bg: rgba(31, 74, 55, 0.5);
+  --state-bad: #f29a9a;
+  --state-bad-bg: rgba(74, 34, 34, 0.5);
+  --state-warn: #ecc987;
+  --state-warn-bg: rgba(70, 56, 28, 0.5);
+  --state-info: #9db6f0;
+  --state-info-bg: rgba(28, 42, 70, 0.55);
+
+  --agent-heir: #8ab6ff;
+  --agent-share: #63d3e4;
+  --agent-estate: #c1a6ff;
+  --agent-tax: #79dfae;
+  --agent-asset: #ecc987;
+
+  --focus-ring: 0 0 0 2px var(--surface-page), 0 0 0 4px var(--brand-gold),
+    0 0 16px rgba(var(--holo-rgb), 0.5);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 14px 44px rgba(0, 0, 0, 0.4);
+  --shadow-dialog: 0 30px 80px rgba(0, 0, 0, 0.6), 0 0 60px rgba(var(--holo-rgb), 0.12);
+
+  --radius-md: 12px;
+  --radius-lg: 18px;
+
+  position: relative;
+  color: var(--ink);
+  background:
+    radial-gradient(1100px 620px at 80% -10%, rgba(226, 192, 120, 0.13), transparent 62%),
+    radial-gradient(880px 520px at 2% 6%, rgba(226, 192, 120, 0.07), transparent 60%),
+    var(--surface-page);
+}
+.app-shell[data-app-theme="dark"]::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(210, 180, 120, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(210, 180, 120, 0.05) 1px, transparent 1px);
+  background-size: 46px 46px;
+  mask-image: radial-gradient(circle at 62% 0%, #000 0%, transparent 72%);
+  -webkit-mask-image: radial-gradient(circle at 62% 0%, #000 0%, transparent 72%);
+}
+.app-shell[data-app-theme="dark"] > * {
+  position: relative;
+  z-index: 1;
+}
+.app-shell[data-app-theme="dark"] h1,
+.app-shell[data-app-theme="dark"] h2,
+.app-shell[data-app-theme="dark"] h3,
+.app-shell[data-app-theme="dark"] h4 {
+  color: var(--ink);
+}
+
+/* 글래스 패널 */
+.app-shell[data-app-theme="dark"] .app-header,
+.app-shell[data-app-theme="dark"] .context-panel-wrap,
+.app-shell[data-app-theme="dark"] .composer,
+.app-shell[data-app-theme="dark"] .bubble-assistant,
+.app-shell[data-app-theme="dark"] .assistant-bubble,
+.app-shell[data-app-theme="dark"] .bubble-typing,
+.app-shell[data-app-theme="dark"] .card,
+.app-shell[data-app-theme="dark"] .result-card,
+.app-shell[data-app-theme="dark"] .tax-breakdown,
+.app-shell[data-app-theme="dark"] .dialog-panel,
+.app-shell[data-app-theme="dark"] .inst-wizard,
+.app-shell[data-app-theme="dark"] .dev-panel,
+.app-shell[data-app-theme="dark"] .fn-tile {
+  background: var(--surface-card);
+  -webkit-backdrop-filter: blur(16px) saturate(1.25);
+  backdrop-filter: blur(16px) saturate(1.25);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-card);
+}
+.app-shell[data-app-theme="dark"] .result-card,
+.app-shell[data-app-theme="dark"] .assistant-bubble,
+.app-shell[data-app-theme="dark"] .dialog-panel,
+.app-shell[data-app-theme="dark"] .inst-wizard,
+.app-shell[data-app-theme="dark"] .fn-tile {
+  position: relative;
+  border-color: transparent;
+  background-clip: padding-box;
+}
+.app-shell[data-app-theme="dark"] .result-card::after,
+.app-shell[data-app-theme="dark"] .assistant-bubble::after,
+.app-shell[data-app-theme="dark"] .dialog-panel::after,
+.app-shell[data-app-theme="dark"] .inst-wizard::after,
+.app-shell[data-app-theme="dark"] .fn-tile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: var(--holo-soft);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  transition: background var(--motion-base);
+}
+.app-shell[data-app-theme="dark"] .fn-tile:hover:not(:disabled)::after,
+.app-shell[data-app-theme="dark"] .fn-tile-active::after {
+  background: var(--holo);
+}
+
+/* 헤더 */
+.app-shell[data-app-theme="dark"] .app-header {
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+}
+.app-shell[data-app-theme="dark"] .app-header .wordmark-text {
+  background: var(--holo);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.app-shell[data-app-theme="dark"] .app-header-btn:hover {
+  background: var(--surface-sunken);
+  color: var(--ink);
+}
+.app-shell[data-app-theme="dark"] .app-header-btn.dev-toggle.on {
+  background: var(--brand-gold);
+  color: #1e1b15;
+}
+.app-shell[data-app-theme="dark"] .app-header-axis {
+  color: var(--brand-gold);
+  border-color: rgba(var(--holo-rgb), 0.5);
+}
+
+/* 컨텍스트 패널 */
+.app-shell[data-app-theme="dark"] .context-panel-wrap {
+  border-top: none;
+  border-bottom: none;
+  border-right: none;
+}
+.app-shell[data-app-theme="dark"] .context-panel-toggle {
+  background: var(--surface-card);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+.app-shell[data-app-theme="dark"] .ctx-block h3 {
+  color: var(--ink-faint);
+}
+.app-shell[data-app-theme="dark"] .ctx-tag {
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+}
+.app-shell[data-app-theme="dark"] .ctx-prep-item:hover {
+  background: var(--surface-sunken);
+}
+.app-shell[data-app-theme="dark"] .gauge-track {
+  background: rgba(var(--holo-rgb), 0.16);
+}
+.app-shell[data-app-theme="dark"] .gauge-fill {
+  background: var(--brand-gold);
+  box-shadow: 0 0 10px rgba(var(--holo-rgb), 0.5);
+}
+
+/* 대화 / 작업 공간 */
+.app-shell[data-app-theme="dark"] .chat-scroll {
+  background: transparent;
+}
+.app-shell[data-app-theme="dark"] .bubble-user {
+  background: var(--brand-gold);
+  color: #1e1b15;
+  border: none;
+  box-shadow: 0 6px 18px rgba(var(--holo-rgb), 0.28);
+}
+.app-shell[data-app-theme="dark"] .bubble-error {
+  background: var(--state-bad-bg);
+  border: 1px solid var(--state-bad);
+  color: var(--state-bad);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+.app-shell[data-app-theme="dark"] .bubble-typing .dot {
+  background: var(--brand-gold);
+  box-shadow: 0 0 8px rgba(var(--holo-rgb), 0.8);
+}
+.app-shell[data-app-theme="dark"] .fn-rail-head h1,
+.app-shell[data-app-theme="dark"] .chat-entry h1 {
+  background: var(--holo);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.app-shell[data-app-theme="dark"] .fn-tile:hover:not(:disabled) {
+  box-shadow: var(--shadow-card), 0 0 22px rgba(var(--holo-rgb), 0.28);
+}
+.app-shell[data-app-theme="dark"] .chat-empty-hint p {
+  border-color: var(--line-strong);
+  color: var(--ink-faint);
+}
+.app-shell[data-app-theme="dark"] .user-note {
+  background: var(--surface-sunken);
+  border-color: var(--line);
+  color: var(--ink-muted);
+}
+.app-shell[data-app-theme="dark"] .gold-rule {
+  background: var(--holo);
+  height: 2px;
+  box-shadow: 0 0 10px rgba(var(--holo-rgb), 0.6);
+}
+.app-shell[data-app-theme="dark"] .eyebrow {
+  background: var(--holo);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.app-shell[data-app-theme="dark"] .agent-header-label {
+  background: var(--holo);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.app-shell[data-app-theme="dark"] .agent-avatar {
+  background: rgba(14, 22, 38, 0.9);
+}
+
+/* 컴포저 */
+.app-shell[data-app-theme="dark"] .composer {
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+}
+.app-shell[data-app-theme="dark"] .composer-input {
+  background: var(--surface-sunken);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.app-shell[data-app-theme="dark"] .composer-input:focus {
+  outline: none;
+  border-color: transparent;
+  box-shadow: var(--focus-ring), inset 0 0 14px rgba(var(--holo-rgb), 0.12);
+}
+.app-shell[data-app-theme="dark"] .composer-input::placeholder {
+  color: var(--ink-faint);
+}
+.app-shell[data-app-theme="dark"] .voice-btn {
+  background: var(--surface-sunken);
+  border-color: var(--line-strong);
+  color: var(--ink-muted);
+}
+.app-shell[data-app-theme="dark"] .voice-btn.listening {
+  border-color: var(--brand-gold);
+  color: var(--brand-gold);
+}
+.app-shell[data-app-theme="dark"] .suggestion-chip {
+  background: var(--surface-sunken);
+  border-color: var(--line-strong);
+  color: var(--ink-muted);
+}
+
+/* UI 프리미티브 */
+.app-shell[data-app-theme="dark"] .result-card-title {
+  color: var(--ink-faint);
+}
+.app-shell[data-app-theme="dark"] .choice-btn {
+  background: var(--surface-sunken);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.app-shell[data-app-theme="dark"] .choice-btn:hover:not(:disabled) {
+  border-color: var(--brand-gold);
+}
+.app-shell[data-app-theme="dark"] .choice-btn.choice-on {
+  background: var(--brand-gold);
+  color: #1e1b15;
+  border-color: transparent;
+}
+.app-shell[data-app-theme="dark"] .stepper-bar {
+  background: rgba(var(--holo-rgb), 0.16);
+}
+.app-shell[data-app-theme="dark"] .stepper-bar.on {
+  background: var(--brand-gold);
+}
+.app-shell[data-app-theme="dark"] .tax-row-final th,
+.app-shell[data-app-theme="dark"] .tax-row-final td {
+  background: var(--surface-sunken);
+}
+.app-shell[data-app-theme="dark"] .disclaimer-global {
+  border-top-color: var(--line);
+  background: transparent;
+}
+.app-shell[data-app-theme="dark"] .md code {
+  background: var(--surface-sunken);
+  color: var(--brand-gold);
+}
+.app-shell[data-app-theme="dark"] .md a {
+  color: var(--brand-gold);
+}
+.app-shell[data-app-theme="dark"] .precedent-card {
+  background: var(--brand-gold-soft);
+  border-left-color: var(--brand-gold);
+}
+.app-shell[data-app-theme="dark"] .needs-review {
+  background: var(--state-warn-bg);
+  color: var(--brand-gold);
+  border: 1px solid rgba(var(--holo-rgb), 0.32);
+}
+.app-shell[data-app-theme="dark"] .ctx-ledger,
+.app-shell[data-app-theme="dark"] .amount-display,
+.app-shell[data-app-theme="dark"] .ledger-card {
+  background: linear-gradient(150deg, rgba(46, 62, 108, 0.75), rgba(24, 38, 68, 0.6));
+  border: 1px solid var(--line-strong);
+}

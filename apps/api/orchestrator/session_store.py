@@ -26,7 +26,7 @@ from sqlalchemy.exc import IntegrityError
 
 from db.base import mask_sensitive_id, session_scope
 from family_graph.models import FamilyGraph
-from schemas import AgentName, FinancialProfile
+from schemas import AgentName, FinancialProfile, WillStatus
 
 from .models import ChatSession
 
@@ -62,6 +62,10 @@ class SessionState:
     #: 기존 sessions 테이블을 그대로 씁니다. 에이전트 이름과 충돌하지 않도록
     #: 밑줄로 시작합니다.
     financial_profile: FinancialProfile = field(default_factory=FinancialProfile)
+    #: 세션 공유 유언장 판정 요약 (schemas.WillStatus). financial_profile 과
+    #: 똑같이 "_shared" 아래에 저장합니다. decedent_estate 가 점검했을 때만
+    #: 값이 차고(checked=True), tax_calculator·heir_share_analyzer 가 읽습니다.
+    will_status: Optional[WillStatus] = None
     pending_handoff: Optional[AgentName] = None
     last_agent: Optional[AgentName] = None
     family_graph_id: Optional[str] = None
@@ -87,11 +91,21 @@ class SessionState:
 
     def to_json_context(self) -> dict[str, Any]:
         data = {k: v for k, v in self.per_agent_context.items() if k != self.SHARED_KEY}
+        shared: dict[str, Any] = {}
+
         profile = self.financial_profile.model_dump(exclude_none=True)
         if profile.get("extra") == {}:
             profile.pop("extra")
         if profile:
-            data[self.SHARED_KEY] = {"financial_profile": profile}
+            shared["financial_profile"] = profile
+
+        if self.will_status is not None and self.will_status.checked:
+            will_status = self.will_status.model_dump(exclude_none=True)
+            if will_status:
+                shared["will_status"] = will_status
+
+        if shared:
+            data[self.SHARED_KEY] = shared
         return data
 
     @classmethod
@@ -104,7 +118,21 @@ class SessionState:
         except Exception:  # noqa: BLE001 — 깨진 값 하나가 세션 로드를 막지 않게
             logger.warning("세션의 financial_profile 이 손상돼 비웁니다.")
             profile = FinancialProfile()
-        return cls(per_agent_context=raw, financial_profile=profile, **kwargs)
+
+        will_status: Optional[WillStatus] = None
+        will_status_raw = shared.get("will_status")
+        if will_status_raw:
+            try:
+                will_status = WillStatus.model_validate(will_status_raw)
+            except Exception:  # noqa: BLE001
+                logger.warning("세션의 will_status 가 손상돼 비웁니다.")
+
+        return cls(
+            per_agent_context=raw,
+            financial_profile=profile,
+            will_status=will_status,
+            **kwargs,
+        )
 
 
 class SessionStore:

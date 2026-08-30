@@ -114,6 +114,34 @@ def _apply_structured_context(payload: AgentInput, state: dict[str, Any]) -> Non
         _mark_confirmed(state, "planned_acquisitions")
 
 
+def _apply_shared_estate(payload: AgentInput, state: dict[str, Any]) -> None:
+    """세션 공유 상속재산(financial_profile)에서 재산가액·채무를 미리 채운다.
+
+    asset_organizer가 이미 자산·부채를 정리했으면 사용자에게 다시 묻지 않는다.
+    사용자가 직접 확인한 값(confirmed_fields)은 덮어쓰지 않는다.
+    """
+    estate = payload.financial_profile
+    if estate is None:
+        return
+
+    values = state["values"]
+    asset_fields = (
+        estate.real_estate_value,
+        estate.financial_assets,
+        estate.other_assets,
+    )
+    if (
+        any(v is not None for v in asset_fields)
+        and "estate_value" not in state["confirmed_fields"]
+    ):
+        values["estate_value"] = sum(v for v in asset_fields if v is not None)
+        _mark_confirmed(state, "estate_value")
+
+    if estate.total_debts is not None and "debts" not in state["confirmed_fields"]:
+        values["debts"] = estate.total_debts
+        _mark_confirmed(state, "debts")
+
+
 def _parse_stage(message: str) -> str | None:
     normalized = message.replace(" ", "")
     if any(keyword in normalized for keyword in ("생전", "준비", "사망전")):
@@ -263,6 +291,7 @@ def run(payload: AgentInput) -> AgentOutput:
 
     state = _load_state(payload.context)
     _apply_structured_context(payload, state)
+    _apply_shared_estate(payload, state)
 
     if not _family_names(payload.family_graph):
         return _missing_family_output(state)
@@ -284,6 +313,15 @@ def run(payload: AgentInput) -> AgentOutput:
         state["missing_fields"] = missing
         question = QUESTIONS[next_slot]
         if next_slot == "planned_acquisitions":
+            if (
+                payload.will_status is not None
+                and getattr(payload.will_status, "checked", False)
+                and not getattr(payload.will_status, "no_will", False)
+            ):
+                question = (
+                    "확인된 유언장 내용을 기준으로, 각 사람이 받을 예정 금액을 "
+                    "'배우자=3억원, 자녀1=2억원'처럼 입력해주세요."
+                )
             question += "\n\n등록된 가족: " + ", ".join(
                 _family_names(payload.family_graph)
             )

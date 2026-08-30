@@ -47,6 +47,7 @@ from schemas import (
     ChatResponse,
     FinancialProfile,
     VerificationResult,
+    WillStatus,
 )
 
 from . import registry
@@ -87,6 +88,7 @@ class GraphState(TypedDict, total=False):
     plan: Plan
     family_graph: Optional[dict]
     financial_profile: FinancialProfile
+    will_status: Optional[WillStatus]
     execution: ExecutionResult
     output: ChatResponse
 
@@ -107,6 +109,7 @@ def node_classify(state: GraphState) -> GraphState:
         pending_handoff=session.pending_handoff,
         last_agent=session.last_agent,
         default_agent=_DEFAULT_AGENT,
+        axis=payload.axis,
     )
     return {"plan": plan}
 
@@ -123,9 +126,14 @@ def node_build_context(state: GraphState) -> GraphState:
         family_graph = get_heirs_dict(family_graph_id)
 
     profile = session.financial_profile.merged_with(payload.financial_profile)
+
+    base_will_status = session.will_status or WillStatus()
+    will_status = base_will_status.merged_with(payload.will_status)
+
     return {
         "family_graph": family_graph,
         "financial_profile": profile,
+        "will_status": will_status,
         "session": session,
     }
 
@@ -137,6 +145,7 @@ def node_execute_plan(state: GraphState) -> GraphState:
         payload=state["payload"],
         family_graph=state.get("family_graph"),
         financial_profile=state["financial_profile"],
+        will_status=state.get("will_status"),
         stored_context_for=session.context_for,
         runners=_AGENT_RUNNERS,
     )
@@ -170,6 +179,7 @@ def node_compose(state: GraphState) -> GraphState:
         next_action=primary.next_action,
         handoffs=[h for o in outputs for h in o.handoffs],
         financial_profile=state["execution"].financial_profile,
+        will_status=state["execution"].will_status,
         data=merged_data,
         agents=[o.agent for o in outputs],
         path=plan.path,
@@ -200,6 +210,7 @@ def node_persist_session(state: GraphState) -> GraphState:
         pending_handoff=handoff_target,
     )
     session.financial_profile = state["execution"].financial_profile
+    session.will_status = state["execution"].will_status
     default_store.save(payload.session_id, session)
     return {"session": session}
 
