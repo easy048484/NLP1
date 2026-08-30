@@ -38,7 +38,7 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from schemas import AgentInput, AgentName, AgentOutput
+from schemas import AgentInput, AgentName, AgentOutput, WillStatus
 
 from .date_parser import parse_dates
 from .image_reader import PHOTO_FIELD_IDS, extract_will_photo_fields
@@ -824,6 +824,58 @@ def _run_recording_prepare_pipeline(
 
 
 def run(payload: AgentInput) -> AgentOutput:
+    """대화형 유언장 점검 실행 + 공유 will_status 요약을 얹어 돌려준다.
+
+    실제 파이프라인은 _run_pipeline 이 담당하고, 이 함수는 그 결과에서
+    tax_calculator·heir_share_analyzer 가 참고할 compact WillStatus 를 뽑아
+    AgentOutput.will_status 로 붙인다 (schemas.WillStatus).
+    """
+    output = _run_pipeline(payload)
+    output.will_status = _derive_will_status(output)
+    return output
+
+
+#: 요건 판정 등급(rules/requirements.json) → 공유 WillStatus 등급.
+_GRADE_MAP: dict[str, str] = {"RED": "red", "YELLOW": "yellow", "GREEN": "green"}
+
+
+def _derive_will_status(output: AgentOutput) -> WillStatus:
+    ns = output.data.get(STATE_KEY, {}) if isinstance(output.data, dict) else {}
+    will_type = ns.get("will_type")
+    requirements = ns.get("requirements") or {}
+    pending_questions = ns.get("pending_questions") or []
+
+    no_will = will_type == _NO_WILL_TYPE
+    checked = bool(will_type) and will_type in _valid_will_type_values()
+
+    grades = {
+        r.get("grade")
+        for r in requirements.values()
+        if isinstance(r, dict) and r.get("grade")
+    }
+    overall_grade: Optional[str] = None
+    if requirements and not pending_questions and "PENDING" not in grades:
+        for raw_grade in ("RED", "YELLOW", "GREEN"):
+            if raw_grade in grades:
+                overall_grade = _GRADE_MAP[raw_grade]
+                break
+
+    has_effect: Optional[bool] = None
+    if overall_grade == "green" or will_type == _NOTARIAL_WILL_TYPE:
+        has_effect = True
+    elif overall_grade == "red":
+        has_effect = False
+
+    return WillStatus(
+        checked=checked,
+        will_type=None if no_will else will_type,
+        no_will=no_will,
+        overall_grade=overall_grade,
+        has_effect=has_effect,
+    )
+
+
+def _run_pipeline(payload: AgentInput) -> AgentOutput:
     # 상태는 네임스페이스(context["decedent_estate"])에서 읽고, 이번 턴에 평면
     # 키가 왔으면 그 값을 우선한다 (state.load_state — 전환기 안전망).
     state = load_state(payload.context)

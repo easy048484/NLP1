@@ -53,6 +53,8 @@ _PRE_PLANNING = re.compile(
 class GraphState(TypedDict, total=False):
     user_message: str
     family_graph: Optional[dict[str, Any]]
+    #: 세션 공유 상속재산 (schemas.FinancialProfile). 빚 vs 재산 판정에 씁니다.
+    estate: Any
     session_id: str
     today: date
     use_llm: bool
@@ -104,6 +106,7 @@ def node_resolve(state: GraphState) -> GraphState:
         state["heir"],
         family_graph=state.get("family_graph"),
         today=state["today"],
+        estate=state.get("estate"),
     )
     return {"plan": plan}
 
