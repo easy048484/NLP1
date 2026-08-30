@@ -241,3 +241,30 @@
     padding: var(--sp-3);
   }
 }
+
+/* ===== 데스크톱: 셸을 뷰포트 높이에 고정 — 본문/패널만 각자 스크롤 =====
+   (모바일 <=1024px 은 기존대로 페이지 전체 스크롤) */
+@media (min-width: 1025px) {
+  .app-shell {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .app-body {
+    min-height: 0;
+  }
+  .app-main {
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .context-panel-wrap {
+    min-height: 0;
+    overflow: hidden;
+  }
+  .context-panel {
+    position: static;
+    top: auto;
+    height: 100%;
+    max-height: 100%;
+  }
+}

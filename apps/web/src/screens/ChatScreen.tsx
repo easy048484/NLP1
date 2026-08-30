@@ -14,7 +14,7 @@ export function ChatScreen() {
 
   return (
     <div className="chat-screen">
-      <div className="fn-rail-head">
+      <div className={`fn-rail-head${started ? " compact" : ""}`}>
         <Eyebrow>AI 에이전트</Eyebrow>
         <h1>무엇을 도와드릴까요?</h1>
         <p className="fn-rail-lede">

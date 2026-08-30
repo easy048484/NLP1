@@ -117,7 +117,7 @@ export function AgentCards({
               // context[field] 로 읽는다 (예: decedent_estate 의 will_type).
               void send(
                 chosen?.label ?? value,
-                q.field ? { [q.field]: value } : undefined,
+                q.field ? { context: { [q.field]: value } } : undefined,
               );
             }}
           />

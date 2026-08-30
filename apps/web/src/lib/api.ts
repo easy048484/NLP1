@@ -131,6 +131,8 @@ export async function sendChatMessage(
     axis?: ConsultAxis | null;
     /** 선택 버튼 등에서 구조화 답변을 함께 보낼 때 (예: {will_type: "none"}) */
     context?: Record<string, unknown>;
+    /** 유언장·안심상속 조회결과 사진 등. 서버가 판독 직후 폐기(저장 안 함). */
+    image?: { base64: string; mediaType: string };
   },
 ): Promise<ChatCallResult> {
   const request: AgentInput = {
@@ -139,6 +141,12 @@ export async function sendChatMessage(
     context: opts?.context ?? {},
     ...(opts?.familyGraphId ? { family_graph_id: opts.familyGraphId } : {}),
     ...(opts?.axis ? { axis: opts.axis } : {}),
+    ...(opts?.image
+      ? {
+          image_base64: opts.image.base64,
+          image_media_type: opts.image.mediaType,
+        }
+      : {}),
   };
 
   const startedAt = performance.now();

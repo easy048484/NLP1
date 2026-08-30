@@ -31,6 +31,10 @@ export interface AgentInput {
   /** "지금 준비 중"(pre_need) / "가족을 떠나보낸 뒤"(post_death) */
   axis?: ConsultAxis | null;
   context: Record<string, unknown>;
+  /** 판독할 이미지의 base64 (유언장 사진, 안심상속 조회결과 캡처 등). */
+  image_base64?: string | null;
+  /** image_base64 의 MIME 타입 (예: image/jpeg). */
+  image_media_type?: string | null;
 }
 
 export interface AgentOutput {
