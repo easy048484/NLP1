@@ -129,6 +129,10 @@ def facts_block(plan: ProcedurePlan, state: HeirState, *, today: date) -> str:
         for entry in blocked[:3]:
             lines.append(f"- {entry.title}: 먼저 {', '.join(entry.blocked_by)}가 필요")
 
+    if plan.solvency:
+        lines.append("\n[고인의 재산 vs 빚 — 확인된 값 기준, 계산 금지·문구만 전달]")
+        lines.append(f"- {plan.solvency.note}")
+
     if plan.branches:
         lines.append("\n[빚이 있을 때의 선택지 — 추천 금지, 결과만 전달]")
         for branch in plan.branches:
@@ -216,6 +220,11 @@ def deterministic_reply(plan: ProcedurePlan, state: HeirState) -> str:
     if len(plan.next_actions) > 1:
         rest = ", ".join(action.title for action in plan.next_actions[1:4])
         parts.append(f"이어서 준비하실 것: {rest}\n")
+
+    if plan.solvency:
+        parts.append("**고인의 재산과 빚**")
+        parts.append(plan.solvency.note)
+        parts.append("")
 
     if plan.branches:
         parts.append(

@@ -56,6 +56,18 @@ def test_keyword_routes_to_matching_agent(monkeypatch):
     assert output.agent == AgentName.TAX_CALCULATOR
 
 
+def test_forced_share_keyword_routes_to_share_analyzer(monkeypatch):
+    monkeypatch.setitem(
+        router._AGENT_RUNNERS,
+        AgentName.HEIR_SHARE_ANALYZER,
+        _fake_agent(AgentName.HEIR_SHARE_ANALYZER),
+    )
+    output = router.route(
+        AgentInput(session_id="share-routing", user_message="유류분이 부족한가요?")
+    )
+    assert output.agent == AgentName.HEIR_SHARE_ANALYZER
+
+
 def test_handoff_next_action_routes_next_turn_to_target_agent(monkeypatch):
     monkeypatch.setitem(
         router._AGENT_RUNNERS,
@@ -157,6 +169,44 @@ def test_decedent_estate_is_namespaced_like_other_agents(monkeypatch):
     # 두 번째 턴: 지난 턴 data["decedent_estate"]가 세션을 거쳐 되돌아와야 한다.
     router.route(AgentInput(session_id="s6", user_message="네", context={}))
     assert captured_inputs[1]["decedent_estate"] == {"will_type": "handwritten"}
+
+
+def test_image_fields_reach_agent_but_never_persist_in_session(monkeypatch):
+    """이미지는 node_build_context가 에이전트에게 그대로 전달하지만, 에이전트가
+    응답(data)에 담지 않는 한 세션에는 절대 남지 않는다 — extract_state_to_persist가
+    output.data[agent.value]만 저장하고 payload(이번 요청)는 저장 경로에 아예
+    들어가지 않기 때문이다(orchestrator/handoff.py 참고). 이 테스트는 그 전제가
+    실제로 유지되는지 오케스트레이터 레벨에서 직접 확인한다."""
+    captured_inputs = []
+
+    def _run(payload: AgentInput) -> AgentOutput:
+        captured_inputs.append(payload)
+        # 실제 에이전트(decedent_estate)와 동일하게, 이미지는 응답 data에 담지 않는다.
+        return AgentOutput(
+            agent=AgentName.DECEDENT_ESTATE, reply="ok", data={"decedent_estate": {}}
+        )
+
+    monkeypatch.setitem(router._AGENT_RUNNERS, AgentName.DECEDENT_ESTATE, _run)
+
+    router.route(
+        AgentInput(
+            session_id="s7",
+            user_message="유언장 사진 올릴게요",  # "유언" 키워드로 decedent_estate 라우팅
+            context={"will_type": "handwritten"},
+            image_base64="ZmFrZQ==",
+            image_media_type="image/jpeg",
+        )
+    )
+
+    # 에이전트는 이미지를 받았다 (전달 자체는 정상 동작).
+    assert captured_inputs[0].image_base64 == "ZmFrZQ=="
+    assert captured_inputs[0].image_media_type == "image/jpeg"
+
+    # 하지만 다음 턴에는 이미지가 세션에서 되살아나지 않는다 — 애초에 저장된 적이 없다.
+    # (키워드 없이 "last_agent" 규칙으로 같은 에이전트에 계속 이어진다.)
+    router.route(AgentInput(session_id="s7", user_message="네", context={}))
+    assert captured_inputs[1].image_base64 is None
+    assert captured_inputs[1].image_media_type is None
 
 
 # (삭제됨) test_legacy_flat_context_set_is_empty

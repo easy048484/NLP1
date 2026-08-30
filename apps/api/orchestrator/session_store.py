@@ -26,7 +26,7 @@ from sqlalchemy.exc import IntegrityError
 
 from db.base import mask_sensitive_id, session_scope
 from family_graph.models import FamilyGraph
-from schemas import AgentName
+from schemas import AgentName, FinancialProfile, WillStatus
 
 from .models import ChatSession
 
@@ -57,6 +57,15 @@ class SessionState:
     """
 
     per_agent_context: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: 세션 공유 재무 상태 (schemas.FinancialProfile). DB에는 per_agent_context 의
+    #: 예약 키 "_shared" 아래에 함께 저장합니다 — 컬럼/마이그레이션 추가 없이
+    #: 기존 sessions 테이블을 그대로 씁니다. 에이전트 이름과 충돌하지 않도록
+    #: 밑줄로 시작합니다.
+    financial_profile: FinancialProfile = field(default_factory=FinancialProfile)
+    #: 세션 공유 유언장 판정 요약 (schemas.WillStatus). financial_profile 과
+    #: 똑같이 "_shared" 아래에 저장합니다. decedent_estate 가 점검했을 때만
+    #: 값이 차고(checked=True), tax_calculator·heir_share_analyzer 가 읽습니다.
+    will_status: Optional[WillStatus] = None
     pending_handoff: Optional[AgentName] = None
     last_agent: Optional[AgentName] = None
     family_graph_id: Optional[str] = None
@@ -76,6 +85,54 @@ class SessionState:
         self.pending_handoff = pending_handoff
         self.last_agent = agent
         self.updated_at = time.time()
+
+    # ---- DB 직렬화 (per_agent_context JSON 하나에 공유 상태까지 같이 담는다)
+    SHARED_KEY = "_shared"
+
+    def to_json_context(self) -> dict[str, Any]:
+        data = {k: v for k, v in self.per_agent_context.items() if k != self.SHARED_KEY}
+        shared: dict[str, Any] = {}
+
+        profile = self.financial_profile.model_dump(exclude_none=True)
+        if profile.get("extra") == {}:
+            profile.pop("extra")
+        if profile:
+            shared["financial_profile"] = profile
+
+        if self.will_status is not None and self.will_status.checked:
+            will_status = self.will_status.model_dump(exclude_none=True)
+            if will_status:
+                shared["will_status"] = will_status
+
+        if shared:
+            data[self.SHARED_KEY] = shared
+        return data
+
+    @classmethod
+    def from_json_context(cls, raw: dict[str, Any], **kwargs: Any) -> "SessionState":
+        raw = dict(raw or {})
+        shared = raw.pop(cls.SHARED_KEY, None) or {}
+        profile_raw = shared.get("financial_profile") or {}
+        try:
+            profile = FinancialProfile.model_validate(profile_raw)
+        except Exception:  # noqa: BLE001 — 깨진 값 하나가 세션 로드를 막지 않게
+            logger.warning("세션의 financial_profile 이 손상돼 비웁니다.")
+            profile = FinancialProfile()
+
+        will_status: Optional[WillStatus] = None
+        will_status_raw = shared.get("will_status")
+        if will_status_raw:
+            try:
+                will_status = WillStatus.model_validate(will_status_raw)
+            except Exception:  # noqa: BLE001
+                logger.warning("세션의 will_status 가 손상돼 비웁니다.")
+
+        return cls(
+            per_agent_context=raw,
+            financial_profile=profile,
+            will_status=will_status,
+            **kwargs,
+        )
 
 
 class SessionStore:
@@ -123,8 +180,8 @@ class PostgresSessionStore(SessionStore):
             row = db.get(ChatSession, session_id)
             if row is None or row.expires_at < datetime.now(timezone.utc):
                 return SessionState()
-            return SessionState(
-                per_agent_context=dict(row.per_agent_context or {}),
+            return SessionState.from_json_context(
+                row.per_agent_context or {},
                 pending_handoff=(
                     AgentName(row.pending_handoff) if row.pending_handoff else None
                 ),
@@ -172,7 +229,7 @@ class PostgresSessionStore(SessionStore):
                     row.pending_handoff = (
                         state.pending_handoff.value if state.pending_handoff else None
                     )
-                    row.per_agent_context = dict(state.per_agent_context)
+                    row.per_agent_context = state.to_json_context()
                     row.expires_at = expires_at
                 return
             except IntegrityError as exc:

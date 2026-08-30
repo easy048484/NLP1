@@ -15,7 +15,9 @@ from agents.decedent_estate.result_formatter import (
     format_requirement_line,
     format_result,
     pending_questions,
+    progress,
     summarize,
+    term_note,
 )
 
 _PRECEDENTS_PATH = (
@@ -24,6 +26,13 @@ _PRECEDENTS_PATH = (
     / "decedent_estate"
     / "rules"
     / "precedents.json"
+)
+_RULES_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "agents"
+    / "decedent_estate"
+    / "rules"
+    / "requirements.json"
 )
 
 
@@ -74,6 +83,9 @@ def test_case_a_all_green_summary() -> None:
     assert "✅ 날인: 기재 확인" in output
     assert "❌" not in output
     assert "⚠️" not in output
+    # term_note 는 GREEN에 안 붙는다 — 날인 GREEN의 기존 참고 문구(ℹ️, 무인 관련,
+    # _GREEN_REFERENCE_NOTES)와는 별개다. 그 케이스와 섞이지 않게 GREEN/RED 가
+    # 함께 있는 결과로 별도 확인한다: test_term_note_excluded_for_green_included_for_red_in_mixed_result.
 
 
 def test_case_b_red_present_summary_and_card() -> None:
@@ -95,6 +107,7 @@ def test_case_b_red_present_summary_and_card() -> None:
         [
             "❌ 주소: 유언자 주소가 확인되지 않습니다",
             f"{_one_liner('address_missing_invalid')} {_citation('address_missing_invalid')}",
+            f"   ℹ️ {term_note('address')}",
         ]
     )
     assert "→ 법률 전문가 확인을 권합니다" not in line
@@ -117,6 +130,7 @@ def test_case_c_yellow_only_summary_and_two_cards() -> None:
             "⚠️ 연월일: 연월일이 쟁점이 될 수 있습니다",
             f"{_one_liner('date_missing_day_invalid')} {_citation('date_missing_day_invalid')}",
             f"{_one_liner('date_specifiable_valid')} {_citation('date_specifiable_valid')}",
+            f"   ℹ️ {term_note('date')}",
             "→ 개별 판단이 필요합니다. 법률 상담을 권합니다",
         ]
     )
@@ -130,7 +144,8 @@ def test_case_d_pending_summary_lists_question() -> None:
     )  # handwriting만 미답변 → 1개
 
     assert summarize(results) == (
-        "**한 가지만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 항목입니다."
+        "**한 가지만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 "
+        "항목입니다. (4/5 확인됨)"
     )
 
     questions = pending_questions(results)
@@ -203,7 +218,8 @@ def test_pending_takes_priority_over_red() -> None:
     assert results["handwriting"].grade == "PENDING"
     assert results["seal"].grade == "PENDING"
     assert summarize(results) == (
-        "**2가지만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 항목입니다."
+        "**2가지만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 "
+        "항목입니다. (3/5 확인됨)"
     )
 
 
@@ -219,7 +235,8 @@ def test_summary_pending_count_scales_with_three_pending_items() -> None:
     assert results["handwriting"].grade == "PENDING"
     assert results["seal"].grade == "PENDING"
     assert summarize(results) == (
-        "**3가지만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 항목입니다."
+        "**3가지만 직접 확인해주세요.** 텍스트만으로는 판별할 수 없는 "
+        "항목입니다. (2/5 확인됨)"
     )
 
 
@@ -372,3 +389,123 @@ def test_fingerprint_identity_disputed_invalid_has_source_url() -> None:
     assert card["source_url"], card["id"]
     assert card["case_number"] == "2005누1600"
     assert card["court"] == "대전고등법원"
+
+
+# ---------------------------------------------------------------------------
+# term_note (미충족 요건 용어 설명) — GREEN 제외, RED/YELLOW 만
+# ---------------------------------------------------------------------------
+
+
+def test_term_note_present_for_every_requirement() -> None:
+    """자필증서 6요건 + 녹음 7요건 전부 term_note 가 채워져 있는지 (데이터 누락 방지)."""
+    with _RULES_PATH.open(encoding="utf-8") as f:
+        rules = json.load(f)
+
+    handwritten = [r for r in rules["requirements"] if r["will_type"] == "handwritten"]
+    recording = [r for r in rules["requirements"] if r["will_type"] == "recording"]
+    assert len(handwritten) == 6
+    assert len(recording) == 7
+
+    for req in handwritten + recording:
+        assert req.get("term_note"), req["id"]
+
+
+def test_term_note_excluded_for_green_included_for_red_in_mixed_result() -> None:
+    """같은 결과 집합 안에 GREEN 과 RED 가 섞여 있어도, term_note 는 RED 에만 붙는다
+    — test_case_a(전부 GREEN)만으로는 "애초에 RED 가 없어서 안 보이는 것"과
+    "GREEN 이라 걸러진 것"을 구분할 수 없어 별도로 확인한다."""
+    text = _will_text(_NAME_LINE, _DATE_LINE)  # 주소 없음 → RED, 나머지는 GREEN
+    results = check_requirements(
+        text,
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+        address_envelope_answer="no_envelope",
+    )
+
+    green_line = format_requirement_line(results["name"])
+    red_line = format_requirement_line(results["address"])
+
+    assert results["name"].grade == "GREEN"
+    assert "ℹ️" not in green_line
+
+    assert results["address"].grade == "RED"
+    assert term_note("address") in red_line
+
+
+def test_term_note_included_for_yellow() -> None:
+    text = _will_text(_NAME_LINE, _ADDRESS_LINE, "아버지 칠순 기념일에")
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
+
+    assert results["date"].grade == "YELLOW"
+    line = format_requirement_line(results["date"])
+    assert term_note("date") in line
+
+
+# ---------------------------------------------------------------------------
+# progress (진행률 체크리스트)
+# ---------------------------------------------------------------------------
+
+
+def test_progress_all_confirmed() -> None:
+    text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
+
+    assert progress(results) == {"checked": 5, "total": 5}
+
+
+def test_progress_counts_pending_as_unchecked() -> None:
+    """handwriting/seal 확인 답변을 아예 안 주면 그 둘은 PENDING — 진행률에서 빠져야 한다."""
+    text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
+    results = check_requirements(text)  # handwriting_answer/seal_answer 없음
+
+    assert results["handwriting"].grade == "PENDING"
+    assert results["seal"].grade == "PENDING"
+    assert progress(results) == {"checked": 3, "total": 5}
+
+
+def test_progress_counts_red_and_yellow_as_checked() -> None:
+    """PENDING 이 아니면(GREEN/RED/YELLOW 무엇이든) "확인됨"으로 센다 — 등급이
+    나쁘다고 진행률에서 빠지지 않는다."""
+    text = _will_text(_NAME_LINE, _DATE_LINE)  # 주소 없음 → RED
+    results = check_requirements(
+        text,
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+        address_envelope_answer="no_envelope",
+    )
+
+    assert results["address"].grade == "RED"
+    assert progress(results) == {"checked": 5, "total": 5}
+
+
+def test_progress_interseal_not_counted() -> None:
+    """interseal 은 법정 요건이 아니라(_FORMAL_REQUIREMENT_IDS 밖) 분모에 안 들어간다."""
+    text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
+
+    assert "interseal" in results  # 결과 자체엔 있지만
+    assert progress(results)["total"] == 5  # 분모에는 안 들어간다
+
+
+def test_progress_recording_total_is_seven() -> None:
+    from agents.decedent_estate.recording_checker import (
+        FORMAL_RECORDING_REQUIREMENT_IDS,
+        check_recording_requirements,
+    )
+
+    text = (
+        "나는 다음과 같이 유언한다. 이 집을 아들에게 물려준다. "
+        "유언자: 홍길동. 2026년 5월 3일. "
+        "증인은 이 내용이 정확합니다. 증인: 김철수."
+    )
+    results = check_recording_requirements(text)
+
+    result = progress(results, FORMAL_RECORDING_REQUIREMENT_IDS)
+    assert result["total"] == 7
+    assert 0 <= result["checked"] <= 7
