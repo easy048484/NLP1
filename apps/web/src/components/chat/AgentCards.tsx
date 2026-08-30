@@ -2,36 +2,38 @@ import type { ReactElement } from "react";
 import { useApp } from "../../lib/appState";
 import {
   parsePendingQuestions,
-  parsePlan,
   parseShares,
   parseSignals,
   parseTaxResult,
 } from "../../lib/agentData";
-import type { AgentOutput, AgentPlan } from "../../types";
+import { Markdown } from "../../lib/markdown";
+import type { AgentOutput } from "../../types";
 import {
   AmountDisplay,
   ChoiceGroup,
   ResultCard,
   SignalRow,
   TaxBreakdown,
-  Timeline,
 } from "../ui";
 
 /**
  * 한 기여(contribution)의 agent + data 를 알맞은 근거 카드로 렌더한다.
  * 숫자·판정은 항상 여기(카드)에 고정하고, 본문 마크다운엔 서술만 남긴다.
+ *
+ * mode="results"  — 안내·근거 카드만 (후속 질문 제외)
+ * mode="questions" — 후속 질문(선택지)만
+ * 절차 타임라인(plan)은 우측 SchedulePanel 로 분리했으므로 여기서 렌더하지 않는다.
  */
 export function AgentCards({
   contribution,
-  topLevelPlan,
+  mode = "results",
 }: {
   contribution: AgentOutput;
-  topLevelPlan?: AgentPlan | null;
+  mode?: "results" | "questions";
 }) {
-  const { planChecks, togglePlanCheck, send } = useApp();
+  const { send } = useApp();
   const data = contribution.data ?? {};
 
-  const plan = topLevelPlan ?? parsePlan(data);
   const signals = parseSignals(data);
   const pending = parsePendingQuestions(data);
   const tax = parseTaxResult(data);
@@ -39,12 +41,31 @@ export function AgentCards({
 
   const cards: ReactElement[] = [];
 
-  if (contribution.agent === "heir_navigator" && plan) {
-    cards.push(
-      <ResultCard key="plan" title="나의 할 일">
-        <Timeline plan={plan} checked={planChecks} onToggle={togglePlanCheck} />
-      </ResultCard>,
-    );
+  if (mode === "questions") {
+    if (pending) {
+      pending.forEach((q, i) => {
+        cards.push(
+          <div key={`pending-${i}`} className="followup-q">
+            <div className="pending-q">
+              <Markdown>{q.question}</Markdown>
+            </div>
+            <ChoiceGroup
+              ariaLabel={q.question}
+              options={q.options}
+              onSelect={(value) => {
+                const chosen = q.options.find((o) => o.value === value);
+                void send(
+                  chosen?.label ?? value,
+                  q.field ? { [q.field]: value } : undefined,
+                );
+              }}
+            />
+          </div>,
+        );
+      });
+    }
+    if (cards.length === 0) return null;
+    return <div className="agent-cards">{cards}</div>;
   }
 
   if (shares) {
@@ -101,29 +122,6 @@ export function AgentCards({
         )}
       </ResultCard>,
     );
-  }
-
-  if (pending) {
-    pending.forEach((q, i) => {
-      cards.push(
-        <ResultCard key={`pending-${i}`} title="직접 확인해 주세요">
-          <p className="pending-q">{q.question}</p>
-          <ChoiceGroup
-            ariaLabel={q.question}
-            options={q.options}
-            onSelect={(value) => {
-              const chosen = q.options.find((o) => o.value === value);
-              // 선택지는 텍스트가 아니라 구조화 답변으로 보낸다 — 백엔드 에이전트가
-              // context[field] 로 읽는다 (예: decedent_estate 의 will_type).
-              void send(
-                chosen?.label ?? value,
-                q.field ? { [q.field]: value } : undefined,
-              );
-            }}
-          />
-        </ResultCard>,
-      );
-    });
   }
 
   if (cards.length === 0) return null;

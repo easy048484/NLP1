@@ -70,6 +70,11 @@
   width: 100%;
   margin: 0 auto;
 }
+.app-body.has-schedule {
+  grid-template-columns:
+    var(--schedule-panel-w) minmax(0, 1fr) var(--context-panel-w);
+  grid-template-areas: "schedule main panel";
+}
 .app-main {
   grid-area: main;
   min-width: 0;
@@ -81,8 +86,49 @@
   border-left: 1px solid var(--line);
   background: var(--surface-card);
 }
+.schedule-panel-wrap {
+  grid-area: schedule;
+  border-right: 1px solid var(--line);
+  background: var(--surface-card);
+}
 .context-panel-toggle {
   display: none;
+}
+
+/* ===== 우측 일정·체크리스트 패널 ===== */
+.schedule-panel {
+  position: sticky;
+  top: 58px;
+  max-height: calc(100dvh - 58px);
+  overflow-y: auto;
+  padding: var(--sp-5);
+  display: grid;
+  gap: var(--sp-3);
+  align-content: start;
+}
+.schedule-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.schedule-panel-head h2 {
+  font-size: var(--text-caption);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  font-family: var(--font-sans);
+}
+.schedule-panel-count {
+  font-size: var(--text-caption);
+  font-weight: 700;
+  color: var(--brand-gold);
+}
+.schedule-panel-lede {
+  font-size: var(--text-caption);
+  color: var(--ink-muted);
+  line-height: 1.55;
 }
 
 /* ===== 컨텍스트 패널 ===== */
@@ -199,12 +245,23 @@
 
 /* ===== 반응형 ===== */
 @media (max-width: 1024px) {
-  .app-body {
+  .app-body,
+  .app-body.has-schedule {
     grid-template-columns: 1fr;
     grid-template-areas:
       "toggle"
       "panel"
+      "schedule"
       "main";
+  }
+  .schedule-panel-wrap {
+    grid-area: schedule;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+  .schedule-panel {
+    position: static;
+    max-height: none;
   }
   .context-panel-toggle {
     grid-area: toggle;
@@ -233,6 +290,32 @@
   .context-panel {
     position: static;
     max-height: none;
+  }
+}
+
+/* ===== 데스크톱: 셸 높이를 뷰포트로 고정해 대화 목록만 스크롤 ===== */
+@media (min-width: 1025px) {
+  .app-shell {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .app-body,
+  .app-main,
+  .context-panel-wrap,
+  .schedule-panel-wrap {
+    min-height: 0;
+  }
+  .context-panel-wrap,
+  .schedule-panel-wrap {
+    overflow: hidden;
+  }
+  .context-panel,
+  .schedule-panel {
+    position: static;
+    top: auto;
+    height: 100%;
+    max-height: 100%;
   }
 }
 

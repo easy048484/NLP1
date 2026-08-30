@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode, type Ref } from "react";
 import { useApp, type Turn } from "../../lib/appState";
 import { useDevMode } from "../AppShell";
 import { AssistantResponse } from "./AssistantResponse";
@@ -7,20 +7,32 @@ import { DevPanel } from "./DevPanel";
 export function MessageList({ children }: { children?: ReactNode }) {
   const { turns, loading } = useApp();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const lastRowRef = useRef<HTMLDivElement>(null);
   const devMode = useDevMode();
 
+  const lastTurn = turns[turns.length - 1];
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [turns, loading]);
+    // 새 답변이 오면 그 답변의 첫머리가 보이도록, 그 외에는 맨 아래로.
+    if (lastTurn?.role === "assistant" && lastRowRef.current) {
+      lastRowRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else {
+      scrollRef.current?.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+  }, [turns, loading, lastTurn?.role]);
 
   return (
     <div className="chat-scroll" ref={scrollRef}>
       <div className="chat-log" role="log" aria-live="polite" aria-label="상담 대화">
-        {turns.map((turn) => (
-          <MessageRow key={turn.id} turn={turn} devMode={devMode} />
+        {turns.map((turn, i) => (
+          <MessageRow
+            key={turn.id}
+            turn={turn}
+            devMode={devMode}
+            rowRef={i === turns.length - 1 ? lastRowRef : undefined}
+          />
         ))}
 
         {children}
@@ -45,10 +57,18 @@ export function MessageList({ children }: { children?: ReactNode }) {
   );
 }
 
-function MessageRow({ turn, devMode }: { turn: Turn; devMode: boolean }) {
+function MessageRow({
+  turn,
+  devMode,
+  rowRef,
+}: {
+  turn: Turn;
+  devMode: boolean;
+  rowRef?: Ref<HTMLDivElement>;
+}) {
   if (turn.role === "user") {
     return (
-      <div className="msg-row msg-user">
+      <div className="msg-row msg-user" ref={rowRef}>
         <div className="user-note">
           <span className="user-note-tag">나</span>
           {turn.text}
@@ -59,7 +79,7 @@ function MessageRow({ turn, devMode }: { turn: Turn; devMode: boolean }) {
 
   if (turn.isError) {
     return (
-      <div className="msg-row msg-assistant">
+      <div className="msg-row msg-assistant" ref={rowRef}>
         <div className="bubble bubble-assistant bubble-error">{turn.errorText}</div>
         {devMode && turn.debug && <DevPanel debug={turn.debug} />}
       </div>
@@ -67,7 +87,7 @@ function MessageRow({ turn, devMode }: { turn: Turn; devMode: boolean }) {
   }
 
   return (
-    <div className="msg-row msg-assistant">
+    <div className="msg-row msg-assistant" ref={rowRef}>
       {turn.response && <AssistantResponse response={turn.response} />}
       {devMode && turn.debug && <DevPanel debug={turn.debug} />}
     </div>

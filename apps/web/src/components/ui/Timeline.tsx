@@ -57,7 +57,7 @@ export function Timeline({
           className="btn btn-outline timeline-ics"
           onClick={() => downloadText("eznext-일정.ics", plan.calendar_ics!)}
         >
-          일정 내려받기 (.ics)
+          📅 달력에 일정 등록하기
         </button>
       )}
     </div>

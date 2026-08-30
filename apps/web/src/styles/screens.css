@@ -393,6 +393,8 @@
 
 /* ============ CHAT / 작업 공간 ============ */
 .chat-screen {
+  /* 대화 화면만 앱 기본(1.08)에서 한 단계 낮춘다 — 홈·패널은 그대로 */
+  --font-scale: 1;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -474,6 +476,30 @@
   font-weight: 700;
   color: var(--brand-navy);
 }
+
+/* 대화가 시작되면 상단 기능 영역을 접어 대화에 자리를 내준다 */
+.fn-rail-head.compact {
+  padding: var(--sp-3) var(--sp-6) var(--sp-2);
+  border-bottom: 1px solid var(--line);
+}
+.fn-rail-head.compact h1,
+.fn-rail-head.compact .fn-rail-lede,
+.fn-rail-head.compact .fn-tile-blurb,
+.fn-rail-head.compact .fn-rail-extra {
+  display: none;
+}
+.fn-rail-head.compact .fn-rail {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: var(--sp-2);
+}
+.fn-rail-head.compact .fn-tile {
+  min-height: 0;
+  padding: var(--sp-2) var(--sp-3);
+}
+.fn-rail-head.compact .eyebrow {
+  display: block;
+  margin-bottom: var(--sp-2);
+}
 .chat-empty-hint {
   flex: 1;
   padding: var(--sp-5) var(--sp-6);
@@ -515,7 +541,9 @@
 /* ---- message list ---- */
 .chat-scroll {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--sp-5);
 }
 .chat-log {
@@ -603,6 +631,42 @@
   border-radius: var(--radius-sm) var(--radius-lg) var(--radius-lg) var(--radius-lg);
   padding: var(--sp-4);
   max-width: var(--chat-measure);
+}
+/* 답변 본문만 한 단계 작게 — 카드·질문·사용자 메모는 그대로 */
+.assistant-bubble .md {
+  font-size: var(--text-sm);
+  line-height: 1.7;
+}
+.assistant-bubble .md h1,
+.assistant-bubble .md h2,
+.assistant-bubble .md h3 {
+  font-size: var(--text-body);
+}
+
+/* 후속 질문 — 안내 답변과 시각적으로 분리한 블록 */
+.followup-block {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-4);
+  border: 1px solid var(--brand-gold);
+  border-radius: var(--radius-lg);
+  background: var(--brand-gold-soft);
+}
+.followup-head {
+  font-family: var(--font-serif);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  color: var(--ink);
+}
+.followup-q {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--surface-card);
+  border-radius: var(--radius-md);
+}
+.followup-q + .followup-q {
+  margin-top: var(--sp-2);
 }
 .agent-cards {
   display: grid;
