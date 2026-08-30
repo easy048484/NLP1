@@ -198,6 +198,22 @@ def test_full_checklist_exports_flat_financial_profile_with_extra_detail():
     assert "순자산: 7,000만원" in output.reply
 
 
+def test_finalize_hands_off_to_retirement_planner():
+    """체크리스트가 끝나면 develop 재작업 전 원래 의도대로 retirement_planner에
+    핸드오프를 걸어야 한다 — 실제 오케스트레이터로 실행해서 확인한 결과,
+    이 신호가 없으면 사용자가 "은퇴"/"노후"/"연금" 키워드를 새로 말하지
+    않는 한 asset_organizer에 계속 머물러 있었다(체크리스트 완료 응답만
+    반복). handoffs가 비어 있지 않아야 오케스트레이터의 Fast Path가
+    다음 턴을 자동으로 retirement_planner에 보낸다(orchestrator/handoff.py
+    규약)."""
+    output = agent.run(AgentInput(session_id="ho1", user_message="예금 1억 있어요"))
+    output = agent.run(_continue("ho1", "없어요", output.data[STATE_KEY]))
+
+    assert output.data[STATE_KEY]["status"] == "done"
+    assert len(output.handoffs) == 1
+    assert output.handoffs[0].target == AgentName.RETIREMENT_PLANNER
+
+
 # ======================================= financial_assets/other_assets 분류
 
 
@@ -691,3 +707,43 @@ def test_image_api_failure_asks_to_reupload_without_guessing(
 
     assert output.reply == agent._IMAGE_UNREADABLE_REPLY
     assert output.data[STATE_KEY]["assets"] == []
+
+
+def test_image_unclear_field_pii_never_reaches_reply_or_state(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """ "unclear"는 화이트리스트가 없는 완전 자유텍스트라 모델이 계좌번호·
+    이름·주민등록번호 같은 걸 그대로 적어 보낼 수 있다 — 프롬프트가
+    금지해도 실측으로 확인해야 하는 지점(PR 열린 이슈 참고). 이 값이
+    reply나 세션 저장 데이터(output.data) 어디에도 그대로 노출되지
+    않아야 한다."""
+    pii_text = (
+        "계좌번호 110-123-456789, 예금주 홍길동, 주민등록번호 900101-1234567 확인됨"
+    )
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "unreadable": False,
+                "assets": [{"type": "예금", "value": 50_000_000}],
+                "liabilities": [],
+                "insurance": [],
+                "unclear": [pii_text],
+            }
+        ),
+    )
+
+    output = agent.run(
+        AgentInput(
+            session_id="img_pii1",
+            user_message="",
+            image_base64="fake-base64-data",
+            image_media_type="image/png",
+        )
+    )
+
+    haystack = repr(output.reply) + repr(output.data)
+    assert pii_text not in haystack
+    assert "계좌번호" not in haystack
+    assert "홍길동" not in haystack
+    assert "주민등록번호" not in haystack
