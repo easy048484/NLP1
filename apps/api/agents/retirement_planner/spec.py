@@ -18,5 +18,5 @@ SPEC = AgentSpec(
     requires=[],
     produces=["retirement_gap"],
     entrypoint=run,
-    is_stub=True,
+    is_stub=False,
 )
