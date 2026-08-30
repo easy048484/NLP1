@@ -173,30 +173,43 @@ export function parsePlan(data: Record<string, unknown>): AgentPlan | null {
   const raw = deepFind(data, "plan");
   const rec = asRecord(raw);
   if (!rec) return null;
-  const steps = asArray(rec.steps ?? rec.tasks).map((s, i) => {
+
+  // 백엔드 heir_navigator 의 ProcedurePlan 은 "timeline"(TimelineEntry: step/
+  // title/summary/status)으로 온다. 예전 가정이던 "steps"/"tasks" 도 계속 받는다.
+  const rawSteps = asArray(
+    rec.timeline ?? rec.steps ?? rec.tasks,
+  );
+  const steps = rawSteps.map((s, i) => {
     const sr = asRecord(s) ?? {};
     return {
-      id: asString(sr.id) ?? `step-${i}`,
+      id: asString(sr.id ?? sr.step) ?? `step-${i}`,
       title: asString(sr.title ?? sr.label ?? sr.name) ?? `할 일 ${i + 1}`,
-      detail: asString(sr.detail ?? sr.description) ?? null,
+      detail: asString(sr.detail ?? sr.description ?? sr.summary) ?? null,
       day_offset: asNumber(sr.day_offset ?? sr.day) ?? null,
       official_period: asString(sr.official_period ?? sr.period) ?? null,
-      done: sr.done === true,
+      done: sr.done === true || sr.status === "done",
     };
   });
+
+  // 백엔드 DeadlineItem: label / due_date / law(=근거) / base_label ...
   const deadlines = asArray(rec.deadlines).map((d) => {
     const dr = asRecord(d) ?? {};
     return {
       label: asString(dr.label ?? dr.name) ?? "기한",
       due_date: asString(dr.due_date ?? dr.date) ?? null,
-      basis: asString(dr.basis ?? dr.note) ?? null,
+      basis: asString(dr.basis ?? dr.note ?? dr.law) ?? null,
     };
   });
+
   if (steps.length === 0 && deadlines.length === 0) return null;
   return {
     steps,
     deadlines,
-    next_action: asString(rec.next_action) ?? null,
+    next_action:
+      asString(rec.next_action) ??
+      (asArray(rec.next_actions).length > 0
+        ? asString(asRecord(asArray(rec.next_actions)[0])?.title) ?? null
+        : null),
     calendar_ics: asString(rec.calendar_ics ?? deepFind(data, "calendar_ics")) ?? null,
   };
 }

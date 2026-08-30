@@ -4,7 +4,21 @@ import type {
   ChatResponse,
   ConsultAxis,
 } from "../types";
+import { parsePlan } from "./agentData";
 import { authHeader } from "./auth";
+
+function asRecord(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : {};
+}
+
+/** 백엔드 ChatResponse.verification.ok === false → "⚠️ 확인필요" 배지 */
+function readNeedsReview(obj: Record<string, unknown>): boolean {
+  if (obj.needs_review === true) return true;
+  const v = asRecord(obj.verification);
+  return v.ok === false;
+}
 
 export const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8000";
@@ -35,9 +49,9 @@ export function normalizeChatResponse(raw: unknown): ChatResponse | null {
   if (Array.isArray(obj.contributions)) {
     return {
       reply: typeof obj.reply === "string" ? obj.reply : "",
-      needs_review: obj.needs_review === true,
+      needs_review: readNeedsReview(obj),
       contributions: obj.contributions as AgentOutput[],
-      plan: (obj.plan as ChatResponse["plan"]) ?? null,
+      plan: parsePlan(obj),
       financial_profile:
         (obj.financial_profile as ChatResponse["financial_profile"]) ?? null,
       family_graph: (obj.family_graph as ChatResponse["family_graph"]) ?? null,
@@ -47,20 +61,21 @@ export function normalizeChatResponse(raw: unknown): ChatResponse | null {
     };
   }
 
-  // 과도기: 단일 AgentOutput
+  // 현재 백엔드: ChatResponse = AgentOutput + {agents, path, verification}.
+  // contributions/plan/needs_review 는 프론트가 여기서 만든다 (plan 은
+  // data.plan 을 parsePlan 으로 프론트 AgentPlan 모양으로 변환 — 백엔드는
+  // heir_navigator 의 ProcedurePlan(timeline...) 을 그대로 넣어 보낸다).
   if (typeof obj.agent === "string" && typeof obj.reply === "string") {
     const single = obj as unknown as AgentOutput;
-    const plan =
-      single.data && typeof single.data === "object" && "plan" in single.data
-        ? ((single.data as Record<string, unknown>).plan as ChatResponse["plan"])
-        : null;
     return {
       reply: single.reply,
-      needs_review: single.needs_review === true,
+      needs_review: readNeedsReview(obj),
       contributions: [single],
-      plan: plan ?? null,
+      plan: parsePlan(asRecord(single.data)),
+      // 백엔드 financial_profile 은 flat 집계라 프론트 FinancialProfile(assets[])
+      // 모양과 달라서 아직 그대로 못 쓴다 — 매핑 붙이기 전까지 null.
       financial_profile: null,
-      family_graph: null,
+      family_graph: (obj.family_graph as ChatResponse["family_graph"]) ?? null,
       primary_agent: single.agent,
     };
   }
