@@ -3,6 +3,8 @@ import type {
   AgentOutput,
   ChatResponse,
   ConsultAxis,
+  EstateSummary,
+  WillStatus,
 } from "../types";
 import { parsePlan } from "./agentData";
 import { authHeader } from "./auth";
@@ -13,11 +15,43 @@ function asRecord(v: unknown): Record<string, unknown> {
     : {};
 }
 
+function asNum(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
 /** 백엔드 ChatResponse.verification.ok === false → "⚠️ 확인필요" 배지 */
 function readNeedsReview(obj: Record<string, unknown>): boolean {
   if (obj.needs_review === true) return true;
   const v = asRecord(obj.verification);
   return v.ok === false;
+}
+
+/** 백엔드 flat FinancialProfile → 패널용 재산 요약. 값이 하나도 없으면 null. */
+function readEstate(obj: Record<string, unknown>): EstateSummary | null {
+  const fp = asRecord(obj.financial_profile);
+  const re = asNum(fp.real_estate_value);
+  const fa = asNum(fp.financial_assets);
+  const oa = asNum(fp.other_assets);
+  const td = asNum(fp.total_debts);
+  if (re === null && fa === null && oa === null && td === null) return null;
+  const totalAssets = (re ?? 0) + (fa ?? 0) + (oa ?? 0);
+  const totalDebts = td ?? 0;
+  return { totalAssets, totalDebts, net: totalAssets - totalDebts };
+}
+
+/** 백엔드 WillStatus. checked 가 없으면(구버전/미점검) null. */
+function readWillStatus(obj: Record<string, unknown>): WillStatus | null {
+  const w = asRecord(obj.will_status);
+  if (typeof w.checked !== "boolean") return null;
+  const grade = w.overall_grade;
+  return {
+    checked: w.checked,
+    will_type: typeof w.will_type === "string" ? w.will_type : null,
+    no_will: w.no_will === true,
+    overall_grade:
+      grade === "green" || grade === "yellow" || grade === "red" ? grade : null,
+    has_effect: typeof w.has_effect === "boolean" ? w.has_effect : null,
+  };
 }
 
 export const API_BASE_URL: string =
@@ -52,8 +86,8 @@ export function normalizeChatResponse(raw: unknown): ChatResponse | null {
       needs_review: readNeedsReview(obj),
       contributions: obj.contributions as AgentOutput[],
       plan: parsePlan(obj),
-      financial_profile:
-        (obj.financial_profile as ChatResponse["financial_profile"]) ?? null,
+      estate: readEstate(obj),
+      will_status: readWillStatus(obj),
       family_graph: (obj.family_graph as ChatResponse["family_graph"]) ?? null,
       primary_agent:
         (obj.primary_agent as ChatResponse["primary_agent"]) ??
@@ -61,10 +95,10 @@ export function normalizeChatResponse(raw: unknown): ChatResponse | null {
     };
   }
 
-  // 현재 백엔드: ChatResponse = AgentOutput + {agents, path, verification}.
-  // contributions/plan/needs_review 는 프론트가 여기서 만든다 (plan 은
-  // data.plan 을 parsePlan 으로 프론트 AgentPlan 모양으로 변환 — 백엔드는
-  // heir_navigator 의 ProcedurePlan(timeline...) 을 그대로 넣어 보낸다).
+  // 현재 백엔드: ChatResponse = AgentOutput + {agents, path, verification,
+  // financial_profile(flat), will_status}. contributions/plan/needs_review 는
+  // 프론트가 여기서 만든다 (plan 은 data.plan 의 heir_navigator ProcedurePlan
+  // (timeline...) 을 parsePlan 으로 프론트 AgentPlan 모양으로 변환).
   if (typeof obj.agent === "string" && typeof obj.reply === "string") {
     const single = obj as unknown as AgentOutput;
     return {
@@ -72,9 +106,8 @@ export function normalizeChatResponse(raw: unknown): ChatResponse | null {
       needs_review: readNeedsReview(obj),
       contributions: [single],
       plan: parsePlan(asRecord(single.data)),
-      // 백엔드 financial_profile 은 flat 집계라 프론트 FinancialProfile(assets[])
-      // 모양과 달라서 아직 그대로 못 쓴다 — 매핑 붙이기 전까지 null.
-      financial_profile: null,
+      estate: readEstate(obj),
+      will_status: readWillStatus(obj),
       family_graph: (obj.family_graph as ChatResponse["family_graph"]) ?? null,
       primary_agent: single.agent,
     };
@@ -93,12 +126,17 @@ export function normalizeChatResponse(raw: unknown): ChatResponse | null {
 export async function sendChatMessage(
   sessionId: string,
   userMessage: string,
-  opts?: { familyGraphId?: string | null; axis?: ConsultAxis | null },
+  opts?: {
+    familyGraphId?: string | null;
+    axis?: ConsultAxis | null;
+    /** 선택 버튼 등에서 구조화 답변을 함께 보낼 때 (예: {will_type: "none"}) */
+    context?: Record<string, unknown>;
+  },
 ): Promise<ChatCallResult> {
   const request: AgentInput = {
     session_id: sessionId,
     user_message: userMessage,
-    context: {},
+    context: opts?.context ?? {},
     ...(opts?.familyGraphId ? { family_graph_id: opts.familyGraphId } : {}),
     ...(opts?.axis ? { axis: opts.axis } : {}),
   };

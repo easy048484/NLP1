@@ -7,13 +7,13 @@ import { Gauge, StatusPill } from "./ui";
 
 /**
  * 우측 상시 컨텍스트 패널.
- * ① 가족관계 요약(+수정) ② 준비도 카드 ③ 현재 단계 ④ financial_profile 요약
+ * ① 준비도 카드 ② 가족관계 요약(+수정) ③ 준비 항목 ④ 상속재산 요약
  */
 export function ContextPanel({ onEditFamily }: { onEditFamily: () => void }) {
-  const { axis, familyGraph, plan, planChecks, financialProfile } = useApp();
+  const { axis, familyGraph, plan, planChecks, estate, willStatus } = useApp();
   const navigate = useNavigate();
 
-  const prep = buildPrep({ axis, familyGraph, plan, planChecks, financialProfile });
+  const prep = buildPrep({ axis, familyGraph, plan, planChecks, estate, willStatus });
   const percent = prepPercent(prep);
   const members = familyGraph?.members ?? [];
 
@@ -80,25 +80,28 @@ export function ContextPanel({ onEditFamily }: { onEditFamily: () => void }) {
         </ul>
       </section>
 
-      {financialProfile && (
+      {estate && (
         <section className="ctx-block">
-          <h3>자산 요약</h3>
+          <h3>상속재산 요약</h3>
           <ul className="ctx-fin-list">
-            {financialProfile.assets.map((a) => (
-              <li key={a.label}>
-                <span>{a.label}</span>
-                <span className="ctx-fin-amount">{formatWon(a.amount)}</span>
-              </li>
-            ))}
-            {financialProfile.retirement_gap != null && (
-              <li className="ctx-fin-gap">
-                <span>은퇴자금 갭</span>
-                <span className="ctx-fin-amount">
-                  {formatWon(financialProfile.retirement_gap)}
-                </span>
-              </li>
-            )}
+            <li>
+              <span>자산</span>
+              <span className="ctx-fin-amount">{formatWon(estate.totalAssets)}</span>
+            </li>
+            <li>
+              <span>부채</span>
+              <span className="ctx-fin-amount">{formatWon(estate.totalDebts)}</span>
+            </li>
+            <li className="ctx-fin-gap">
+              <span>순자산</span>
+              <span className="ctx-fin-amount">{formatWon(estate.net)}</span>
+            </li>
           </ul>
+          {estate.net < 0 && (
+            <p className="ctx-empty">
+              빚이 재산보다 많습니다. 상담에서 한정승인·상속포기 안내를 확인하세요.
+            </p>
+          )}
         </section>
       )}
     </aside>

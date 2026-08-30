@@ -113,15 +113,27 @@ export interface TaxResult {
   notes?: string[];
 }
 
-/** asset_organizer 가 채우고 tax_calculator 가 재사용하는 세션 공유 상태. */
-export interface FinancialProfile {
-  assets: { label: string; amount: number; kind?: string | null }[];
-  monthly_income?: number | null;
-  monthly_expense?: number | null;
-  retirement_target_age?: number | null;
-  /** 은퇴자금 갭 (음수면 부족) */
-  retirement_gap?: number | null;
-  updated_at?: string | null;
+/**
+ * 세션 공유 상속재산 요약 — 백엔드 flat FinancialProfile
+ * (real_estate_value / financial_assets / other_assets / total_debts)에서
+ * 프론트가 패널에 쓸 만큼만 뽑아낸 것. asset_organizer 가 채운다.
+ */
+export interface EstateSummary {
+  totalAssets: number;
+  totalDebts: number;
+  net: number;
+}
+
+/**
+ * decedent_estate 가 판정한 유언장 상태 요약 — 백엔드 WillStatus.
+ * checked=true 일 때만 의미가 있다.
+ */
+export interface WillStatus {
+  checked: boolean;
+  will_type?: string | null;
+  no_will: boolean;
+  overall_grade?: "green" | "yellow" | "red" | null;
+  has_effect?: boolean | null;
 }
 
 /** `/chat` 의 최종 응답. */
@@ -133,7 +145,10 @@ export interface ChatResponse {
   /** 이번 턴에 기여한 에이전트별 원문 + data */
   contributions: AgentOutput[];
   plan?: AgentPlan | null;
-  financial_profile?: FinancialProfile | null;
+  /** 백엔드 flat FinancialProfile 에서 뽑은 재산 요약 */
+  estate?: EstateSummary | null;
+  /** 백엔드 WillStatus (decedent_estate 판정) */
+  will_status?: WillStatus | null;
   family_graph?: FamilyGraphOut | null;
   /** 하위호환: 과도기 단일 에이전트 응답에서 채워짐 */
   primary_agent?: AgentName | null;

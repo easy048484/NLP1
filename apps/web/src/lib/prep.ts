@@ -1,5 +1,12 @@
-import type { AgentPlan, ConsultAxis, FamilyGraphOut, FinancialProfile } from "../types";
+import type {
+  AgentPlan,
+  ConsultAxis,
+  EstateSummary,
+  FamilyGraphOut,
+  WillStatus,
+} from "../types";
 import type { StatusKind } from "../components/ui";
+import { formatWon } from "./format";
 import { RELATION_LABELS } from "./relations";
 
 export interface PrepItem {
@@ -24,13 +31,15 @@ export function buildPrep({
   familyGraph,
   plan,
   planChecks,
-  financialProfile,
+  estate,
+  willStatus,
 }: {
   axis: ConsultAxis | null;
   familyGraph: FamilyGraphOut | null;
   plan: AgentPlan | null;
   planChecks: Record<string, boolean>;
-  financialProfile: FinancialProfile | null;
+  estate: EstateSummary | null;
+  willStatus: WillStatus | null;
 }): PrepItem[] {
   const memberCount = familyGraph?.members.length ?? 0;
   const familyDesc =
@@ -42,8 +51,9 @@ export function buildPrep({
       : "아직 등록 전";
   const familyStatus: StatusKind = memberCount > 0 ? "done" : "todo";
 
-  const doneSteps = plan ? plan.steps.filter((s) => planChecks[s.id] ?? s.done).length : 0;
-  const totalSteps = plan?.steps.length ?? 0;
+  const steps = plan?.steps ?? [];
+  const doneSteps = steps.filter((s) => planChecks[s.id] ?? s.done).length;
+  const totalSteps = steps.length;
   const procedureStatus: StatusKind = !plan
     ? "todo"
     : doneSteps === 0
@@ -55,8 +65,33 @@ export function buildPrep({
     ? `${totalSteps}건 중 ${doneSteps}건 완료`
     : "상담을 시작하면 일정이 만들어져요";
 
-  const taxStatus: StatusKind = financialProfile ? "wip" : "todo";
-  const taxDesc = financialProfile ? "재산 정보 입력됨" : "재산가액 미입력";
+  const taxStatus: StatusKind = estate ? "wip" : "todo";
+  const taxDesc = estate
+    ? `순자산 ${formatWon(estate.net)} (자산 ${formatWon(estate.totalAssets)} · 부채 ${formatWon(estate.totalDebts)})`
+    : "재산가액 미입력";
+
+  // 유언 요건 상태 — decedent_estate 판정(willStatus)이 있으면 반영.
+  let willStatusKind: StatusKind = "todo";
+  let willDesc =
+    axis === "pre_need"
+      ? "자필증서 형식 요건 점검 전"
+      : "유언장이 있다면 형식 요건 점검";
+  if (willStatus?.no_will) {
+    willStatusKind = "done";
+    willDesc = "유언장 없음 — 법정상속분 기준으로 진행";
+  } else if (willStatus?.has_effect === true) {
+    willStatusKind = "done";
+    willDesc = "유효한 유언장으로 확인됨";
+  } else if (willStatus?.overall_grade === "red") {
+    willStatusKind = "attention";
+    willDesc = "형식 요건 미비 — 보완이 필요합니다";
+  } else if (willStatus?.overall_grade === "yellow") {
+    willStatusKind = "attention";
+    willDesc = "쟁점이 있어 확인이 필요합니다";
+  } else if (willStatus?.checked) {
+    willStatusKind = "wip";
+    willDesc = "유언장 요건 점검 중";
+  }
 
   const items: PrepItem[] = [
     {
@@ -70,12 +105,12 @@ export function buildPrep({
   ];
 
   if (axis === "pre_need") {
-    const assetStatus: StatusKind = financialProfile ? "done" : "todo";
+    const assetStatus: StatusKind = estate ? "done" : "todo";
     items.push({
       key: "asset",
       title: "자산 정리",
-      desc: financialProfile
-        ? `자산 ${financialProfile.assets.length}건 · 은퇴갭 추정됨`
+      desc: estate
+        ? `순자산 ${formatWon(estate.net)}`
         : "예금·보험·부동산·연금 정리 전",
       status: assetStatus,
       statusLabel: STATUS_LABEL[assetStatus],
@@ -84,9 +119,9 @@ export function buildPrep({
     items.push({
       key: "will",
       title: "유언 요건",
-      desc: "자필증서 형식 요건 점검 전",
-      status: "todo",
-      statusLabel: STATUS_LABEL.todo,
+      desc: willDesc,
+      status: willStatusKind,
+      statusLabel: STATUS_LABEL[willStatusKind],
       route: "/chat",
     });
     items.push({
@@ -117,9 +152,9 @@ export function buildPrep({
     items.push({
       key: "will",
       title: "유언 요건",
-      desc: "유언장이 있다면 형식 요건 점검",
-      status: "todo",
-      statusLabel: STATUS_LABEL.todo,
+      desc: willDesc,
+      status: willStatusKind,
+      statusLabel: STATUS_LABEL[willStatusKind],
       route: "/chat",
     });
   }

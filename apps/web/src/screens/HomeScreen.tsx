@@ -9,9 +9,9 @@ import { Button, Eyebrow, Gauge, StatusPill } from "../components/ui";
  */
 export function HomeScreen() {
   const navigate = useNavigate();
-  const { auth, axis, familyGraph, plan, planChecks, financialProfile } = useApp();
+  const { auth, axis, familyGraph, plan, planChecks, estate, willStatus } = useApp();
 
-  const prep = buildPrep({ axis, familyGraph, plan, planChecks, financialProfile });
+  const prep = buildPrep({ axis, familyGraph, plan, planChecks, estate, willStatus });
   const percent = prepPercent(prep);
   const nextItem = prep.find((p) => p.status !== "done");
 

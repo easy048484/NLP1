@@ -12,8 +12,9 @@ import type {
   AgentPlan,
   ChatResponse,
   ConsultAxis,
+  EstateSummary,
   FamilyGraphOut,
-  FinancialProfile,
+  WillStatus,
 } from "../types";
 import { sendChatMessage } from "./api";
 import { getStoredAuth, logout as clearStoredAuth, type StoredAuth } from "./auth";
@@ -67,11 +68,12 @@ interface AppStateValue {
 
   turns: Turn[];
   loading: boolean;
-  send: (text: string) => Promise<void>;
+  send: (text: string, extraContext?: Record<string, unknown>) => Promise<void>;
 
   /** 최근 응답에서 뽑은 컨텍스트 패널용 상태 */
   plan: AgentPlan | null;
-  financialProfile: FinancialProfile | null;
+  estate: EstateSummary | null;
+  willStatus: WillStatus | null;
   familyGraph: FamilyGraphOut | null;
   setFamilyGraph: (g: FamilyGraphOut | null) => void;
 
@@ -92,7 +94,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
 
   const [plan, setPlan] = useState<AgentPlan | null>(null);
-  const [financialProfile, setFinancialProfile] = useState<FinancialProfile | null>(null);
+  const [estate, setEstate] = useState<EstateSummary | null>(null);
+  const [willStatus, setWillStatus] = useState<WillStatus | null>(null);
   const [familyGraph, setFamilyGraph] = useState<FamilyGraphOut | null>(null);
   const [planChecks, setPlanChecks] = useState<Record<string, boolean>>({});
 
@@ -114,7 +117,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setAxisState(null);
     setTurns([]);
     setPlan(null);
-    setFinancialProfile(null);
+    setEstate(null);
+    setWillStatus(null);
     setFamilyGraph(null);
     setPlanChecks({});
     setSessionId(createSessionId());
@@ -123,8 +127,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const resetChat = useCallback(() => {
     setSessionId(createSessionId());
     setTurns([]);
+    setPlan(null);
+    setEstate(null);
+    setWillStatus(null);
     setPlanChecks({});
   }, []);
+  // 새 상담을 시작하면 이전 상담에서 뽑아둔 재산·유언장·절차 요약도 비운다.
 
   const setFamilyGraphId = useCallback((id: string | null) => {
     setFamilyGraphIdState(id);
@@ -142,7 +150,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const send = useCallback(
-    async (rawText: string) => {
+    async (rawText: string, extraContext?: Record<string, unknown>) => {
       const text = rawText.trim();
       if (!text || loading) return;
 
@@ -150,6 +158,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setLoading(true);
 
       const result = await sendChatMessage(sessionId, text, {
+        context: extraContext,
         familyGraphId: fgRef.current,
         axis: axisRef.current,
       });
@@ -172,7 +181,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           },
         ]);
         if (res.plan) setPlan(res.plan);
-        if (res.financial_profile) setFinancialProfile(res.financial_profile);
+        if (res.estate) setEstate(res.estate);
+        if (res.will_status?.checked) setWillStatus(res.will_status);
         if (res.family_graph) setFamilyGraph(res.family_graph);
       } else {
         setTurns((prev) => [
@@ -214,7 +224,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       loading,
       send,
       plan,
-      financialProfile,
+      estate,
+      willStatus,
       familyGraph,
       setFamilyGraph,
       planChecks,
@@ -234,7 +245,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       loading,
       send,
       plan,
-      financialProfile,
+      estate,
+      willStatus,
       familyGraph,
       planChecks,
       togglePlanCheck,

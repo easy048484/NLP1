@@ -113,7 +113,12 @@ export function AgentCards({
             options={q.options}
             onSelect={(value) => {
               const chosen = q.options.find((o) => o.value === value);
-              void send(chosen?.label ?? value);
+              // 선택지는 텍스트가 아니라 구조화 답변으로 보낸다 — 백엔드 에이전트가
+              // context[field] 로 읽는다 (예: decedent_estate 의 will_type).
+              void send(
+                chosen?.label ?? value,
+                q.field ? { [q.field]: value } : undefined,
+              );
             }}
           />
         </ResultCard>,
