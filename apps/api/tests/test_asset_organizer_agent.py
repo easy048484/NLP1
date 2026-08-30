@@ -181,10 +181,9 @@ def test_full_checklist_exports_flat_financial_profile_with_extra_detail():
 
     assert state["status"] == "done"
     assert output.financial_profile is not None
-    # financial_assets는 추측 분류하지 않고 항상 0 — 부동산 제외 전부를
-    # other_assets 하나로 합산한다 (tax_calculator 조사 때와 동일 사유).
-    assert output.financial_profile.financial_assets == 0
-    assert output.financial_profile.other_assets == 100_000_000
+    # tax_calculator 담당자 확정 기준 — 예금은 financial_assets로 분류.
+    assert output.financial_profile.financial_assets == 100_000_000
+    assert output.financial_profile.other_assets == 0
     assert output.financial_profile.total_debts == 30_000_000
     assert output.financial_profile.real_estate_value == 0
 
@@ -197,6 +196,75 @@ def test_full_checklist_exports_flat_financial_profile_with_extra_detail():
         for liability in extra["liabilities"]
     )
     assert "순자산: 7,000만원" in output.reply
+
+
+# ======================================= financial_assets/other_assets 분류
+
+
+def test_deposit_stock_fund_classified_as_financial_assets():
+    """tax_calculator 담당자 확정 기준: 예금·주식·펀드 → financial_assets,
+    other_assets에는 들어가지 않는다."""
+    session_id = "fa1"
+    state = agent.run(
+        AgentInput(
+            session_id=session_id,
+            user_message="예금 3천만원, 주식 2천만원, 펀드 1천만원 있어요",
+        )
+    ).data[STATE_KEY]
+    output = agent.run(_continue(session_id, "없어요", state))
+
+    assert output.financial_profile.financial_assets == 60_000_000
+    assert output.financial_profile.other_assets == 0
+
+
+def test_real_estate_only_in_real_estate_value_field():
+    """부동산은 financial_assets/other_assets 어느 쪽에도 중복되지 않고
+    real_estate_value 하나에만 담긴다."""
+    session_id = "fa2"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="부동산 5억 있어요")
+    ).data[STATE_KEY]
+    output = agent.run(_continue(session_id, "없어요", state))
+
+    assert output.financial_profile.real_estate_value == 500_000_000
+    assert output.financial_profile.financial_assets == 0
+    assert output.financial_profile.other_assets == 0
+
+
+def test_other_and_vehicle_and_pension_classified_as_other_assets():
+    """기타·자동차·퇴직연금은 금융자산으로 추측 분류하지 않고 other_assets에
+    남는다 — tax_calculator가 "기타" 항목명을 보고 추가로 확인하기로 함."""
+    session_id = "fa3"
+    state = agent.run(
+        AgentInput(
+            session_id=session_id,
+            user_message="자동차 3천만원, 퇴직연금 8천만원 있어요",
+        )
+    ).data[STATE_KEY]
+    output = agent.run(_continue(session_id, "없어요", state))
+
+    assert output.financial_profile.other_assets == 110_000_000
+    assert output.financial_profile.financial_assets == 0
+
+
+def test_mixed_asset_types_are_classified_exclusively_without_overlap():
+    """예금+주식+부동산+기타가 섞여도 세 필드에 배타적으로 분배되고,
+    합계가 원래 자산 총액과 정확히 일치해야 한다(겹치거나 누락되지 않음)."""
+    session_id = "fa4"
+    state = agent.run(
+        AgentInput(
+            session_id=session_id,
+            user_message=("예금 1억, 주식 5천만원, 부동산 5억, 자동차 2천만원 있어요"),
+        )
+    ).data[STATE_KEY]
+    output = agent.run(_continue(session_id, "없어요", state))
+    profile = output.financial_profile
+
+    assert profile.financial_assets == 150_000_000  # 예금 1억 + 주식 5천만
+    assert profile.real_estate_value == 500_000_000
+    assert profile.other_assets == 20_000_000  # 자동차만
+    total = profile.financial_assets + profile.real_estate_value + profile.other_assets
+    assert total == 100_000_000 + 50_000_000 + 500_000_000 + 20_000_000
 
 
 def test_liability_followup_uses_shared_current_age_for_relative_years():

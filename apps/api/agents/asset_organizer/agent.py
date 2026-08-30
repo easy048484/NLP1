@@ -51,6 +51,11 @@ _ASSET_CATEGORIES: tuple[str, ...] = (
     "자동차",
     "퇴직연금",
 )
+#: tax_calculator 담당자가 확정해준 세법상 금융자산 분류 기준. 부동산은
+#: real_estate_value로 이미 따로 담기므로 여기 없고, "기타"(자동차·퇴직연금
+#: 포함)는 담당자가 항목명을 보고 자기 쪽에서 추가 확인하기로 했으므로
+#: 여기서 금융자산으로 추측해 넣지 않는다 — _to_shared_profile() 참고.
+_FINANCIAL_ASSET_TYPES: frozenset[str] = frozenset({"예금", "주식", "펀드"})
 _LIABILITY_CATEGORY = "부채"
 _INSURANCE_CATEGORY = "보험"
 _ALL_CATEGORIES: tuple[str, ...] = (
@@ -367,18 +372,19 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
        하나로 뭉개진다 — 마찬가지로 extra 를 봐야 정밀/단순 모드를 구분할
        수 있다. total_debts만 보는 소비자는 모든 부채를 "단순 모드"로
        오해할 수 있다.
-    3. financial_assets는 항상 0으로 남긴다 — "예금/주식/펀드는 금융자산"
-       이라는 분류가 세법·업계 표준으로 확인된 적이 없다(tax_calculator
-       연동 조사에서 이미 "이 필드는 추측해서 채우면 안 된다"고 정한 것과
-       같은 필드). 부동산을 제외한 자산은 유형 구분 없이 전부
-       other_assets 하나에 몰아 합산한다 — "금융자산으로 확정 분류되지
-       않음"이라는 뜻이지, 비금융자산이라는 뜻이 아니다. 확정 분류가
-       필요한 소비자는 financial_assets=0을 신뢰하지 말고
-       extra["asset_organizer"]["assets"]의 itemized type을 직접 봐야
-       한다.
+    3. financial_assets는 tax_calculator 담당자가 확정해준 기준(예금·적금·
+       주식·일반 펀드 → 금융자산, 부동산은 제외, 기타/자동차/퇴직연금 등은
+       금융자산으로 분류하지 않고 other_assets에 남김)에 따라 _FINANCIAL_
+       ASSET_TYPES에 속한 유형만 합산한다 — "기타"를 금융자산으로 볼지는
+       tax_calculator 쪽에서 항목명을 보고 추가로 확인하기로 했으므로
+       여기서 대신 판단하지 않는다. 유형별 배타적 분류라 financial_assets/
+       other_assets/real_estate_value 세 필드는 서로 겹치지 않는다.
+       (최대주주 보유주식 등 공제 제외 판단은 tax_calculator 책임 —
+       "금융자산 분류 = 공제대상 확정"이 아니라고 명시함.)
     4. financial_debts는 아예 채우지 않는다 — Liability.type이 자유
-       문자열이라 "금융기관 채무"인지 판단할 근거가 없다(3번과 같은 이유).
-       total_debts에는 전부 들어간다.
+       문자열이라 "금융기관 채무"인지 판단할 근거가 없다. tax_calculator가
+       채권자 정보를 기준으로 직접 확인 질문을 넣기로 했다. total_debts
+       (전체 채무 합계)에는 전부 들어간다.
     5. InsuranceTag(보험)는 flat 스키마에 대응 필드가 아예 없다 — 부채의
        monthly_payment/end_age(2번)와 같은 방식으로 extra["asset_organizer"]
        ["insurance"]에 원본 그대로 보존한다. flat 필드만 보는 소비자에게는
@@ -395,11 +401,18 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
     insurance = state["insurance"]
 
     real_estate_value = sum(a["value"] for a in assets if a["type"] == "부동산")
-    # 3번 참고 — 예금/주식/펀드/기타를 financial_assets/other_assets로
-    # 유형별로 쪼개지 않는다. 부동산만 별도 필드가 있으니(위), 그 나머지는
-    # 전부 other_assets 하나로 합산하고 financial_assets는 0으로 둔다.
-    financial_assets = 0
-    other_assets = sum(a["value"] for a in assets if a["type"] != "부동산")
+    # 3번 참고 — tax_calculator 담당자 확정 기준대로 예금/주식/펀드만
+    # financial_assets로 분류한다. 부동산은 위에서 이미 분리했고, 그 외
+    # (기타/자동차/퇴직연금 등)는 전부 other_assets로 남긴다 — 배타적
+    # 분류라 세 필드가 겹치지 않는다.
+    financial_assets = sum(
+        a["value"] for a in assets if a["type"] in _FINANCIAL_ASSET_TYPES
+    )
+    other_assets = sum(
+        a["value"]
+        for a in assets
+        if a["type"] != "부동산" and a["type"] not in _FINANCIAL_ASSET_TYPES
+    )
     total_debts = sum(liability["remaining_balance"] for liability in liabilities)
 
     return FinancialProfile(

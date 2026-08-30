@@ -144,11 +144,11 @@ def test_synthesizes_from_flat_aggregate_when_no_itemized_extra():
 
 
 def test_flat_fallback_does_not_reclassify_financial_vs_other_assets():
-    """asset_organizer는 이제 financial_assets를 항상 0으로 두고 부동산 제외
-    전부를 other_assets로 합산해 내보낸다(세법상 "금융자산" 분류가
-    미확정이라 추측하지 않기로 함 — tax_calculator 조사 때와 동일 사유).
-    이 폴백 함수 자체도 유형별로 다시 쪼개거나 재분류하지 않고, 두 필드를
-    각각 있는 그대로("기타" 자산 항목)만 합성해야 한다."""
+    """asset_organizer를 거치지 않고 flat 집계만 온 경우(financial_assets가
+    이미 0으로 주어진 임의의 입력) — 이 폴백 함수는 financial_assets/
+    other_assets를 유형별로 다시 쪼개거나 재분류하지 않고, 두 필드를 각각
+    있는 그대로("기타" 자산 항목)만 합성해야 한다. (실제 분류 기준은
+    asset_organizer._to_shared_profile()이 담당 — 이 테스트와는 무관.)"""
     shared = FinancialProfile(
         current_age=60,
         monthly_expense=1_000_000,
