@@ -307,3 +307,67 @@ def test_session_state_json_round_trip_keeps_will_status():
 def test_session_state_unchecked_will_status_not_persisted():
     state = SessionState(will_status=WillStatus(checked=False))
     assert "_shared" not in state.to_json_context()
+
+
+# ------------------------------- heir_navigator reads estate (빚 vs 재산)
+
+
+def test_heir_navigator_flags_insolvency_from_estate():
+    from datetime import date
+
+    from agents.heir_navigator.planner import build_plan
+    from agents.heir_navigator.state import HeirState
+
+    plan = build_plan(
+        HeirState(death_date=date(2026, 1, 10)),
+        today=date(2026, 2, 1),
+        estate=FinancialProfile(real_estate_value=30_000_000, total_debts=80_000_000),
+    )
+    assert plan.solvency is not None
+    assert plan.solvency.debt_exceeds_assets is True
+    # 사용자가 "빚 있어요"라고 말하지 않았어도 선택지가 자동으로 붙는다
+    assert [b.title for b in plan.branches] == ["단순승인", "한정승인", "상속포기"]
+
+
+def test_heir_navigator_solvent_estate_shows_note_but_no_branches():
+    from datetime import date
+
+    from agents.heir_navigator.planner import build_plan
+    from agents.heir_navigator.state import HeirState
+
+    plan = build_plan(
+        HeirState(death_date=date(2026, 1, 10)),
+        today=date(2026, 2, 1),
+        estate=FinancialProfile(real_estate_value=300_000_000, total_debts=50_000_000),
+    )
+    assert plan.solvency is not None
+    assert plan.solvency.debt_exceeds_assets is False
+    assert plan.branches == []
+
+
+def test_heir_navigator_no_estate_no_solvency():
+    from datetime import date
+
+    from agents.heir_navigator.planner import build_plan
+    from agents.heir_navigator.state import HeirState
+
+    plan = build_plan(HeirState(death_date=date(2026, 1, 10)), today=date(2026, 2, 1))
+    assert plan.solvency is None
+    assert plan.branches == []
+
+
+def test_heir_navigator_run_surfaces_insolvency(monkeypatch):
+    from agents.heir_navigator.agent import run
+
+    monkeypatch.setenv("HEIR_NAVIGATOR_DISABLE_LLM", "1")
+    output = run(
+        AgentInput(
+            session_id="hn-insolvent",
+            user_message="아버지가 2026년 1월 10일에 돌아가셨어요",
+            financial_profile=FinancialProfile(
+                real_estate_value=20_000_000, total_debts=90_000_000
+            ),
+            context={"today": "2026-02-01"},
+        )
+    )
+    assert "한정승인" in output.reply and "상속포기" in output.reply
