@@ -381,6 +381,13 @@ def _apply_llm_payload(
             )
         )
 
+    # ⚠️ PII 잔여 위험 지점: "unclear"는 자산/부채/소득 type과 달리 화이트리스트가
+    # 없는 완전 자유텍스트라 LLM이 (프롬프트가 금지해도) 계좌번호·이름 등을
+    # 그대로 적어 보낼 수 있다. 지금은 agent._merge_extraction()이 kind=="asset_value"
+    # 만 처리하고 이 kind는 그냥 건너뛰어서 사용자 응답·세션 저장 어디에도
+    # 노출되지 않는다(실제 실행으로 확인됨 — apps/api/tests/test_asset_organizer_agent.py
+    # 의 PII 관련 회귀 테스트 참고). 나중에 이 kind를 실제로 소비하는 코드를
+    # 추가한다면 이 reason 원문을 그대로 노출하지 말 것 — 정형화하거나 버릴 것.
     for reason in payload.get("unclear") or []:
         if isinstance(reason, str) and reason.strip():
             missing.append({"kind": "unclear", "reason": reason.strip()})
