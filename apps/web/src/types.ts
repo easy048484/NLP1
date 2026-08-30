@@ -13,7 +13,26 @@ export type AgentName =
   | "retirement_planner"
   | "asset_organizer";
 
-/** 세션 공유 재무 상태 — 백엔드 FinancialProfile. 모든 필드 선택. */
+/** 상담 축 — 온보딩 "상담 구분". 백엔드 AgentInput.axis. */
+export type ConsultAxis = "pre_need" | "post_death";
+
+/**
+ * 세션 공유 유언장 판정 요약 — 백엔드 WillStatus.
+ * decedent_estate 가 점검했을 때만(checked=true) 값이 찬다.
+ */
+export interface WillStatus {
+  checked: boolean;
+  will_type?: string | null;
+  no_will: boolean;
+  overall_grade?: "green" | "yellow" | "red" | null;
+  has_effect?: boolean | null;
+}
+
+/**
+ * 세션 공유 상속재산(별칭 Estate) — 백엔드 FinancialProfile. 모든 필드 선택.
+ * 생전엔 본인 재산, 사후엔 상속인이 파악한 고인의 재산.
+ * current_age 이하 5개 필드는 retirement_planner 전용(정리 예정).
+ */
 export interface FinancialProfile {
   real_estate_value?: number | null;
   financial_assets?: number | null;
@@ -44,9 +63,11 @@ export interface VerificationResult {
 export interface AgentInput {
   session_id: string;
   user_message: string;
+  axis?: ConsultAxis | null;
   family_graph?: Record<string, unknown> | null;
   family_graph_id?: string | null;
   financial_profile?: FinancialProfile | null;
+  will_status?: WillStatus | null;
   context: Record<string, unknown>;
 }
 
@@ -56,6 +77,7 @@ export interface AgentOutput {
   next_action?: string | null;
   handoffs?: HandoffRequest[];
   financial_profile?: FinancialProfile | null;
+  will_status?: WillStatus | null;
   data: Record<string, unknown>;
 }
 

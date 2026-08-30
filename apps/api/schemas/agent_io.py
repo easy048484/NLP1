@@ -10,19 +10,25 @@ AgentInput / AgentOutput 공통 계약.
 ---------------------------------------------------------------
 - AgentAxis: 에이전트가 속한 축(생전준비 / 사후처리). 여러 에이전트가 한 요청에
   걸릴 때 축이 겹치면 Full Pipeline(LLM 분류 → DAG)로 올라갑니다.
-- FinancialProfile: family_graph처럼 세션에 붙어사는 공유 재무 상태. 한 에이전트가
-  물어본 자산 정보를 다른 에이전트가 재질문 없이 씁니다.
+- FinancialProfile(별칭 Estate): family_graph처럼 세션에 붙어사는 공유 상태.
+  "피상속인의 상속재산" — 생전엔 본인 것, 사후엔 고인의 것(상속인이 안심상속
+  조회 등으로 파악). 한 에이전트가 물어본 자산 정보를 다른 에이전트가 재질문
+  없이 씁니다.
+- WillStatus: decedent_estate가 판정한 유언장 상태 요약. FinancialProfile처럼
+  세션에 붙어 tax_calculator·heir_share_analyzer가 재질문 없이 참고합니다.
 - HandoffRequest: "handoff:<이름>" 문자열을 구조화한 것. AgentOutput.handoffs에
   담습니다. 기존 next_action 문자열도 계속 받아들이며(오케스트레이터가 파싱),
   handoffs가 비어 있고 next_action이 "handoff:x" 형식이면 그것을 씁니다.
 - ChatResponse: /chat 응답. 여러 에이전트가 실행됐을 때 어떤 에이전트들이
   어떤 경로(fast/standard/full)로 돌았고 숫자 검증이 통과했는지를 담습니다.
+- AgentInput.axis: 프론트 온보딩 "상담 구분"(생전 준비 / 사후 절차). 키워드
+  후보가 없거나 애매할 때 라우팅 편향에 씁니다.
 """
 
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -44,12 +50,21 @@ class AgentAxis(str, Enum):
 
 
 class FinancialProfile(BaseModel):
-    """세션 단위로 공유되는 재무 상태.
+    """세션 단위로 공유되는 **피상속인의 상속재산**(별칭 Estate).
 
-    tax_calculator의 InheritanceTaxInput 중 "자산" 성격의 필드와, 은퇴자금 설계에
-    필요한 최소 필드를 모았습니다. 모든 필드는 선택이며, 에이전트는 자기가 알게
-    된 값만 채워서 AgentOutput.financial_profile로 돌려주면 오케스트레이터가
-    세션의 기존 값과 병합(None이 아닌 값만 덮어씀)합니다.
+    생전 여정에서는 사용자(피상속인 본인)의 재산·부채이고, 사후 여정에서는
+    상속인이 안심상속 통합조회 등으로 파악한 고인의 재산·부채입니다. 두 경우
+    모두 "상속의 대상이 되는 재산"이라는 의미는 같습니다.
+
+    asset_organizer가 이 값을 채우는 유일한 에이전트이고, tax_calculator·
+    heir_share_analyzer·retirement_planner가 재질문 없이 읽습니다. 모든 필드는
+    선택이며, 에이전트는 자기가 알게 된 값만 채워서 AgentOutput.financial_profile
+    로 돌려주면 오케스트레이터가 세션의 기존 값과 병합(None이 아닌 값만 덮어씀)
+    합니다.
+
+    ⚠️ current_age 이하 5개 "은퇴 설계" 필드는 retirement_planner 전용이라
+    상속재산 개념과는 결이 다릅니다 — PR #45(asset_organizer/retirement_planner)
+    머지 후 retirement_planner 자체 상태로 분리 예정.
     """
 
     # 자산 (원)
@@ -83,6 +98,38 @@ class FinancialProfile(BaseModel):
         return merged
 
 
+#: 의미를 그대로 드러내는 별칭. 코드에서 `Estate` 로 참조해도 되고, 향후 하드
+#: 리네임 시 이 별칭이 이행 지점이 됩니다 (schemas/__init__.py 도 함께 export).
+Estate = FinancialProfile
+
+
+class WillStatus(BaseModel):
+    """decedent_estate 가 판정한 유언장 상태 요약.
+
+    family_graph / financial_profile 과 같은 방식으로 세션에 붙어, 같은 세션의
+    tax_calculator·heir_share_analyzer 가 "유언장이 있는지 / 효력이 있는지"를
+    재질문 없이 참고합니다. 유언장 원문·개인정보는 담지 않습니다
+    (decedent_estate 저장 정책 C안 — 판정 요약만).
+    """
+
+    #: decedent_estate 가 이번 세션에서 유언장을 실제로 점검했는지.
+    checked: bool = False
+    #: 민법 5방식 id, "unknown", 또는 유언장 없음이면 None.
+    will_type: Optional[str] = None
+    #: 유언장이 없는 것으로 확인됨.
+    no_will: bool = False
+    #: 요건 판정 종합 등급.
+    overall_grade: Optional[Literal["green", "yellow", "red"]] = None
+    #: green → True, red → False, 그 외(미확인·쟁점) → None.
+    has_effect: Optional[bool] = None
+
+    def merged_with(self, other: Optional["WillStatus"]) -> "WillStatus":
+        """other 가 실제 점검 결과(checked=True)면 그것으로, 아니면 self 유지."""
+        if other is None or not other.checked:
+            return self.model_copy(deep=True)
+        return other.model_copy(deep=True)
+
+
 class HandoffRequest(BaseModel):
     target: AgentName
     reason: Optional[str] = None
@@ -94,6 +141,13 @@ class HandoffRequest(BaseModel):
 class AgentInput(BaseModel):
     session_id: str
     user_message: str
+    axis: Optional[Literal["pre_need", "post_death"]] = Field(
+        default=None,
+        description=(
+            "프론트 온보딩 '상담 구분'. pre_need=생전 준비, post_death=사후 절차. "
+            "키워드 후보가 없거나 애매할 때 오케스트레이터가 라우팅 편향에 씁니다."
+        ),
+    )
     family_graph: Optional[dict[str, Any]] = Field(
         default=None, description="가족관계 그래프 엔진이 계산한 현재 상태"
     )
@@ -111,8 +165,15 @@ class AgentInput(BaseModel):
     financial_profile: Optional[FinancialProfile] = Field(
         default=None,
         description=(
-            "세션 공유 재무 상태. 요청에 담아 보내면 세션 값과 병합되어 이번 턴의 "
-            "모든 에이전트에 전달됩니다. 보통은 비워두고 세션 값을 씁니다."
+            "세션 공유 상속재산(Estate). 요청에 담아 보내면 세션 값과 병합되어 "
+            "이번 턴의 모든 에이전트에 전달됩니다. 보통은 비워두고 세션 값을 씁니다."
+        ),
+    )
+    will_status: Optional[WillStatus] = Field(
+        default=None,
+        description=(
+            "세션 공유 유언장 판정 요약(decedent_estate 산출). 오케스트레이터가 "
+            "세션 값으로 채워 넣으므로 프론트는 보통 비워둡니다."
         ),
     )
     context: dict[str, Any] = Field(default_factory=dict)
@@ -147,7 +208,14 @@ class AgentOutput(BaseModel):
     )
     financial_profile: Optional[FinancialProfile] = Field(
         default=None,
-        description="이번 턴에 새로 알게 된 재무 정보. 세션 프로필에 병합됩니다.",
+        description="이번 턴에 새로 알게 된 상속재산 정보. 세션 값에 병합됩니다.",
+    )
+    will_status: Optional[WillStatus] = Field(
+        default=None,
+        description=(
+            "이번 턴에 판정한 유언장 상태(decedent_estate만 채움). 세션 값에 "
+            "병합됩니다."
+        ),
     )
     data: dict[str, Any] = Field(default_factory=dict)
 

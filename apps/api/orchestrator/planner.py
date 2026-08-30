@@ -36,7 +36,13 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from schemas import AgentInput, AgentName, AgentOutput, FinancialProfile
+from schemas import (
+    AgentInput,
+    AgentName,
+    AgentOutput,
+    FinancialProfile,
+    WillStatus,
+)
 
 from . import registry
 from .handoff import build_agent_context
@@ -152,14 +158,40 @@ def _llm_select(
     return picked or None
 
 
+#: 상담 축(온보딩 "상담 구분") → 키워드 후보가 없을 때 고를 기본 에이전트.
+#: 대상이 등록 안 됐거나 껍데기(is_stub)면 default_agent 로 되돌린다.
+_AXIS_DEFAULT_AGENT: dict[str, AgentName] = {
+    "post_death": AgentName.HEIR_NAVIGATOR,
+    "pre_need": AgentName.ASSET_ORGANIZER,
+}
+
+
+def _axis_default_agent(axis: Optional[str], default_agent: AgentName) -> AgentName:
+    if axis is None:
+        return default_agent
+    target = _AXIS_DEFAULT_AGENT.get(axis)
+    if target is None:
+        return default_agent
+    spec = registry.get_optional(target)
+    if spec is None or spec.is_stub:
+        return default_agent
+    return target
+
+
 def classify(
     user_message: str,
     *,
     pending_handoff: Optional[AgentName],
     last_agent: Optional[AgentName],
     default_agent: AgentName,
+    axis: Optional[str] = None,
 ) -> Plan:
-    """이번 턴에 실행할 에이전트와 경로 등급을 정합니다 (계획의 층 구성은 build_plan)."""
+    """이번 턴에 실행할 에이전트와 경로 등급을 정합니다 (계획의 층 구성은 build_plan).
+
+    axis(생전 준비 / 사후 절차)는 키워드 후보가 하나도 없을 때만 개입합니다 —
+    직전 에이전트가 있으면 그 대화를 이어가고, 없으면 axis 에 맞는 기본 에이전트
+    (사후→heir_navigator, 생전→asset_organizer)로 시작합니다.
+    """
     # (1) 직전 턴 핸드오프가 최우선 — 기존 라우터와 동일. Fast Path.
     if (
         pending_handoff is not None
@@ -169,11 +201,14 @@ def classify(
 
     candidates = registry.match_keywords(user_message)
 
-    # (2) 키워드 후보 1개 → Standard. (3) 없으면 직전 에이전트 → (4) 기본.
+    # (2) 키워드 후보 1개 → Standard. (3) 없으면 직전 에이전트 → (4) axis 기본 → (5) 기본.
     if len(candidates) == 1:
         return Plan(path=PATH_STANDARD, layers=[[candidates[0]]])
     if not candidates:
-        target = last_agent if last_agent is not None else default_agent
+        if last_agent is not None and registry.get_optional(last_agent) is not None:
+            target = last_agent
+        else:
+            target = _axis_default_agent(axis, default_agent)
         if registry.get_optional(target) is None:
             target = default_agent
         return Plan(path=PATH_STANDARD, layers=[[target]])
@@ -237,6 +272,7 @@ class ExecutionResult:
         AgentName, AgentInput
     ]  # 각 에이전트가 실제로 받은 입력 (테스트/디버그)
     financial_profile: FinancialProfile
+    will_status: Optional[WillStatus] = None
 
 
 def _error_output(name: AgentName, exc: BaseException) -> AgentOutput:
@@ -257,12 +293,18 @@ def execute_plan(
     financial_profile: FinancialProfile,
     stored_context_for: Callable[[AgentName], dict[str, Any]],
     runners: dict[AgentName, Callable[[AgentInput], AgentOutput]],
+    will_status: Optional[WillStatus] = None,
 ) -> ExecutionResult:
-    """층 단위로 병렬 실행하고, 앞 층 결과를 다음 층 context 에 주입합니다."""
+    """층 단위로 병렬 실행하고, 앞 층 결과를 다음 층 context 에 주입합니다.
+
+    will_status 는 decedent_estate 가 같은 턴 앞 층에서 새로 판정하면 그 값이
+    다음 층으로 전파됩니다(financial_profile 과 같은 방식).
+    """
     outputs: list[AgentOutput] = []
     inputs: dict[AgentName, AgentInput] = {}
     upstream: dict[str, dict[str, Any]] = {}
     profile = financial_profile
+    will = will_status
 
     for layer in plan.layers:
         layer_inputs: list[tuple[AgentName, AgentInput]] = []
@@ -280,9 +322,11 @@ def execute_plan(
             agent_input = AgentInput(
                 session_id=payload.session_id,
                 user_message=payload.user_message,
+                axis=payload.axis,
                 family_graph=family_graph,
                 family_graph_id=payload.family_graph_id,
                 financial_profile=profile,
+                will_status=will,
                 context=context,
                 # 이미지는 세션에 저장되지 않는다 — extract_state_to_persist가
                 # output.data[agent.value]만 영속화하고, payload(이번 요청)는
@@ -314,5 +358,12 @@ def execute_plan(
             upstream[output.agent.value] = {"reply": output.reply, "data": output.data}
             if output.financial_profile is not None:
                 profile = profile.merged_with(output.financial_profile)
+            if output.will_status is not None and output.will_status.checked:
+                will = (will or WillStatus()).merged_with(output.will_status)
 
-    return ExecutionResult(outputs=outputs, inputs=inputs, financial_profile=profile)
+    return ExecutionResult(
+        outputs=outputs,
+        inputs=inputs,
+        financial_profile=profile,
+        will_status=will,
+    )
