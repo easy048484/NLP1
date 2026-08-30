@@ -1,4 +1,9 @@
-import type { AgentInput, AgentOutput } from "../types";
+import type {
+  AgentInput,
+  AgentOutput,
+  ChatResponse,
+  ConsultAxis,
+} from "../types";
 import { authHeader } from "./auth";
 
 export const API_BASE_URL: string =
@@ -7,8 +12,10 @@ export const API_BASE_URL: string =
 export interface ChatCallResult {
   /** 실제로 서버에 전송한 요청 본문 (개발자 모드 JSON 뷰어용) */
   request: AgentInput;
-  /** 서버가 돌려준 원본 응답. 실패 시 null */
-  response: AgentOutput | null;
+  /** 정규화된 합성 응답. 실패 시 null */
+  response: ChatResponse | null;
+  /** 서버가 돌려준 원본 JSON (개발자 모드용) */
+  raw: unknown;
   ok: boolean;
   status: number | null;
   errorMessage: string | null;
@@ -16,25 +23,69 @@ export interface ChatCallResult {
 }
 
 /**
+ * 백엔드가 이미 최종 계약(`ChatResponse`)을 반환하면 그대로 쓰고,
+ * 아직 과도기라 단일 `AgentOutput`만 반환하면 1-contribution 짜리
+ * `ChatResponse`로 감싼다 — 화면 코드는 항상 `ChatResponse`만 본다.
+ */
+export function normalizeChatResponse(raw: unknown): ChatResponse | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+
+  // 최종 계약: contributions[] 가 있음
+  if (Array.isArray(obj.contributions)) {
+    return {
+      reply: typeof obj.reply === "string" ? obj.reply : "",
+      needs_review: obj.needs_review === true,
+      contributions: obj.contributions as AgentOutput[],
+      plan: (obj.plan as ChatResponse["plan"]) ?? null,
+      financial_profile:
+        (obj.financial_profile as ChatResponse["financial_profile"]) ?? null,
+      family_graph: (obj.family_graph as ChatResponse["family_graph"]) ?? null,
+      primary_agent:
+        (obj.primary_agent as ChatResponse["primary_agent"]) ??
+        ((obj.contributions as AgentOutput[])[0]?.agent ?? null),
+    };
+  }
+
+  // 과도기: 단일 AgentOutput
+  if (typeof obj.agent === "string" && typeof obj.reply === "string") {
+    const single = obj as unknown as AgentOutput;
+    const plan =
+      single.data && typeof single.data === "object" && "plan" in single.data
+        ? ((single.data as Record<string, unknown>).plan as ChatResponse["plan"])
+        : null;
+    return {
+      reply: single.reply,
+      needs_review: single.needs_review === true,
+      contributions: [single],
+      plan: plan ?? null,
+      financial_profile: null,
+      family_graph: null,
+      primary_agent: single.agent,
+    };
+  }
+
+  return null;
+}
+
+/**
  * apps/api/main.py 의 POST /chat 을 호출합니다.
- * (AgentInput -> AgentOutput, apps/api/schemas/agent_io.py 참고)
  *
- * familyGraphId가 있으면 요청에 실어 보냅니다 — 오케스트레이터의
- * node_build_context가 이 id로 family_graph를 자동 조회해서 채워주므로
- * (family_graph_입력_플로우_계획_0823.md 1-1절), 프론트는 id만 들고
- * 다니면 됩니다. localStorage에 저장된 id를 읽어 넘기는 건 호출부
- * (App.tsx)의 책임입니다.
+ * familyGraphId가 있으면 요청에 실어 보냅니다 — 오케스트레이터가 이 id로
+ * family_graph를 자동 조회해 채워주므로 프론트는 id만 들고 다니면 됩니다.
+ * axis는 온보딩 "상담 구분"에서 정한 값(pre_need/post_death)입니다.
  */
 export async function sendChatMessage(
   sessionId: string,
   userMessage: string,
-  familyGraphId?: string | null,
+  opts?: { familyGraphId?: string | null; axis?: ConsultAxis | null },
 ): Promise<ChatCallResult> {
   const request: AgentInput = {
     session_id: sessionId,
     user_message: userMessage,
     context: {},
-    ...(familyGraphId ? { family_graph_id: familyGraphId } : {}),
+    ...(opts?.familyGraphId ? { family_graph_id: opts.familyGraphId } : {}),
+    ...(opts?.axis ? { axis: opts.axis } : {}),
   };
 
   const startedAt = performance.now();
@@ -48,7 +99,6 @@ export async function sendChatMessage(
 
     const latencyMs = Math.round(performance.now() - startedAt);
     let json: unknown = null;
-
     try {
       json = await res.json();
     } catch {
@@ -60,10 +110,10 @@ export async function sendChatMessage(
         json !== null && typeof json === "object" && "detail" in json
           ? JSON.stringify((json as { detail: unknown }).detail)
           : `HTTP ${res.status}`;
-
       return {
         request,
         response: null,
+        raw: json,
         ok: false,
         status: res.status,
         errorMessage: detail,
@@ -71,20 +121,22 @@ export async function sendChatMessage(
       };
     }
 
+    const response = normalizeChatResponse(json);
     return {
       request,
-      response: json as AgentOutput,
-      ok: true,
+      response,
+      raw: json,
+      ok: response !== null,
       status: res.status,
-      errorMessage: null,
+      errorMessage: response === null ? "응답 형식을 이해하지 못했습니다." : null,
       latencyMs,
     };
   } catch (err) {
     const latencyMs = Math.round(performance.now() - startedAt);
-
     return {
       request,
       response: null,
+      raw: null,
       ok: false,
       status: null,
       errorMessage:
