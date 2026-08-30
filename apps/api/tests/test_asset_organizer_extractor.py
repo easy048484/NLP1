@@ -377,6 +377,38 @@ def test_extract_from_image_lease_deposit_liability_type_passes_whitelist(
     assert liabilities[0].remaining_balance == 200_000_000
 
 
+def test_extract_from_image_vehicle_and_pension_assets_recognized(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """_VALID_ASSET_TYPES는 _ASSET_KEYWORDS.keys()에서 자동 파생되지만,
+    이미지 판독 경로(_apply_llm_payload)가 실제로 그 목록을 보고 새
+    자산 유형을 정상 값으로 통과시키는지(=자동차/퇴직연금이 "기타"로
+    뭉개지지 않는지)는 회귀로 따로 고정해둬야 한다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "unreadable": False,
+                "assets": [
+                    {"type": "자동차", "value": 30_000_000},
+                    {"type": "퇴직연금", "value": 80_000_000},
+                ],
+                "liabilities": [],
+                "insurance": [],
+                "unclear": [],
+            }
+        ),
+    )
+
+    result, liabilities, liability_missing = extractor.extract_from_image(
+        "base64-image-data", "image/png"
+    )
+
+    assert result.status == "ok"
+    assert any(a.type == "자동차" and a.value == 30_000_000 for a in result.assets)
+    assert any(a.type == "퇴직연금" and a.value == 80_000_000 for a in result.assets)
+
+
 def test_llm_fallback_asset_type_with_pii_is_kept_as_gita_not_dropped(
     monkeypatch: pytest.MonkeyPatch,
 ):

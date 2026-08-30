@@ -42,22 +42,32 @@ _MODEL = "claude-haiku-4-5-20251001"
 _TIMEOUT_SECONDS = 8.0
 _MAX_TOKENS = 400
 
-_SYSTEM_PROMPT = (
-    "너는 사용자의 자연어 발화에서 금융자산·소득·보험 정보를 추출하는 도구다.\n"
-    "정규식으로 못 잡은 표현만 너에게 온다. 절대 판정하거나 조언하지 마라 — "
-    "너는 오직 값 추출만 한다.\n"
-    "금액이나 나이를 확실히 알 수 없으면 절대 숫자를 지어내지 마라 — 그 항목은 "
-    "생략하고 unclear 배열에 이유를 적어라.\n"
-    "반드시 아래 JSON 형식으로만 답하라. 코드블록이나 다른 설명을 절대 덧붙이지 "
-    "마라.\n"
-    "{\n"
-    '  "assets": [{"type": "예금|주식|펀드|부동산|자동차|퇴직연금|기타", "value": 원단위 정수}],\n'
-    '  "incomes": [{"type": "국민연금|개인연금|기타", "monthly": 원단위 정수, '
-    '"start_age": 정수}],\n'
-    '  "insurance": [{"value": 원단위 정수 또는 null}],\n'
-    '  "unclear": ["무엇을 확인하지 못했는지에 대한 짧은 설명"]\n'
-    "}"
-)
+
+def _build_system_prompt() -> str:
+    """LLM에게 보내는 시스템 프롬프트. assets 필드의 허용 유형 목록은
+    _VALID_ASSET_TYPES(= _ASSET_KEYWORDS.keys() + "기타")에서 직접
+    파생한다 — 새 자산 유형을 _ASSET_KEYWORDS에 추가하기만 하면 이
+    프롬프트 문구도 자동으로 따라오고, 화이트리스트와 프롬프트가 서로
+    어긋날 일이 없다(수동 동기화 불필요). 호출 시점에 조립하는 이유는
+    _VALID_ASSET_TYPES가 이 함수보다 파일 아래쪽(LLM 폴백 섹션)에서
+    정의되기 때문 — 모듈 로드가 끝난 뒤 호출되므로 문제없다."""
+    asset_types = "|".join(_VALID_ASSET_TYPES)
+    return (
+        "너는 사용자의 자연어 발화에서 금융자산·소득·보험 정보를 추출하는 도구다.\n"
+        "정규식으로 못 잡은 표현만 너에게 온다. 절대 판정하거나 조언하지 마라 — "
+        "너는 오직 값 추출만 한다.\n"
+        "금액이나 나이를 확실히 알 수 없으면 절대 숫자를 지어내지 마라 — 그 항목은 "
+        "생략하고 unclear 배열에 이유를 적어라.\n"
+        "반드시 아래 JSON 형식으로만 답하라. 코드블록이나 다른 설명을 절대 덧붙이지 "
+        "마라.\n"
+        "{\n"
+        '  "assets": [{"type": "' + asset_types + '", "value": 원단위 정수}],\n'
+        '  "incomes": [{"type": "국민연금|개인연금|기타", "monthly": 원단위 정수, '
+        '"start_age": 정수}],\n'
+        '  "insurance": [{"value": 원단위 정수 또는 null}],\n'
+        '  "unclear": ["무엇을 확인하지 못했는지에 대한 짧은 설명"]\n'
+        "}"
+    )
 
 
 @dataclass
@@ -286,7 +296,7 @@ def _llm_extract(text: str) -> Optional[dict[str, Any]]:
         response = client.messages.create(
             model=_MODEL,
             max_tokens=_MAX_TOKENS,
-            system=_SYSTEM_PROMPT,
+            system=_build_system_prompt(),
             messages=[{"role": "user", "content": text}],
             timeout=_TIMEOUT_SECONDS,
         )
@@ -425,28 +435,6 @@ def extract_financial_slots(text: str) -> ExtractionResult:
 #: 멀티모달 호출로 바로 구조화된 값을 받는다) — 그래서 마스킹이 필요한
 #: "재구성 텍스트가 또 LLM으로 나가는" 지점 자체가 생기지 않는다.
 _IMAGE_MAX_TOKENS = 600
-_IMAGE_SYSTEM_PROMPT = (
-    "너는 은행 앱 잔액 화면, 안심상속 통합조회 결과 캡처 같은 이미지에서 "
-    "금융자산·부채·보험 정보를 추출하는 도구다.\n"
-    "절대 판정하거나 조언하지 마라 — 너는 오직 값 추출만 한다.\n"
-    "화면이 흐릿하거나 무엇을 찍은 건지 알아보기 어려우면 절대 숫자를 "
-    "지어내지 마라 — 그 항목은 생략하고 unclear 배열에 이유를 적어라. "
-    "이미지 전체를 알아볼 수 없으면 unreadable을 true로 하라.\n"
-    "수집 최소화 원칙: 자산 유형·금액, 부채 유형·잔액, 보험 가입 여부·금액"
-    " 외에는 아무것도 추출하지 마라. 계좌번호·예금주명·주민등록번호·"
-    "은행/지점명·카드번호·전화번호 등은 화면에 보이더라도 절대 결과에 "
-    "옮기지 마라 — unclear 설명에도 그런 정보를 포함하지 마라.\n"
-    "반드시 아래 JSON 형식으로만 답하라. 코드블록이나 다른 설명을 절대 "
-    "덧붙이지 마라.\n"
-    "{\n"
-    '  "unreadable": true 또는 false,\n'
-    '  "assets": [{"type": "예금|주식|펀드|부동산|자동차|퇴직연금|기타", "value": 원단위 정수}],\n'
-    '  "liabilities": [{"type": "대출|카드론|전세자금대출|임대보증금반환채무|기타", '
-    '"remaining_balance": 원단위 정수}],\n'
-    '  "insurance": [{"value": 원단위 정수 또는 null}],\n'
-    '  "unclear": ["무엇을 확인하지 못했는지에 대한 짧은 설명(개인정보 제외)"]\n'
-    "}"
-)
 
 #: extract_from_image()이 이미지를 아예 못 읽었을 때(unreadable/네트워크
 #: 오류/형식 오류/키 없음) 공통으로 쓰는 missing 항목 — agent.py가 이
@@ -478,6 +466,39 @@ _VALID_LIABILITY_TYPES = (
     "임대보증금반환채무",
     "기타",
 )
+
+
+def _build_image_system_prompt() -> str:
+    """이미지 판독용 시스템 프롬프트. assets/liabilities 필드의 허용 유형
+    목록을 각각 _VALID_ASSET_TYPES/_VALID_LIABILITY_TYPES에서 직접
+    파생한다 — _build_system_prompt()와 같은 이유(수동 동기화 불필요).
+    _VALID_LIABILITY_TYPES 자체는 수동 유지 튜플이지만(위 주석 참고),
+    이 함수는 그 튜플 하나만 보고 조립하므로 새 부채 유형을 추가할 때
+    거기 한 곳만 갱신하면 프롬프트 문구까지 같이 따라온다."""
+    asset_types = "|".join(_VALID_ASSET_TYPES)
+    liability_types = "|".join(_VALID_LIABILITY_TYPES)
+    return (
+        "너는 은행 앱 잔액 화면, 안심상속 통합조회 결과 캡처 같은 이미지에서 "
+        "금융자산·부채·보험 정보를 추출하는 도구다.\n"
+        "절대 판정하거나 조언하지 마라 — 너는 오직 값 추출만 한다.\n"
+        "화면이 흐릿하거나 무엇을 찍은 건지 알아보기 어려우면 절대 숫자를 "
+        "지어내지 마라 — 그 항목은 생략하고 unclear 배열에 이유를 적어라. "
+        "이미지 전체를 알아볼 수 없으면 unreadable을 true로 하라.\n"
+        "수집 최소화 원칙: 자산 유형·금액, 부채 유형·잔액, 보험 가입 여부·금액"
+        " 외에는 아무것도 추출하지 마라. 계좌번호·예금주명·주민등록번호·"
+        "은행/지점명·카드번호·전화번호 등은 화면에 보이더라도 절대 결과에 "
+        "옮기지 마라 — unclear 설명에도 그런 정보를 포함하지 마라.\n"
+        "반드시 아래 JSON 형식으로만 답하라. 코드블록이나 다른 설명을 절대 "
+        "덧붙이지 마라.\n"
+        "{\n"
+        '  "unreadable": true 또는 false,\n'
+        '  "assets": [{"type": "' + asset_types + '", "value": 원단위 정수}],\n'
+        '  "liabilities": [{"type": "' + liability_types + '", '
+        '"remaining_balance": 원단위 정수}],\n'
+        '  "insurance": [{"value": 원단위 정수 또는 null}],\n'
+        '  "unclear": ["무엇을 확인하지 못했는지에 대한 짧은 설명(개인정보 제외)"]\n'
+        "}"
+    )
 
 
 def _apply_llm_liabilities(
@@ -537,7 +558,7 @@ def extract_from_image(
         response = client.messages.create(
             model=_MODEL,
             max_tokens=_IMAGE_MAX_TOKENS,
-            system=_IMAGE_SYSTEM_PROMPT,
+            system=_build_image_system_prompt(),
             messages=[
                 {
                     "role": "user",
