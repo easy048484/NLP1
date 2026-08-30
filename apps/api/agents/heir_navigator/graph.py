@@ -202,11 +202,7 @@ def node_finalize(state: GraphState) -> GraphState:
 
     # 안내를 마친 뒤 되물을 슬롯은 답변 본문이 아니라 별도 질문 블록으로 내보낸다.
     # (사망일처럼 안내 자체를 막는 blocking 질문은 그대로 reply 로 둔다.)
-    if (
-        plan is not None
-        and plan.follow_up
-        and prompts.blocking_question(plan) is None
-    ):
+    if plan is not None and plan.follow_up and prompts.blocking_question(plan) is None:
         follow_up_q = prompts.follow_up_prompt(plan.follow_up)
         if follow_up_q is not None:
             data["pending_questions"] = [follow_up_q]

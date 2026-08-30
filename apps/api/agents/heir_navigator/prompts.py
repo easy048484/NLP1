@@ -299,7 +299,6 @@ def follow_up_prompt(slot: str | None) -> dict | None:
         "field": "",
         "question": QUESTIONS[slot],
         "options": [
-            {"label": text, "value": text}
-            for text in FOLLOW_UP_OPTIONS.get(slot, [])
+            {"label": text, "value": text} for text in FOLLOW_UP_OPTIONS.get(slot, [])
         ],
     }
