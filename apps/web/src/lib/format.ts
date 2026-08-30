@@ -26,6 +26,36 @@ export function formatWonExact(amount: number | null | undefined): string {
   return `${WON.format(Math.round(amount))}원`;
 }
 
+/**
+ * 한국식 금액 입력을 원 단위 정수로. "3천만원"→30000000, "3,200만원"→32000000,
+ * "1억 2천만원"→120000000, "32000000"→32000000. 못 읽으면 null.
+ * (백엔드 asset_organizer/extractor.py _parse_amount 와 같은 규칙.)
+ */
+export function parseKrw(input: string | null | undefined): number | null {
+  if (!input) return null;
+  const s = input.replace(/[\s,]/g, "").replace(/원$/g, "").replace(/정도|쯤|가량|약/g, "");
+  if (!s) return null;
+  if (/^\d+(\.\d+)?$/.test(s)) return Math.round(Number(s));
+
+  const units: Record<string, number> = {
+    조: 1_000_000_000_000,
+    억: 100_000_000,
+    천만: 10_000_000,
+    백만: 1_000_000,
+    천: 10_000_000, // 구어체 "3천" = 3천만
+    만: 10_000,
+  };
+  const re = /(\d+(?:\.\d+)?)\s*(조|억|천만|백만|천|만)/g;
+  let total = 0;
+  let matched = false;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    matched = true;
+    total += Number(m[1]) * units[m[2]];
+  }
+  return matched ? Math.round(total) : null;
+}
+
 /** ISO date("2026-05-03") → "2026년 5월 3일". */
 export function formatDateKo(iso: string | null | undefined): string {
   if (!iso) return "—";
