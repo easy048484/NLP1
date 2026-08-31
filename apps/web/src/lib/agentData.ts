@@ -16,6 +16,13 @@ function asRecord(v: unknown): Record<string, unknown> | null {
 function asArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
 }
+/** 배열이면 그대로, {id: item} 형태의 dict면 값들만 뽑아 배열로 (id 키는 버림 —
+ * 각 item 안에 자기 id가 이미 있다는 전제, decedent_estate.requirements가 이 모양). */
+function asArrayOrRecordValues(v: unknown): unknown[] {
+  if (Array.isArray(v)) return v;
+  const rec = asRecord(v);
+  return rec ? Object.values(rec) : [];
+}
 function asString(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
 }
@@ -43,6 +50,11 @@ const GRADE_MAP: Record<string, SignalGrade> = {
   GREEN: "green",
   RED: "red",
   YELLOW: "yellow",
+  // decedent_estate.requirements[rid].grade 는 대문자만 쓴다(WHITE=간인 같은
+  // 법정 요건 아닌 참고 항목, PENDING=확인 대기) — requirements가 dict라
+  // 파싱이 항상 실패해오던 동안은(아래 parseSignals 참고) 드러나지 않았다.
+  WHITE: "gray",
+  PENDING: "pending",
 };
 
 const GRADE_BADGE: Record<SignalGrade, string> = {
@@ -54,8 +66,13 @@ const GRADE_BADGE: Record<SignalGrade, string> = {
 };
 
 export function parseSignals(data: Record<string, unknown>): RequirementSignal[] | null {
-  const raw = deepFind(data, "guide") ?? deepFind(data, "signals") ?? deepFind(data, "requirements");
-  const list = asArray(raw);
+  // guide/signals는 배열 형태만 지원한다 — 지금 실제로 오는 건 requirements뿐이고,
+  // decedent_estate.requirements는 {id: item} dict라 asArray()로는 항상 빈 배열이
+  // 됐다(카드가 한 번도 렌더되지 않은 원인). requirements만 dict/array 둘 다 받는다.
+  const guideOrSignals = asArray(deepFind(data, "guide") ?? deepFind(data, "signals"));
+  const list = guideOrSignals.length
+    ? guideOrSignals
+    : asArrayOrRecordValues(deepFind(data, "requirements"));
   if (list.length === 0) return null;
 
   const signals: RequirementSignal[] = [];

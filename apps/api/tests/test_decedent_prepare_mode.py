@@ -266,6 +266,31 @@ def test_prepare_handwritten_with_draft_also_includes_review_result() -> None:
     assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
 
 
+def test_prepare_handwritten_with_draft_carries_requirement_body_and_precedents() -> (
+    None
+):
+    """A안: review 파이프라인이 요건별로 채운 body/precedents가 prepare+초안
+    흐름에서도 사라지지 않고 data["review"]와 네임스페이스 양쪽에 남아야
+    한다. requirements[rid]는 DecedentState 필드라, review_output.data 를
+    `k != STATE_KEY` 로 거를 때(중첩 저장을 피하려고) 함께 걸러지지 않고
+    그대로 남는다 — #58 원안의 통짜 body/precedents(extra_namespaced,
+    STATE_KEY 안에만 있어 따로 옮겨 담아야 했던 것)와 다른 지점이다."""
+    output = _run(
+        _WILL_TEXT_COMPLETE,
+        will_type="handwritten",
+        intent="prepare",
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+    )
+
+    date_req = output.data["review"]["requirements"]["date"]
+    assert isinstance(date_req["body"], str) and date_req["body"]
+    assert date_req["precedents"] == []  # GREEN이라 인용 없음
+
+    ns = output.data["decedent_estate"]
+    assert ns["requirements"]["date"] == date_req
+
+
 def test_prepare_handwritten_with_incomplete_draft_still_pending() -> None:
     """초안은 있지만 확인 답변이 없으면 review 파트는 여전히 PENDING이어야 한다."""
     output = _run(_WILL_TEXT_COMPLETE, will_type="handwritten", intent="prepare")
