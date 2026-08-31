@@ -35,7 +35,7 @@ export function AgentCards({
   const data = contribution.data ?? {};
 
   const signals = parseSignals(data);
-  const pending = parsePendingQuestions(data);
+  const pending = parsePendingQuestions(data, contribution.agent);
   const tax = parseTaxResult(data);
   const shares = parseShares(data);
 
