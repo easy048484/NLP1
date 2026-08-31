@@ -1,13 +1,19 @@
 """
-asset_organizer -> retirement_planner 실제 연결(핸드오프) 테스트.
+asset_organizer -> retirement_planner 연결 테스트.
 
-이 프로젝트에서 "코드는 있는데 실제 대화로는 도달 불가능"한 패턴이 여러 번
-반복됐다 — retirement_planner가 extra["asset_organizer"]를 읽을 준비가
-됐다는 것과, 체크리스트 대화가 실제로 거기까지 이어진다는 것은 별개다.
-그래서 여기서는 가짜 에이전트가 아니라 실제 asset_organizer/retirement_planner
-run()과 실제 orchestrator.router.route()를 그대로 통해서 검증한다
-(test_orchestrator.py는 가짜 에이전트로 라우팅 규약만 보는 다른 담당자
-영역이라 이 통합 테스트는 별도 파일로 둔다).
+⚠️ 2026-08-30 데모 제외 결정으로 이 연결은 비활성화됐다(agent.py의
+_finalize() 참고 — 핸드오프를 주석 처리해서 나중에 복원 가능하게 남겨둠,
+retirement_planner/spec.py의 keywords=[]와 같은 결정 계열). 이 파일은
+원래 실제 asset_organizer/retirement_planner run()과 실제
+orchestrator.router.route()를 그대로 통해서 "체크리스트 완료 → 자동으로
+시뮬레이션까지 이어짐"을 검증했는데(이 프로젝트에서 "코드는 있는데 실제
+대화로는 도달 불가능"한 패턴이 여러 번 반복됐어서), 이제는 반대로
+"체크리스트 완료 후 정말 거기서 끝나는지"를 검증한다.
+
+retirement_planner 자체의 엔진·itemized 데이터 소비 로직(유동성, 부채
+정밀/단순 모드 등)은 여전히 유효한 코드이고 test_retirement_planner_agent.py
+가 agent.run()을 직접 호출해서 계속 검증한다 — 없어진 건 "도달 경로"뿐이라
+그 테스트들은 손대지 않았다.
 """
 
 from __future__ import annotations
@@ -25,12 +31,13 @@ def _fresh_session_store(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
 
-def test_checklist_completion_auto_handoffs_to_retirement_planner_next_turn():
-    """체크리스트가 끝나면 다음 턴은 사용자가 은퇴/노후/연금 키워드를
-    새로 말하지 않아도 자동으로 retirement_planner로 넘어가야 한다
-    (orchestrator의 Fast Path — pending_handoff). 이게 없으면 체크리스트가
-    끝난 뒤에도 asset_organizer가 같은 요약을 반복하며 대화가 거기서
-    멈춘다(실측으로 확인된 회귀 시나리오)."""
+def test_checklist_completion_no_longer_hands_off_and_ends_at_asset_organizer():
+    """⚠️ 예전엔 체크리스트가 끝나면 다음 턴이 키워드 없이도 자동으로
+    retirement_planner로 넘어갔다(Fast Path). 데모 제외 결정 이후에는
+    handoffs가 비어 있어야 하고, 다음 턴도 계속 asset_organizer(또는
+    키워드 없는 평범한 발화라면 last_agent 규칙에 따라 여전히
+    asset_organizer)에 머물러야 한다 — retirement_planner로 넘어가면
+    안 된다."""
     session = "handoff-e2e-1"
 
     output = router.route(AgentInput(session_id=session, user_message="자산 정리해줘"))
@@ -52,15 +59,31 @@ def test_checklist_completion_auto_handoffs_to_retirement_planner_next_turn():
 
     output = router.route(AgentInput(session_id=session, user_message="몰라요"))
     assert output.agent == AgentName.ASSET_ORGANIZER
-    assert any(h.target == AgentName.RETIREMENT_PLANNER for h in output.handoffs)
+    assert output.data[AgentName.ASSET_ORGANIZER.value]["status"] == "done"
+    assert output.handoffs == []  # 예전엔 여기서 retirement_planner 핸드오프가 걸렸다
+    assert "순자산" in output.reply
 
-    # 키워드가 전혀 없는 평범한 발화인데도 Fast Path로 자동 전환돼야 한다.
+    # 키워드 없는 평범한 발화를 보내도 retirement_planner로 튕기면 안 된다
+    # — pending_handoff가 비어 있으므로 last_agent 규칙에 따라
+    # asset_organizer에 머물러야 한다.
     output = router.route(AgentInput(session_id=session, user_message="네 감사합니다"))
-    assert output.agent == AgentName.RETIREMENT_PLANNER
-    assert output.path == "fast"
-    assert "나이" in output.reply
+    assert output.agent == AgentName.ASSET_ORGANIZER
+    assert output.agent != AgentName.RETIREMENT_PLANNER
 
 
+@pytest.mark.skip(
+    reason=(
+        "2026-08-30 데모 제외 결정으로 asset_organizer -> retirement_planner "
+        "핸드오프가 비활성화되면서, 이 테스트가 검증하던 '체크리스트 완료 후 "
+        "대화가 자동으로 시뮬레이션까지 이어진다'는 시나리오 자체가 더 이상 "
+        "일어나지 않는다. retirement_planner의 itemized 데이터 소비 로직 "
+        "자체는 여전히 유효하고 test_retirement_planner_agent.py의 "
+        "test_uses_itemized_asset_organizer_extra_when_present 등이 agent.run() "
+        "직접 호출로 계속 검증한다 — 없어진 건 라우터를 통한 '도달 경로'뿐이라 "
+        "억지로 라우팅 우회 검증으로 바꾸지 않고 스킵으로 남겨둔다(핸드오프가 "
+        "복원되면 이 테스트도 그대로 복원 가능)."
+    )
+)
 def test_itemized_checklist_data_actually_reaches_simulation():
     """핸드오프 이후 실제로 이어지는 대화에서, asset_organizer가 모은
     itemized 자산·부채(유동성, 부채 모드)가 시뮬레이션 결과에 실제로
