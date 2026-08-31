@@ -126,11 +126,20 @@ export function parsePendingQuestions(
   data: Record<string, unknown>,
   agentKey?: string,
 ): PendingQuestion[] | null {
-  const ownNamespace = agentKey ? asRecord(data[agentKey]) : null;
-  const raw =
-    (ownNamespace && (ownNamespace.pending_questions ?? ownNamespace.questions)) ??
-    deepFindNamespaceFirst(data, "pending_questions") ??
-    deepFindNamespaceFirst(data, "questions");
+  // agentKey가 있으면 다른 agent의 namespace로는 절대 새지 않는다 — 자기
+  // namespace에 없으면 평면(top-level) 키로만 폴백한다(다른 agent namespace
+  // 순회 금지). agentKey가 없을 때만(legacy 호출) 기존처럼 첫 namespace를
+  // 순회하는 deepFindNamespaceFirst를 쓴다.
+  const raw = agentKey
+    ? (() => {
+        const ownNamespace = asRecord(data[agentKey]);
+        return (
+          (ownNamespace && (ownNamespace.pending_questions ?? ownNamespace.questions)) ??
+          data.pending_questions ??
+          data.questions
+        );
+      })()
+    : deepFindNamespaceFirst(data, "pending_questions") ?? deepFindNamespaceFirst(data, "questions");
   const list = asArray(raw);
   if (list.length === 0) return null;
   const out: PendingQuestion[] = [];
@@ -159,8 +168,8 @@ export function parsePendingQuestions(
 }
 
 /** 이 data 에 후속 질문(선택지)이 들어있는지. */
-export function hasPendingQuestions(data: Record<string, unknown>): boolean {
-  return (parsePendingQuestions(data) ?? []).length > 0;
+export function hasPendingQuestions(data: Record<string, unknown>, agentKey?: string): boolean {
+  return (parsePendingQuestions(data, agentKey) ?? []).length > 0;
 }
 
 export function parseTaxResult(data: Record<string, unknown>): TaxResult | null {
