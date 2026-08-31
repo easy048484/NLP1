@@ -8,10 +8,12 @@ decedent_estate.result_formatter 테스트.
 """
 
 import json
+import re
 from pathlib import Path
 
 from agents.decedent_estate.requirement_checker import check_requirements
 from agents.decedent_estate.result_formatter import (
+    cited_precedents,
     format_requirement_line,
     format_result,
     pending_questions,
@@ -509,3 +511,113 @@ def test_progress_recording_total_is_seven() -> None:
     result = progress(results, FORMAL_RECORDING_REQUIREMENT_IDS)
     assert result["total"] == 7
     assert 0 <= result["checked"] <= 7
+
+
+# ---------------------------------------------------------------------------
+# P0-1: body(판례 인용 줄 제외) / precedents(실제 인용된 판례만) 배열
+# ---------------------------------------------------------------------------
+
+_CITATION_LINE_RE = re.compile(
+    r"\((?:대법원|서울고법|대전고법|민법|대한법률구조공단)[^)]*\)"
+)
+
+
+def test_body_has_no_precedent_citation_lines() -> None:
+    """body 는 요건별 문구를 그대로 쓰되 판례 인용 줄만 뺀다."""
+    text = _will_text(_NAME_LINE, _DATE_LINE)  # 주소 없음(RED)
+    results = check_requirements(
+        text,
+        handwriting_answer="no_or_partial_typed",  # RED — typed_will_invalid 인용
+        seal_answer="signature_only",  # RED — signature_only_insufficient 인용
+        address_envelope_answer="no_envelope",
+    )
+
+    reply = format_result(results)
+    body = format_result(results, include_precedent_cards=False)
+
+    # 전제 확인: reply 에는 인용 줄이 있어야 한다(이 텍스트가 실제로 RED를 낸다는 것).
+    assert _CITATION_LINE_RE.search(reply)
+    # body 에는 없어야 한다.
+    assert _CITATION_LINE_RE.search(body) is None
+
+
+def test_body_keeps_term_note_and_reference_notes() -> None:
+    """판례 인용 줄만 빠지고, term_note·참고 문구(예외 3건)는 body에 그대로 남는다."""
+    text = _will_text(_NAME_LINE, _DATE_LINE)
+    results = check_requirements(
+        text,
+        handwriting_answer="yes",
+        seal_answer="signature_only",  # RED — fingerprint_seal_valid(예외) 참고 문구 포함
+        address_envelope_answer="no_envelope",
+    )
+
+    body = format_result(results, include_precedent_cards=False)
+
+    assert term_note("address") in body
+    assert "ℹ️ 참고: 지장(손도장)을 날인으로 인정한 판례가 있습니다" in body
+
+
+def test_cited_precedents_collects_unique_ids_across_requirements() -> None:
+    text = _will_text(_NAME_LINE, _DATE_LINE)
+    results = check_requirements(
+        text,
+        handwriting_answer="no_or_partial_typed",
+        seal_answer="signature_only",
+        address_envelope_answer="no_envelope",
+    )
+
+    precedents = cited_precedents(results)
+    case_nos = [p["case_no"] for p in precedents]
+
+    assert len(case_nos) == len(set(case_nos))  # 중복 없음
+    assert _precedent("typed_will_invalid")["case_number"] in case_nos
+    assert _precedent("address_missing_invalid")["case_number"] in case_nos
+    assert _precedent("signature_only_insufficient")["case_number"] in case_nos
+
+
+def test_cited_precedents_excludes_the_three_reference_note_ids() -> None:
+    """카드로 안 만들기로 한 예외 3건은 precedents 배열에 절대 없어야 한다."""
+    text = _will_text(_NAME_LINE, _DATE_LINE)
+    results = check_requirements(
+        text,
+        handwriting_answer="yes",
+        seal_answer="signature_only",  # fingerprint_seal_valid 이 precedent_ids 에 포함됨
+    )
+    assert "fingerprint_seal_valid" in results["seal"].precedent_ids  # 전제 확인
+
+    precedents = cited_precedents(results)
+    excluded_case_nos = {
+        _precedent("fingerprint_seal_valid")["case_number"],
+        _precedent("fingerprint_identity_disputed_invalid")["case_number"],
+    }
+    assert not any(p["case_no"] in excluded_case_nos for p in precedents)
+
+
+def test_cited_precedents_statute_case_no_falls_back_to_id() -> None:
+    """case_number 가 null 인 statute 판례는 case_no 자리에 id 가 채워져야 한다
+    (프론트가 case_no==null 인 항목을 필터링해서 버리는 문제 방지)."""
+    from agents.decedent_estate.recording_checker import check_recording_requirements
+
+    text = "\n".join(
+        [
+            "유언자: 홍길동",
+            "저의 전 재산을 배우자에게 상속한다.",
+            "2026년 5월 3일",
+            "증인: 김철수",
+            "증인은 위 유언이 정확함을 확인합니다.",
+        ]
+    )
+    results = check_recording_requirements(
+        text,
+        rec_witness_present_answer="yes",
+        rec_witness_eligible_answer="disqualified",  # witness_disqualification 인용
+    )
+    assert _precedent("witness_disqualification")["case_number"] is None  # 전제 확인
+
+    precedents = cited_precedents(results)
+    entry = next(
+        p
+        for p in precedents
+        if p["summary"] == _precedent("witness_disqualification")["summary"]
+    )
+    assert entry["case_no"] == "witness_disqualification"

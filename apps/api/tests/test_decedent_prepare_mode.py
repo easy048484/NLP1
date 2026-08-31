@@ -266,6 +266,29 @@ def test_prepare_handwritten_with_draft_also_includes_review_result() -> None:
     assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
 
 
+def test_prepare_handwritten_with_draft_carries_body_and_precedents() -> None:
+    """P0-1: review 파이프라인이 만든 body/precedents가 prepare+초안 흐름에서도
+    사라지지 않고 data["review"]와 네임스페이스 양쪽에 남아야 한다 —
+    review_output.data 는 STATE_KEY 안에만 body/precedents를 담으므로,
+    단순히 `k != STATE_KEY` 로 거르면 조용히 없어질 수 있는 지점이다."""
+    output = _run(
+        _WILL_TEXT_COMPLETE,
+        will_type="handwritten",
+        intent="prepare",
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+    )
+
+    assert (
+        isinstance(output.data["review"]["body"], str) and output.data["review"]["body"]
+    )
+    assert output.data["review"]["precedents"] == []  # 전부 GREEN이라 인용 없음
+
+    ns = output.data["decedent_estate"]
+    assert ns["body"] == output.data["review"]["body"]
+    assert ns["precedents"] == output.data["review"]["precedents"]
+
+
 def test_prepare_handwritten_with_incomplete_draft_still_pending() -> None:
     """초안은 있지만 확인 답변이 없으면 review 파트는 여전히 PENDING이어야 한다."""
     output = _run(_WILL_TEXT_COMPLETE, will_type="handwritten", intent="prepare")

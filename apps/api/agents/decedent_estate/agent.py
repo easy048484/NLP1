@@ -58,6 +58,7 @@ from .result_formatter import (
     HANDWRITTEN_GUIDE_INTRO,
     RECORDING_GUIDE_INTRO,
     RECORDING_SUMMARY_MESSAGES,
+    cited_precedents,
     closing_lines,
     format_guide,
     format_result,
@@ -118,7 +119,11 @@ def _valid_will_type_values() -> tuple[str, ...]:
 
 
 def _namespaced(
-    state: DecedentState, data: dict[str, Any], **updates: Any
+    state: DecedentState,
+    data: dict[str, Any],
+    *,
+    extra_namespaced: Optional[dict[str, Any]] = None,
+    **updates: Any,
 ) -> dict[str, Any]:
     """data 에 네임스페이스 상태(data["decedent_estate"])를 얹어 돌려준다.
 
@@ -128,9 +133,22 @@ def _namespaced(
 
     ⚠️ 여기 담기는 것은 DecedentState 필드뿐이라 유언장 원문은 구조적으로
     들어갈 수 없다 (state.py 참고 — C안).
+
+    extra_namespaced: DecedentState 필드는 아니지만 네임스페이스
+    (data["decedent_estate"]) 안에는 넣고 싶은 값 — P0-1의 body/precedents가
+    쓴다. `**updates`(pydantic 모델 필드)와 달리 저장 정책(C안, state.py의
+    "담는 것" 목록)을 확장하지 않는다: extract_state_to_persist가 이 raw
+    dict를 그대로 세션에 저장하긴 하지만, 다음 턴 load_state가
+    DecedentState.model_validate 로 복원할 때 모델에 없는 필드라 조용히
+    버려진다 — 그래서 실질적으로 "매 턴 results 로부터 새로 계산해 넣는
+    표시용 값"으로만 남는다(requirements 처럼 응답 때마다 재계산되는 것과
+    같은 성격이지 세션 상태가 아니다).
     """
     persisted = state.model_copy(update=updates)
-    return {**data, STATE_KEY: dump_state(persisted)}
+    namespaced = dump_state(persisted)
+    if extra_namespaced:
+        namespaced = {**namespaced, **extra_namespaced}
+    return {**data, STATE_KEY: namespaced}
 
 
 def _resolve_intent(
@@ -623,8 +641,11 @@ def _run_handwritten_pipeline(
         data["handoff_reason"] = "가정법원 검인 절차 안내 필요"
 
     reply = format_result(results)
+    body = format_result(results, include_precedent_cards=False)
+    precedents = cited_precedents(results)
     if prefix_notice:
         reply = f"{prefix_notice}\n\n{reply}"
+        body = f"{prefix_notice}\n\n{body}"
 
     return AgentOutput(
         agent=AgentName.DECEDENT_ESTATE,
@@ -637,6 +658,7 @@ def _run_handwritten_pipeline(
             intent=intent,
             requirements=requirements,
             pending_questions=pending,
+            extra_namespaced={"body": body, "precedents": precedents},
         ),
     )
 
@@ -681,7 +703,16 @@ def _run_recording_pipeline(
         ordered_ids=list(FORMAL_RECORDING_REQUIREMENT_IDS),
         messages=RECORDING_SUMMARY_MESSAGES,
     )
+    body = format_result(
+        results,
+        formal_ids=FORMAL_RECORDING_REQUIREMENT_IDS,
+        ordered_ids=list(FORMAL_RECORDING_REQUIREMENT_IDS),
+        messages=RECORDING_SUMMARY_MESSAGES,
+        include_precedent_cards=False,
+    )
+    precedents = cited_precedents(results)
     reply = f"{_RECORDING_TRANSCRIPT_NOTICE}\n\n{reply}"
+    body = f"{_RECORDING_TRANSCRIPT_NOTICE}\n\n{body}"
 
     return AgentOutput(
         agent=AgentName.DECEDENT_ESTATE,
@@ -694,6 +725,7 @@ def _run_recording_pipeline(
             intent=intent,
             requirements=requirements,
             pending_questions=pending,
+            extra_namespaced={"body": body, "precedents": precedents},
         ),
     )
 
@@ -736,7 +768,13 @@ def _run_handwritten_prepare_pipeline(
         reply = f"{reply}\n\n---\n\n**작성하신 초안을 점검한 결과입니다.**\n\n{review_output.reply}"
         # review_output.data 에는 이미 네임스페이스 키가 들어 있다. 중첩 저장을
         # 피하려고 빼고 담고, 상태는 아래에서 한 번만 최상위에 붙인다.
+        review_namespaced = review_output.data.get(STATE_KEY, {})
         review_data = {k: v for k, v in review_output.data.items() if k != STATE_KEY}
+        # body/precedents(P0-1)는 review_output 에서 네임스페이스 안에만 있어서
+        # (extra_namespaced — DecedentState 필드가 아님) 위 필터에 안 걸린다.
+        # 따로 옮겨 담지 않으면 초안 점검 결과에서만 조용히 사라진다.
+        review_data["body"] = review_namespaced.get("body")
+        review_data["precedents"] = review_namespaced.get("precedents", [])
         data["review"] = review_data
         return AgentOutput(
             agent=AgentName.DECEDENT_ESTATE,
@@ -749,6 +787,10 @@ def _run_handwritten_prepare_pipeline(
                 intent=_PREPARE_INTENT,
                 requirements=review_data.get("requirements", {}),
                 pending_questions=review_data.get("pending_questions", []),
+                extra_namespaced={
+                    "body": review_data.get("body"),
+                    "precedents": review_data.get("precedents", []),
+                },
             ),
         )
 
@@ -791,7 +833,12 @@ def _run_recording_prepare_pipeline(
     if has_draft:
         review_output = _run_recording_pipeline(payload, state)
         reply = f"{reply}\n\n---\n\n**작성하신 대본을 점검한 결과입니다.**\n\n{review_output.reply}"
+        review_namespaced = review_output.data.get(STATE_KEY, {})
         review_data = {k: v for k, v in review_output.data.items() if k != STATE_KEY}
+        # body/precedents(P0-1)는 네임스페이스 안에만 있어(extra_namespaced) 위
+        # 필터에 안 걸린다 — 따로 옮겨 담지 않으면 조용히 사라진다.
+        review_data["body"] = review_namespaced.get("body")
+        review_data["precedents"] = review_namespaced.get("precedents", [])
         data["review"] = review_data
         return AgentOutput(
             agent=AgentName.DECEDENT_ESTATE,
@@ -804,6 +851,10 @@ def _run_recording_prepare_pipeline(
                 intent=_PREPARE_INTENT,
                 requirements=review_data.get("requirements", {}),
                 pending_questions=review_data.get("pending_questions", []),
+                extra_namespaced={
+                    "body": review_data.get("body"),
+                    "precedents": review_data.get("precedents", []),
+                },
             ),
         )
 

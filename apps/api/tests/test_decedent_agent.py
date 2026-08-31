@@ -258,3 +258,32 @@ def test_run_progress_all_checked_when_confirm_answers_given() -> None:
     output = decedent_estate.run(payload)
 
     assert output.data["progress"] == {"checked": 5, "total": 5}
+
+
+# ---------------------------------------------------------------------------
+# P0-1: body/precedents 는 최상위가 아니라 네임스페이스
+# (data["decedent_estate"]) 안에 들어간다.
+# ---------------------------------------------------------------------------
+
+
+def test_run_body_and_precedents_land_in_namespace_not_top_level() -> None:
+    payload = AgentInput(
+        session_id="s1",
+        user_message=_WILL_TEXT_ADDRESS_MISSING,
+        context=_ctx(
+            handwriting_answer="no_or_partial_typed",
+            seal_answer="seal_or_fingerprint",
+            address_envelope_answer="no_envelope",
+        ),
+    )
+    output = decedent_estate.run(payload)
+
+    ns = output.data["decedent_estate"]
+    assert isinstance(ns["body"], str) and ns["body"]
+    assert isinstance(ns["precedents"], list) and ns["precedents"]
+    # 최상위 평면 키로는 안 나간다 — pending_questions 충돌(오케스트레이터
+    # 병합 버그, router.py 소관) 같은 위험을 새로 만들지 않기 위해서다.
+    assert "body" not in output.data
+    assert "precedents" not in output.data
+    # body 에는 판례 인용 줄이 없다.
+    assert "(대법원" not in ns["body"] and "(서울고법" not in ns["body"]
