@@ -129,6 +129,25 @@ _IMAGE_UNREADABLE_REPLY = (
     "이미지가 잘 안 보이는데 다시 올려주시거나 말씀으로 알려주실 수 있을까요?"
 )
 
+#: Round 12: 사후 모드 다기관 조회 해석(extract_disclosures)이 LLM 실패로
+#: 일반 추출 경로(extract_financial_slots)에 폴백했는데, 그 일반 추출조차
+#: 아무것도 구조화하지 못한 경우(found_new_items=False) 쓰는 명시적
+#: 재질문. 이미지 판독 실패(_IMAGE_UNREADABLE_REPLY)와 완전히 같은 원칙 —
+#: "이해 못했다"는 사실을 숨기지 않고, 다음 체크리스트 질문으로 조용히
+#: 넘어가면서 사용자가 방금 한 답을 통째로 잃어버리는 일을 막는다.
+_PARSE_FAILED_REPLY = (
+    "말씀해주신 내용을 정확히 분류하지 못했어요. 어떤 자산·부채인지, 금액까지 "
+    "확인되는지 아니면 존재만 확인되는지 다시 한번 말씀해주시겠어요?"
+)
+#: 일부는 구조화됐지만 나머지는 이해 못한 경우(부분 성공) — 이미 반영된
+#: 항목은 그대로 두고, 다음 안내에 짧은 안내만 덧붙인다. 전체를 재질문
+#: 상태로 되돌리면 이미 확인된 항목까지 다시 물어보는 것처럼 보여
+#: 혼란스럽다.
+_PARTIAL_UNRESOLVED_NOTE = (
+    "\n\n(말씀 중 일부는 정확히 분류하지 못했어요 — 확인 안 된 부분이 있다면 "
+    "다시 한번 말씀해주세요.)"
+)
+
 #: 부채 정밀/단순 이중 모드와 완전히 같은 패턴(한 번만 묻고, 강제로 재질문
 #: 안 함, current_age 기준 상대 표현 해석 재사용)으로 퇴직연금 수령 방식을
 #: 확인한다 — _apply_pension_followup_answer() 참고.
@@ -320,12 +339,14 @@ def _merge_extraction(
     asset_result: extractor.ExtractionResult,
     liabilities: list[Any],
     liability_missing: list[dict[str, Any]],
-) -> bool:
+) -> tuple[bool, bool]:
     """extract_financial_slots()/extract_liabilities()(텍스트 경로)와
     extract_from_image()(이미지 경로) 양쪽이 만든 결과를 같은 방식으로
     state에 반영한다 — 두 입력 채널이 하나의 체크리스트 병합 로직을
-    공유한다. 새 항목을 하나라도 반영했으면 True를 돌려준다(호출부가
-    "없어요" 일괄 확정 여부를 판단할 때 씀).
+    공유한다. (새 항목을 하나라도 반영했는지, 이해하지 못하고 남은 부분이
+    있는지) 튜플을 돌려준다 — 호출부가 "없어요" 일괄 확정 여부, 그리고
+    Round 12에서 발견된 "조용한 정보 유실"(구조화 실패를 성공처럼 넘기는
+    것) 방어 여부를 판단할 때 쓴다.
 
     보험은 자산·부채와 달리 금액이 없어도(InsuranceTag.value=0,
     note="금액 미언급") 카테고리가 바로 확인된 것으로 처리한다 —
@@ -345,22 +366,47 @@ def _merge_extraction(
         state["insurance"].append(tag.model_dump(mode="json"))
         _mark_checked(state, _INSURANCE_CATEGORY)
 
-    # kind=="asset_value"만 처리한다 — 나머지(예: "unclear")는 extractor.py의
-    # _apply_llm_payload()가 LLM 원문을 화이트리스트 없이 그대로 담아 보낼 수
-    # 있는 자유텍스트라, 여기서 의도적으로 건너뛰어 state/reply 어디에도
-    # 노출시키지 않는다(이미지 PII 잔여 위험 조사 결과 — extractor.py의
-    # 관련 주석 참고). 나중에 다른 kind를 처리하게 되면 그 reason 원문을
-    # 그대로 노출하지 말 것.
+    # kind=="asset_value"는 유형은 알지만 금액을 못 찾은 경우라 pending_amounts
+    # 재질문으로 이어진다(정상 흐름, 정보 유실 아님). kind가 "unrecognized_segment"
+    # (정규식·LLM 둘 다 유형 자체를 못 알아본 세그먼트)나 "unclear"(LLM이 스스로
+    # "이해 못했다"고 표시한 부분)면 얘기가 다르다 — Round 11까지는 이 두 kind를
+    # 그냥 건너뛰어서, 사용자가 뭔가 구체적으로 답했는데 결과적으로 아무 흔적도
+    # 안 남는 "조용한 정보 유실"이 있었다(Round 12에서 실측 재현). 원문(reason)
+    # 자체는 PII 잔여 위험이 있어 여전히 state/reply에 노출하지 않지만
+    # (extractor.py의 관련 주석과 동일 원칙), "이해 못한 부분이 있었다"는
+    # 신호는 has_unresolved_remainder로 남겨서 호출부가 조용히 다음 질문으로
+    # 넘어가지 않고 명시적으로 재질문하도록 한다.
+    has_unresolved_kind = False
     for item in asset_result.missing:
-        if item.get("kind") == "asset_value":
+        kind = item.get("kind")
+        if kind == "asset_value":
             _mark_checked(state, item["asset_type"])
             _add_pending_amount(state, item)
+        elif kind in ("unrecognized_segment", "unclear"):
+            has_unresolved_kind = True
 
     for item in liability_missing:
         _mark_checked(state, _LIABILITY_CATEGORY)
         _add_pending_amount(state, item)
 
-    return bool(asset_result.assets or liabilities or asset_result.insurance_tags)
+    # ⚠️ 실측으로 발견된 오탐 지점: 자산 추출(_regex_extract)과 부채 추출
+    # (extract_liabilities)은 같은 문장을 각자 독립적으로 세그먼트 분석한다
+    # (자산 전용/부채 전용 키워드 사전을 따로 씀) — 그래서 "대출이 좀
+    # 있어요"처럼 순수 부채 문장은 자산 추출기 입장에서는 "유형 자체를
+    # 못 알아본 세그먼트"(unrecognized_segment)로 잡히지만, 실제로는 부채
+    # 추출기가 이미 제대로 이해하고 있다(대출 유형 인식 + 금액 대기 또는
+    # 확정). 이 경우까지 "이해 못함"으로 재질문하면 정상적으로 진행 중인
+    # 부채 흐름을 방해하는 거짓 양성이 된다 — 부채 쪽에서 뭔가 신호가
+    # 있었다면 자산 추출기의 unrecognized_segment/unclear는 무시한다.
+    liability_extractor_understood = bool(liabilities or liability_missing)
+    has_unresolved_remainder = (
+        has_unresolved_kind and not liability_extractor_understood
+    )
+
+    found_new_items = bool(
+        asset_result.assets or liabilities or asset_result.insurance_tags
+    )
+    return found_new_items, has_unresolved_remainder
 
 
 def _merge_disclosures(
@@ -827,6 +873,8 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
 
     had_pending_categories = bool(state["pending_categories"])
     resolved_via_bare_amount = False
+    found_new_items = False
+    has_unresolved_remainder = False
 
     # 1) 대기 중이던 금액 질문에 대한 단답("5억이요" 등) 우선 처리 — 유형
     #    키워드 없이 숫자만 온 경우라 일반 추출로는 못 잡는다.
@@ -870,18 +918,27 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
             # 부채는 이 전용 파서 범위 밖이라(과제 경계) 같은 문장에 섞여
             # 있을 수 있는 부채 언급은 기존 정규식 경로로 별도 처리한다 —
             # 자산 파트는 이미 반영했으므로 빈 ExtractionResult를 넘긴다.
-            found_new_items = (
-                _merge_extraction(
-                    state,
-                    extractor.ExtractionResult(status="ok"),
-                    liabilities,
-                    liability_missing,
-                )
-                or found_new_items
+            # ⚠️ extract_disclosures()의 응답 스키마 자체에는 "일부 기관은
+            # 이해 못했다"는 신호가 없다(문장을 세그먼트로 쪼개 대조하는
+            # 별도 시스템 없이는 감지 불가 — Round 12에서 범용 segmentation은
+            # 만들지 않기로 결정, "남은 한계"로 보고) — 그래서 이 분기는
+            # has_unresolved_remainder를 세우지 않는다.
+            liability_found_new, _ = _merge_extraction(
+                state,
+                extractor.ExtractionResult(status="ok"),
+                liabilities,
+                liability_missing,
             )
+            found_new_items = liability_found_new or found_new_items
         else:
+            # 사후 모드에서 다기관 해석이 실패/미시도(disclosures가 None 또는
+            # 빈 리스트)했거나 애초에 생전 모드였던 경우 — 기존 일반 추출
+            # 경로로 폴백한다. 이 경로는 has_unresolved_remainder 신호를
+            # 실제로 채울 수 있다(_merge_extraction 참고) — Round 12에서
+            # 고친 지점이 바로 여기다: 이 폴백조차 아무것도 못 건지면
+            # 아래에서 조용히 넘어가지 않고 명시적으로 재질문한다.
             asset_result = extractor.extract_financial_slots(message)
-            found_new_items = _merge_extraction(
+            found_new_items, has_unresolved_remainder = _merge_extraction(
                 state, asset_result, liabilities, liability_missing
             )
 
@@ -895,9 +952,30 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
         ):
             for category in state["pending_categories"]:
                 _mark_checked(state, category)
+            # 명확한 부정 답변("없어요")은 "이해 못함"이 아니라 확정된 정정
+            # 답변이다 — 재질문 대상에서 뺀다.
+            has_unresolved_remainder = False
+
+        # 조용한 실패 금지(Round 12): 이번 턴에 아무 항목도 새로 못 건졌고
+        # (found_new_items=False) 그렇다고 명확한 부정 답변도 아니라면,
+        # 사용자가 구체적으로 뭔가 답했는데 정규식·LLM 둘 다 통째로 이해
+        # 못했다는 뜻이다. 이 상태로 그냥 다음 체크리스트 질문(또는 전체
+        # 카테고리 재나열)으로 넘어가면, 사용자 입장에서는 방금 한 답이
+        # 그냥 무시된 것처럼 보인다 — 실제로 상태 어디에도 안 남기 때문에
+        # "무시된 것처럼 보인다"가 아니라 정말로 무시된 것이다. 성공한
+        # 것처럼 넘어가지 않고 실패를 명시적으로 알린다.
+        if not found_new_items and has_unresolved_remainder:
+            state["pending_categories"] = []
+            return _output(state, _PARSE_FAILED_REPLY)
 
     state["pending_categories"] = []
-    return _continue_after_categories(payload, state)
+    output = _continue_after_categories(payload, state)
+    if has_unresolved_remainder and found_new_items:
+        # 부분 성공: 이해한 항목은 그대로 반영해 정상 진행하되, 놓친 부분이
+        # 있었다는 사실은 숨기지 않고 짧게 덧붙인다(항목별로 어떤 부분을
+        # 놓쳤는지는 PII 위험 때문에 밝히지 않는다 — _merge_extraction 참고).
+        output.reply = f"{output.reply}{_PARTIAL_UNRESOLVED_NOTE}"
+    return output
 
 
 def run(payload: AgentInput) -> AgentOutput:
