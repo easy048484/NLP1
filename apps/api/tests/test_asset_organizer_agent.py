@@ -1133,3 +1133,167 @@ def test_post_death_disclosure_merge_marks_categories_checked_without_reasking(
     state = output.data[STATE_KEY]
     assert "보험" in state["checked_categories"]
     assert "보험" not in output.reply or "얼마" not in output.reply
+
+
+# ============================================ Round 12: 정보 유실 방어(fail-safe)
+
+
+def test_post_death_full_parse_failure_returns_explicit_reask_without_silent_drop(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """사후 모드에서 extract_disclosures()가 LLM 미가용으로 None을 돌려주고
+    (API 키 없음), 폴백한 일반 추출기(extract_financial_slots)마저 정규식·
+    LLM 둘 다 이 문장에서 아무 자산 유형도 못 알아보면 — Round 11까지는
+    이 상태가 조용히 다음 체크리스트 질문으로 넘어가면서 사용자가 방금 한
+    답이 아무 흔적 없이 사라졌다. Round 12 fail-safe: 성공한 것처럼
+    넘어가지 않고 명시적으로 재질문한다."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    output = agent.run(
+        AgentInput(
+            session_id="fs1",
+            user_message="OO은행에서 안내받은 내용이 있는데 정확히는 잘 모르겠어요",
+            context={"mode": "post_death"},
+        )
+    )
+
+    assert output.reply == agent._PARSE_FAILED_REPLY
+    state = output.data[STATE_KEY]
+    # 아무 항목도 조용히 확정되지 않았어야 한다 — "이해 못함"을 "없음"으로
+    # 둔갑시키지 않는다.
+    assert state["assets"] == []
+    assert state["checked_categories"] == []
+    assert state["status"] == "collecting"
+
+
+def test_pre_need_full_parse_failure_also_gets_explicit_reask(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """같은 조용한 실패 방어는 사후 모드 전용이 아니다 — _merge_extraction()
+    자체의 수정이라 생전 모드(기본 모드)에서도 동일하게 적용돼야 한다."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    output = agent.run(
+        AgentInput(
+            session_id="fs2",
+            user_message="음... 그게 좀 애매한데 뭐라고 말씀드려야 할지 모르겠네요",
+        )
+    )
+
+    assert output.reply == agent._PARSE_FAILED_REPLY
+    assert output.data[STATE_KEY]["assets"] == []
+
+
+def test_post_death_llm_unavailable_but_regex_understands_message_normally(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """우선순위 B: extract_disclosures()가 LLM 미가용으로 실패해도, 폴백한
+    일반 추출기가 정규식만으로 완전히 이해할 수 있는 평범한 문장이면
+    기존 동작 그대로 조용히 성공해야 한다 — 회귀 방지(모든 실패를
+    재질문으로 바꿔버리면 안 된다)."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    output = agent.run(
+        AgentInput(
+            session_id="fs3",
+            user_message="예금 3천만원 있어요",
+            context={"mode": "post_death"},
+        )
+    )
+
+    state = output.data[STATE_KEY]
+    assert any(
+        a["type"] == "예금"
+        and a["value"] == 30_000_000
+        and a["confidence"] == "confirmed"
+        for a in state["assets"]
+    )
+    assert output.reply != agent._PARSE_FAILED_REPLY
+    assert "정확히 분류하지 못했어요" not in output.reply
+
+
+def test_partial_parse_success_keeps_understood_items_and_notes_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """우선순위 C의 부분 성공 케이스(기획서 예시 "A은행은 3천만원, B증권은
+    계좌만 확인, C보험은 잘 모르겠어요"와 같은 구조): 문장 일부는 이해했고
+    일부는 못했다. 이해한 항목(예금)은 그대로 반영해 진행하되, 놓친 부분이
+    있었다는 사실은 숨기지 않고 안내를 덧붙인다 — 이미 이해한 항목까지
+    통째로 재질문으로 되돌리지 않는다."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    output = agent.run(
+        AgentInput(
+            session_id="fs4",
+            user_message="예금 3천만원 있고 OO은행에서 안내받은 내용이 있어요",
+            context={"mode": "post_death"},
+        )
+    )
+
+    state = output.data[STATE_KEY]
+    assert any(
+        a["type"] == "예금" and a["value"] == 30_000_000 for a in state["assets"]
+    )
+    assert "예금" in state["checked_categories"]
+    assert output.reply != agent._PARSE_FAILED_REPLY
+    assert "말씀 중 일부는 정확히 분류하지 못했어요" in output.reply
+
+
+def test_post_death_disclosure_llm_exception_falls_back_and_partial_note_not_shown_when_fully_understood(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """extract_disclosures() 자체가 LLM 예외로 실패해도(키는 있지만 호출이
+    터짐), 폴백한 일반 추출기가 이 문장을 정규식만으로 완전히 이해하면
+    LLM을 다시 태울 필요조차 없다 — 이 경우 부분 실패 안내가 붙으면 안
+    된다(정말 다 이해했으니까)."""
+    _install_fake_llm(monkeypatch, exc=TimeoutError("network timeout"))
+
+    output = agent.run(
+        AgentInput(
+            session_id="fs5",
+            user_message="예금 3천만원 있어요",
+            context={"mode": "post_death"},
+        )
+    )
+
+    state = output.data[STATE_KEY]
+    assert any(
+        a["type"] == "예금" and a["value"] == 30_000_000 for a in state["assets"]
+    )
+    assert "정확히 분류하지 못했어요" not in output.reply
+
+
+def test_post_death_disclosure_llm_exception_and_general_extractor_also_fails(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """우선순위 C 재확인: extract_disclosures()가 예외로 실패하고, 폴백한
+    일반 추출기의 자체 LLM 호출도(같은 장애로) 실패하면서 정규식도 이
+    문장에서 유형을 못 알아보면 — 명시적 재질문으로 수렴해야 한다."""
+    _install_fake_llm(monkeypatch, exc=TimeoutError("network timeout"))
+
+    output = agent.run(
+        AgentInput(
+            session_id="fs6",
+            user_message="OO은행에서 안내받은 내용이 있는데 정확히는 잘 모르겠어요",
+            context={"mode": "post_death"},
+        )
+    )
+
+    assert output.reply == agent._PARSE_FAILED_REPLY
+    assert output.data[STATE_KEY]["assets"] == []
+
+
+def test_parse_failure_does_not_mark_any_category_checked():
+    """재질문으로 수렴할 때, 이해하지 못한 카테고리를 임의로 "확인함"으로
+    표시하지 않는다 — 다음 턴에도 여전히 정상적으로 되물을 수 있어야
+    한다(추측 금지 원칙)."""
+    output1 = agent.run(
+        AgentInput(session_id="fs7", user_message="아무 의미 없는 문장이에요 그냥")
+    )
+    assert output1.data[STATE_KEY]["checked_categories"] == []
+
+    output2 = agent.run(
+        _continue("fs7", "예금 3천만원 있어요", output1.data[STATE_KEY])
+    )
+    state2 = output2.data[STATE_KEY]
+    assert any(a["type"] == "예금" for a in state2["assets"])
