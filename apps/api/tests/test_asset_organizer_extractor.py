@@ -191,6 +191,35 @@ def test_vague_amount_expression_without_recognizable_type_requires_clarificatio
     assert result.assets == []
 
 
+# --------------------------------------------------- 4-2) 천 단위 콤마 (P0-3)
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("3,200만원", 32_000_000),
+        ("1,020,000원", 1_020_000),
+        ("5,000만원", 50_000_000),
+        # 콤마 없는 기존 표현도 여전히 정상 동작해야 한다(회귀 방지).
+        ("3200만원", 32_000_000),
+        ("5000만원", 50_000_000),
+    ],
+)
+def test_thousands_comma_parsed_as_single_number(text, expected):
+    """실측 버그: "3,200만원"을 콤마 뒤 "200만원"(2,000,000원)으로만 읽고
+    앞자리 "3,"를 통째로 날려버렸다 — 콤마가 천 단위 구분자일 뿐 세그먼트
+    구분자가 아니라는 걸 반영해 하나의 숫자로 합쳐 읽어야 한다."""
+    assert extractor._parse_amount(text) == expected
+
+
+def test_thousands_comma_amount_flows_through_full_extraction():
+    result = extractor.extract_financial_slots("예금 3,200만원 있어요")
+
+    assert result.status == "ok"
+    assert result.assets[0].type == "예금"
+    assert result.assets[0].value == 32_000_000
+
+
 # ------------------------------------------------------------- 5) 이미지 판독
 
 
