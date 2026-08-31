@@ -149,13 +149,12 @@
     "노후"]`)했고, 커밋 메시지에 "데모 비핵심(서비스는 '상속')"이라는 스코프
     결정도 함께 남겼다. 근본 원인(오케스트레이터의 substring 매칭 방식
     자체)은 여전히 손대지 않은 채로 있다.
-  - ⚠️ **다만 이 해결 방식은 완전하지 않다(실측 확인)** — "연금"을 대체 없이
-    빼서 "연금 계산해줘"/"제 예상 연금이 얼마나 될까요" 같은 순수 연금
-    질의도 이제 키워드 후보 0개가 되어 default_agent(heir_navigator)로
-    새버린다(`tests/test_retirement_planner_keyword_collision.py`의
-    `test_pure_pension_query_now_falls_through_to_default_agent` 참고). "데모
-    비핵심" 스코프 결정상 당장은 허용된 트레이드오프로 보이지만, 재논의
-    여지가 있다.
+  - ⚠️ **이후 팀 계획서 결정으로 retirement_planner가 데모 범위에서 완전히
+    제외됐다** — `spec.py`의 `keywords`를 아예 비워서(`[]`) "은퇴"/"노후"
+    포함 어떤 문구로도 도달 못 하게 막았다(자세한 내용은
+    agents/retirement_planner/CLAUDE.md 참고). `asset_organizer` →
+    `retirement_planner` 핸드오프(Fast Path)는 keywords와 무관해서 여전히
+    동작한다 — 체크리스트 완료 후 자동 연결은 안 끊겼다.
 - **부채 후속질문 게이트가 퇴직연금 후속질문을 가로채던 버그 수정**: 위
   핸드오프 조사 중 발견해뒀던 버그. `_run_turn()`의
   `was_awaiting_liability_followup` 판단이 "이미 답을 받았는지"가 아니라
@@ -172,3 +171,13 @@
   있는지 확인했으나, 그 둘은 매 턴 명시적으로 재계산·초기화되는 구조라
   해당 없음을 확인했다 — 이 버그는 liability/pension 두 후속질문 사이의
   상호작용에 국한됐다.
+- **금액 콤마 파싱 버그 수정(P0-3)** — "3,200만원"을 콤마 뒤 "200만원"으로만
+  읽어 앞자리가 통째로 사라지던 버그. 원인이 두 군데 겹쳐 있었다: (1)
+  `_parse_amount()`가 콤마를 숫자 구분자로 안 걷어내고 있었고, (2) 그보다
+  먼저 `_SEGMENT_SPLIT_RE`가 콤마를 세그먼트 구분자로 취급해서 "3,200만원"
+  자체가 "3"/"200만원" 두 조각으로 쪼개지고 있었다(1번만 고치면 세그먼트가
+  이미 갈라진 뒤라 소용없었다). 둘 다 숫자 사이 콤마는 lookaround로
+  걸러내도록 고쳤다. `retirement_planner/agent.py`의 `_parse_amount`
+  복제본도 동일하게 고침(코드 주석으로 중복 위치 남겨둠 — `AssetType`
+  중복과 같은 문제 클래스, `agents/common/` 공유 모듈 논의 대상에 이미
+  있음, 이번엔 급해서 양쪽 다 고치는 것까지만 함).
