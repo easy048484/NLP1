@@ -391,6 +391,33 @@ def test_fingerprint_identity_disputed_invalid_has_source_url() -> None:
     assert card["court"] == "대전고등법원"
 
 
+def test_all_precedent_type_cards_have_source_url() -> None:
+    """type이 precedent 인 카드는 모두 source_url이 비어있지 않아야 한다.
+
+    (P1-4) 전수 재확인 회귀 테스트 — 사건번호가 존재해도 법령정보센터
+    조회 링크가 깨져 있으면 사용자가 원문을 확인할 방법이 없다.
+    """
+    with _PRECEDENTS_PATH.open(encoding="utf-8") as f:
+        data = json.load(f)
+
+    for card in data["precedents"]:
+        if card["type"] != "precedent":
+            continue
+        assert card.get("source_url"), card["id"]
+
+
+def test_date_missing_day_invalid_uses_working_evtno_url() -> None:
+    """(P1-4) precSeq=132717 은 "해당 판례가 존재하지 않습니다" 오류를 냈다.
+
+    evtNo 파라미터 형태로 교체했으며(2026-08-31 확인), 이 형태로 회귀를
+    막는다 — precSeq 파라미터로 되돌아가면 다시 깨진 링크가 된다.
+    """
+    card = _precedent("date_missing_day_invalid")
+    assert card["case_number"] == "2009다9768"
+    assert "evtNo=" in card["source_url"], card["source_url"]
+    assert "precSeq=132717" not in card["source_url"]
+
+
 # ---------------------------------------------------------------------------
 # term_note (미충족 요건 용어 설명) — GREEN 제외, RED/YELLOW 만
 # ---------------------------------------------------------------------------
