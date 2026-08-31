@@ -33,6 +33,22 @@ function deepFind(data: Record<string, unknown>, key: string): unknown {
   return undefined;
 }
 
+/**
+ * 네임스페이스(data[agent].key)를 최상위 평면 키보다 우선해서 찾는다.
+ * 오케스트레이터가 여러 에이전트의 data 를 dict.update() 로 합칠 때
+ * 최상위 평면 키는 나중에 실행된 에이전트 값으로 덮어써질 수 있으므로
+ * (병합 버그, 백엔드 팀 공유됨) 그 값에 기대면 안 되는 필드에 사용한다.
+ * 네임스페이스 어디에도 없을 때만 최상위로 폴백한다.
+ */
+function deepFindNamespaceFirst(data: Record<string, unknown>, key: string): unknown {
+  for (const v of Object.values(data)) {
+    const rec = asRecord(v);
+    if (rec && key in rec) return rec[key];
+  }
+  if (key in data) return data[key];
+  return undefined;
+}
+
 const GRADE_MAP: Record<string, SignalGrade> = {
   green: "green",
   red: "red",
@@ -92,7 +108,9 @@ export function parseSignals(data: Record<string, unknown>): RequirementSignal[]
 export function parsePendingQuestions(
   data: Record<string, unknown>,
 ): PendingQuestion[] | null {
-  const raw = deepFind(data, "pending_questions") ?? deepFind(data, "questions");
+  const raw =
+    deepFindNamespaceFirst(data, "pending_questions") ??
+    deepFindNamespaceFirst(data, "questions");
   const list = asArray(raw);
   if (list.length === 0) return null;
   const out: PendingQuestion[] = [];
