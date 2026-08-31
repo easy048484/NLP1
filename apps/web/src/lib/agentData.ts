@@ -107,8 +107,11 @@ export function parseSignals(data: Record<string, unknown>): RequirementSignal[]
 
 export function parsePendingQuestions(
   data: Record<string, unknown>,
+  agentKey?: string,
 ): PendingQuestion[] | null {
+  const ownNamespace = agentKey ? asRecord(data[agentKey]) : null;
   const raw =
+    (ownNamespace && (ownNamespace.pending_questions ?? ownNamespace.questions)) ??
     deepFindNamespaceFirst(data, "pending_questions") ??
     deepFindNamespaceFirst(data, "questions");
   const list = asArray(raw);

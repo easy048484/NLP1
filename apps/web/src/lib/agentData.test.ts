@@ -38,18 +38,24 @@ describe("parsePendingQuestions", () => {
     const decedentEstateData = { decedent_estate: data.decedent_estate };
     const heirNavigatorData = { heir_navigator: data.heir_navigator };
 
-    const decedentResult = parsePendingQuestions({
-      ...data,
-      // decedent_estate 카드 렌더링 시엔 contribution.data 가 이렇게 넘어온다고 가정
-      ...decedentEstateData,
-    });
+    const decedentResult = parsePendingQuestions(
+      {
+        ...data,
+        // decedent_estate 카드 렌더링 시엔 contribution.data 가 이렇게 넘어온다고 가정
+        ...decedentEstateData,
+      },
+      "decedent_estate",
+    );
     expect(decedentResult?.[0]?.question).toBe("유언장에 도장을 찍으셨나요?");
     expect(decedentResult?.[0]?.field).toBe("seal_answer");
 
-    const heirResult = parsePendingQuestions({
-      ...data,
-      ...heirNavigatorData,
-    });
+    const heirResult = parsePendingQuestions(
+      {
+        ...data,
+        ...heirNavigatorData,
+      },
+      "heir_navigator",
+    );
     expect(heirResult?.[0]?.question).toBe("피상속인의 자녀가 몇 명인가요?");
   });
 
