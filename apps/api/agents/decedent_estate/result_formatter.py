@@ -270,8 +270,16 @@ def _extracted_display_value(result: RequirementResult) -> Optional[str]:
     return None
 
 
-def format_requirement_line(result: RequirementResult) -> Optional[str]:
-    """요건 하나를 §3-2 패턴 문구로 변환한다. PENDING/등급 없음은 대상이 아니다."""
+def format_requirement_line(
+    result: RequirementResult, *, include_precedent_cards: bool = True
+) -> Optional[str]:
+    """요건 하나를 §3-2 패턴 문구로 변환한다. PENDING/등급 없음은 대상이 아니다.
+
+    include_precedent_cards=False 면 _precedent_card_line() 이 만드는 판례
+    인용 줄("(대법원 2009다9768)" 류)만 뺀다 — 참고 문구(_RED_REFERENCE_NOTES/
+    _GREEN_REFERENCE_NOTES, 카드로 안 만들기로 한 예외 3건용)와 term_note는
+    그대로 남는다. P0-1의 body(precedents 카드와 중복 방지)가 이 옵션을 쓴다.
+    """
     name = result.name
 
     if result.grade == "GREEN":
@@ -290,9 +298,10 @@ def format_requirement_line(result: RequirementResult) -> Optional[str]:
             if precedent_id in _RED_REFERENCE_NOTES:
                 lines.append(_RED_REFERENCE_NOTES[precedent_id])
                 continue
-            card_line = _precedent_card_line(precedent_id)
-            if card_line:
-                lines.append(card_line)
+            if include_precedent_cards:
+                card_line = _precedent_card_line(precedent_id)
+                if card_line:
+                    lines.append(card_line)
         note = term_note(result.requirement_id)
         if note:
             lines.append(f"   ℹ️ {note}")
@@ -300,10 +309,11 @@ def format_requirement_line(result: RequirementResult) -> Optional[str]:
 
     if result.grade == "YELLOW":
         lines = [f"⚠️ {name}: {name}{_josa_i_ga(name)} {_YELLOW_VERB_PHRASE}"]
-        for precedent_id in result.precedent_ids:
-            card_line = _precedent_card_line(precedent_id)
-            if card_line:
-                lines.append(card_line)
+        if include_precedent_cards:
+            for precedent_id in result.precedent_ids:
+                card_line = _precedent_card_line(precedent_id)
+                if card_line:
+                    lines.append(card_line)
         note = term_note(result.requirement_id)
         if note:
             lines.append(f"   ℹ️ {note}")
@@ -502,18 +512,95 @@ def progress(
     return {"checked": checked, "total": len(formal_ids)}
 
 
+# body(P0-1)에서 카드로 안 만들고 참고 문구로만 남기는 판례 id — 새로 나열하지
+# 않는다. _RED_REFERENCE_NOTES/_GREEN_REFERENCE_NOTES가 이미 "카드 아님"으로
+# 분류해둔 것과 정확히 같은 집합이어야 하므로, 그 두 딕셔너리의 키를 그대로
+# 재사용한다(단일 출처 유지 — 여기 따로 적으면 한쪽만 바뀌었을 때 어긋난다).
+_EXCLUDED_FROM_PRECEDENT_LIST = frozenset(_RED_REFERENCE_NOTES) | frozenset(
+    _GREEN_REFERENCE_NOTES
+)
+
+
+def _precedent_card(precedent_id: str) -> Optional[dict[str, str]]:
+    """precedent_id → {case_no, summary} (예외 3건이거나 id 자체가 없으면 None).
+
+    type이 commentary/statute라 case_number 가 null인 판례는 그 자리에 id를
+    채운다 — 프론트가 case_no 로 필터링하며 null 항목을 통째로 버리기
+    때문에, 값을 비워두면 조문·해설 근거 판례가 전부 누락된다.
+    """
+    if precedent_id in _EXCLUDED_FROM_PRECEDENT_LIST:
+        return None
+    card = _load_precedents().get(precedent_id)
+    if not card:
+        return None
+    return {
+        "case_no": card.get("case_number") or card["id"],
+        "summary": card["summary"],
+    }
+
+
+def cited_precedents_for_requirement(
+    result: RequirementResult,
+) -> list[dict[str, str]]:
+    """요건 하나(result)의 precedent_ids 만 반영한 {case_no, summary} 배열 (A안).
+
+    같은 판례(예: 97다38510)를 여러 요건이 서로 다른 쟁점으로 인용해도,
+    이 함수는 그 요건에 실제로 걸린 precedent_id 만 본다 — 다른 요건의
+    판례가 섞여 들어오지 않는다.
+    """
+    seen: set[str] = set()
+    precedents: list[dict[str, str]] = []
+    for precedent_id in result.precedent_ids:
+        if precedent_id in seen:
+            continue
+        seen.add(precedent_id)
+        card = _precedent_card(precedent_id)
+        if card:
+            precedents.append(card)
+    return precedents
+
+
+def cited_precedents(
+    results: dict[str, RequirementResult],
+) -> list[dict[str, str]]:
+    """이번 판정 전체에서 실제로 인용된 판례를 {case_no, summary} 배열로 모은다.
+
+    results 의 모든 요건에서 precedent_ids 를 훑어 등장 순서대로 중복
+    제거한다. _EXCLUDED_FROM_PRECEDENT_LIST(카드로 안 만들기로 한 예외
+    3건)는 뺀다 — 이 셋은 format_requirement_line 이 body 안에 참고
+    문구로 이미 남긴다.
+    """
+    seen: set[str] = set()
+    precedents: list[dict[str, str]] = []
+    for result in results.values():
+        for precedent_id in result.precedent_ids:
+            if precedent_id in seen:
+                continue
+            seen.add(precedent_id)
+            card = _precedent_card(precedent_id)
+            if card:
+                precedents.append(card)
+    return precedents
+
+
 def format_result(
     results: dict[str, RequirementResult],
     *,
     formal_ids: tuple[str, ...] = _FORMAL_REQUIREMENT_IDS,
     ordered_ids: Optional[list[str]] = None,
     messages: SummaryMessages = _HANDWRITTEN_SUMMARY_MESSAGES,
+    include_precedent_cards: bool = True,
 ) -> str:
     """전체 화면 문구를 조립한다: 요약 → (확인 질문) → 요건별 문구 → 상담 연결 → 하단 고지.
 
     ordered_ids 를 생략하면 rules/requirements.json 전체를 order 순으로 훑되,
     results 에 실제로 있는 요건만 남긴다(handwritten 기본 동작). recording처럼
     다른 요건 집합을 렌더링하려면 ordered_ids/formal_ids/messages 를 명시한다.
+
+    include_precedent_cards=False 면 요건별 줄에서 판례 인용 카드만 뺀다
+    (format_requirement_line 참고) — P0-1의 body 가 이 옵션으로
+    reply 와 같은 함수를 재사용해서, 판례 카드는 precedents 배열로만
+    중복 없이 나가게 한다.
     """
     if ordered_ids is None:
         rules = _load_rules()
@@ -534,7 +621,9 @@ def format_result(
         )
 
     for requirement_id in ordered_ids:
-        line = format_requirement_line(results[requirement_id])
+        line = format_requirement_line(
+            results[requirement_id], include_precedent_cards=include_precedent_cards
+        )
         if line:
             sections.append(line)
 
