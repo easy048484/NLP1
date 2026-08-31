@@ -12,8 +12,9 @@
       "case_name": "소유권이전등기말소",
       "summary": "연·월만 기재하고 일(日)의 기재가 없는 자필유언증서는 작성일을 특정할 수 없어 효력이 없다. 연월일은 유언능력 판단과 복수 유언증서 간 선후 결정의 기준일이 되므로 작성일을 특정할 수 있게 기재해야 한다.",
       "one_liner": "연·월만 쓰고 일(日)이 없는 자필유언을 무효로 판단한 판례가 있습니다",
-      "source_url": "https://www.law.go.kr/LSW/precInfoP.do?precSeq=132717",
-      "note": null
+      "source_url": "https://www.law.go.kr/LSW/precInfoP.do?evtNo=2009%EB%8B%A49768",
+      "note": "source_url을 precSeq=132717(\"해당 판례가 존재하지 않습니다\" 오류)에서 evtNo 파라미터 형태로 교체(2026-08-31 확인). 사건번호·법원·선고일·사건명·판시내용 모두 일치 확인.",
+      "verified": true
     },
     {
       "id": "date_specifiable_valid",
