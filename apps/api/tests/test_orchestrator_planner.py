@@ -61,35 +61,44 @@ def _patch(monkeypatch, *fakes):
 
 
 def test_registry_discovers_every_agent_name():
-    """retirement_planner/asset_organizer 껍데기에 실제 구현이 채워지면서
-    (agents/retirement_planner, agents/asset_organizer의 agent.py) 두
-    스펙 모두 is_stub=False로 바뀌었다 — 원래 이 테스트가 확인하던 "아직
-    껍데기인 에이전트가 있다"는 registry 시점 상태는 더 이상 유효하지
-    않다. 지금은 등록된 5개 에이전트 전부가 실제 구현을 가진다."""
+    """등록된 5개 에이전트 전부가 registry 에 자동 편입된다 (spec.py 만
+    두면 router.py 수정 없이 잡힌다).
+
+    is_stub 플래그: asset_organizer/heir_navigator 는 실제 구현이 채워져
+    False. retirement_planner 는 엔진 구현이 있는데도 True 인데 — 2026-08-30
+    팀 계획서 결정으로 데모 범위에서 제외하면서 스펙을 스텁 상태로
+    되돌렸다(agents/retirement_planner/spec.py 참고). 엔진 자체는 삭제하지
+    않고 보존돼 있으므로 데모 범위에 다시 들어오면 spec.py 만 되살리면 된다."""
     specs = registry.all_specs()
     assert set(specs) == set(AgentName)
-    assert specs[AgentName.RETIREMENT_PLANNER].is_stub is False
+    assert specs[AgentName.RETIREMENT_PLANNER].is_stub is True
     assert specs[AgentName.ASSET_ORGANIZER].is_stub is False
     assert specs[AgentName.HEIR_NAVIGATOR].is_stub is False
 
 
-def test_new_agent_is_routable_by_keyword_without_touching_orchestrator():
-    """원래 이 테스트는 retirement_planner의 "껍데기" placeholder 응답
-    (data["stub"]=True, turns 카운터)으로 registry의 자동 편입 자체를
-    검증했다. 이제 실제 구현이 들어와 그 placeholder는 사라졌지만,
-    "spec.py만 선언하면 router.py 수정 없이 키워드로 라우팅된다"는
-    원래 취지는 실제 대화 흐름으로 그대로 확인된다."""
-    output = router.route(
-        AgentInput(session_id="st1", user_message="은퇴 자금 얼마나 필요해요?")
-    )
-    assert output.agent == AgentName.RETIREMENT_PLANNER
-    assert output.path == "standard"
-    assert "나이" in output.reply  # 실제 구현의 첫 질문
+def test_retirement_planner_is_registered_but_unreachable_by_keyword():
+    """retirement_planner 데모 제외 정책의 회귀 가드.
 
-    # 네임스페이스 규약대로 상태를 남겨야 다음 턴에 이어진다.
-    second = router.route(AgentInput(session_id="st1", user_message="60살이에요"))
-    assert second.agent == AgentName.RETIREMENT_PLANNER
-    assert second.data[AgentName.RETIREMENT_PLANNER.value]["current_age"] == 60
+    원래 이 테스트는 retirement_planner 가 "은퇴/노후" 키워드로 라우팅되는
+    걸 확인했는데, 2026-08-30 데모 제외 결정으로 spec.py 의 keywords 를
+    비웠다. 이제는 반대로 — 스펙은 여전히 registry 에 있지만(엔진 보존),
+    사용자가 은퇴 얘기로 먼저 말을 걸어도 이 에이전트에 도달하지 못하고
+    default_agent 로 폴백해야 한다.
+
+    ⚠️ 차단 장치는 keywords=[] 하나뿐이다. is_stub=True 는 planner.classify()
+    의 Standard 경로(단독 키워드)를 전혀 안 거치므로 그것만으로는 라우팅이
+    안 막힌다(실측 확인). keywords 를 되살리면 is_stub 여부와 무관하게 다시
+    라우팅되므로, 이 테스트가 깨지면 "데모 제외"가 풀린 것이다."""
+    specs = registry.all_specs()
+    assert AgentName.RETIREMENT_PLANNER in specs  # 스펙은 계속 등록돼 있다
+    assert specs[AgentName.RETIREMENT_PLANNER].keywords == []
+
+    for utterance in ("은퇴 자금 얼마나 필요해요?", "노후 준비가 걱정돼요"):
+        assert AgentName.RETIREMENT_PLANNER not in registry.match_keywords(utterance)
+        output = router.route(
+            AgentInput(session_id=f"rp-{utterance[:2]}", user_message=utterance)
+        )
+        assert output.agent != AgentName.RETIREMENT_PLANNER
 
 
 # ------------------------------------------------------------- classify
@@ -118,19 +127,21 @@ def test_standard_path_single_keyword():
 
 
 def test_full_pipeline_without_llm_takes_all_keyword_candidates():
+    # asset_organizer("정리"/"재산") + tax_calculator("상속세") 2개 후보.
+    # (retirement_planner 는 데모 제외로 keywords=[] — 더 이상 후보로 안 잡힌다.)
     plan = planner.classify(
-        "은퇴 준비하면서 상속세도 궁금해요",
+        "재산 정리하고 상속세도 궁금해요",
         pending_handoff=None,
         last_agent=None,
         default_agent=AgentName.HEIR_NAVIGATOR,
     )
     assert plan.path == "full"
     assert plan.llm_used is False
-    # 서로 requires/produces 가 안 겹치므로 한 층에서 병렬
+    # asset_inventory ↔ will_status — 서로 requires/produces 가 안 겹치므로 한 층에서 병렬
     assert len(plan.layers) == 1
     assert set(plan.layers[0]) == {
         AgentName.TAX_CALCULATOR,
-        AgentName.RETIREMENT_PLANNER,
+        AgentName.ASSET_ORGANIZER,
     }
 
 
@@ -139,7 +150,7 @@ def test_llm_selection_narrows_candidates(monkeypatch):
         planner, "_llm_select", lambda msg, cands: [AgentName.TAX_CALCULATOR]
     )
     plan = planner.classify(
-        "은퇴 준비하면서 상속세도 궁금해요",
+        "재산 정리하고 상속세도 궁금해요",
         pending_handoff=None,
         last_agent=None,
         default_agent=AgentName.HEIR_NAVIGATOR,
@@ -187,25 +198,23 @@ def test_parallel_layer_runs_concurrently(monkeypatch):
     )
     monkeypatch.setitem(
         router._AGENT_RUNNERS,
-        AgentName.RETIREMENT_PLANNER,
-        _slow(AgentName.RETIREMENT_PLANNER),
+        AgentName.ASSET_ORGANIZER,
+        _slow(AgentName.ASSET_ORGANIZER),
     )
 
     t0 = time.perf_counter()
     output = router.route(
-        AgentInput(session_id="p1", user_message="은퇴 준비하면서 상속세도 궁금해요")
+        AgentInput(session_id="p1", user_message="재산 정리하고 상속세도 궁금해요")
     )
     elapsed = time.perf_counter() - t0
 
     assert output.path == "full"
     assert set(output.agents) == {
         AgentName.TAX_CALCULATOR,
-        AgentName.RETIREMENT_PLANNER,
+        AgentName.ASSET_ORGANIZER,
     }
     assert elapsed < 0.55, f"병렬이면 0.3초대여야 하는데 {elapsed:.2f}s"
-    assert (
-        "tax_calculator ok" in output.reply and "retirement_planner ok" in output.reply
-    )
+    assert "tax_calculator ok" in output.reply and "asset_organizer ok" in output.reply
 
 
 def test_sequential_layer_receives_upstream_context(monkeypatch):
@@ -238,12 +247,10 @@ def test_one_agent_failure_does_not_kill_the_turn(monkeypatch):
         raise RuntimeError("kaboom")
 
     monkeypatch.setitem(router._AGENT_RUNNERS, AgentName.TAX_CALCULATOR, _boom)
-    _patch(
-        monkeypatch, _fake(AgentName.RETIREMENT_PLANNER, reply="은퇴 갭은 1억원입니다.")
-    )
+    _patch(monkeypatch, _fake(AgentName.ASSET_ORGANIZER, reply="순자산은 1억원입니다."))
 
     output = router.route(
-        AgentInput(session_id="f1", user_message="은퇴 준비하면서 상속세도 궁금해요")
+        AgentInput(session_id="f1", user_message="재산 정리하고 상속세도 궁금해요")
     )
     assert "1억원" in output.reply
     assert output.data.get("error") == "agent_failed"
@@ -253,16 +260,19 @@ def test_one_agent_failure_does_not_kill_the_turn(monkeypatch):
 
 
 def test_financial_profile_round_trips_and_merges(monkeypatch):
-    retirement = _fake(
-        AgentName.RETIREMENT_PLANNER,
+    # 공유 financial_profile 왕복 검증 — 생산자 에이전트는 아무나 되지만,
+    # 실제로 공유 프로필을 내보내는 asset_organizer 로 잡아 대화가 실제
+    # 라우팅되게 한다 (retirement_planner 는 데모 제외로 도달 불가).
+    organizer = _fake(
+        AgentName.ASSET_ORGANIZER,
         financial_profile=FinancialProfile(
             financial_assets=300_000_000, monthly_expense=3_000_000
         ),
     )
     tax = _fake(AgentName.TAX_CALCULATOR)
-    _patch(monkeypatch, retirement, tax)
+    _patch(monkeypatch, organizer, tax)
 
-    router.route(AgentInput(session_id="fp1", user_message="은퇴 자금 상담"))
+    router.route(AgentInput(session_id="fp1", user_message="자산 정리 상담"))
     output = router.route(
         AgentInput(
             session_id="fp1",
@@ -270,7 +280,7 @@ def test_financial_profile_round_trips_and_merges(monkeypatch):
             financial_profile=FinancialProfile(real_estate_value=500_000_000),
         )
     )
-    # 이전 턴에서 retirement_planner 가 알려준 값 + 이번 요청의 값이 병합돼 전달된다
+    # 이전 턴에서 asset_organizer 가 알려준 값 + 이번 요청의 값이 병합돼 전달된다
     received = tax.captured[0].financial_profile
     assert received.financial_assets == 300_000_000
     assert received.monthly_expense == 3_000_000
@@ -394,10 +404,10 @@ def test_full_pipeline_response_carries_verification(monkeypatch):
     _patch(
         monkeypatch,
         _fake(AgentName.TAX_CALCULATOR),
-        _fake(AgentName.RETIREMENT_PLANNER),
+        _fake(AgentName.ASSET_ORGANIZER),
     )
     output = router.route(
-        AgentInput(session_id="v1", user_message="은퇴 준비하면서 상속세도 궁금해요")
+        AgentInput(session_id="v1", user_message="재산 정리하고 상속세도 궁금해요")
     )
     assert output.verification is not None
     assert output.verification.mode == "concat"  # LLM 없음 → 이어붙이기

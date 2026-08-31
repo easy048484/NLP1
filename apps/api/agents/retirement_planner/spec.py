@@ -2,7 +2,7 @@
 
 ⚠️ 데모 범위에서 제외 (2026-08-30, 팀 계획서 결정 — 서비스는 "상속"). 엔진·
 대화 로직은 그대로 보존한다(engine.py 등 삭제하지 않음 — 로드맵/발표자료용).
-막은 건 **라우팅 진입점뿐**이다:
+막은 건 **라우팅 경로뿐**이다(사용자 직접 발화 + 핸드오프 둘 다):
 
 - `keywords=[]`로 비웠다 — `orchestrator.registry.match_keywords()`는
   키워드가 하나도 없으면 이 에이전트를 후보에 아예 넣지 않으므로, "은퇴
@@ -16,13 +16,14 @@
   것에만 쓰인다 — 둘 다 이 에이전트에는 해당 안 되지만(축 기본 에이전트가
   아니고, 단독 키워드 매칭은 이 체크를 안 거침), 상태를 정직하게 남겨두는
   차원에서 같이 되돌려뒀다. `keywords=[]`가 실질적인 차단 장치다.
-- ⚠️ **asset_organizer → retirement_planner 핸드오프(Fast Path)는 그대로
-  동작한다** — `classify()`가 `pending_handoff`를 키워드 매칭보다 먼저
-  확인하고, `registry.get_optional()`로만 대상 존재 여부를 보기 때문에
-  `keywords=[]`의 영향을 안 받는다. 즉 자산 정리 체크리스트를 끝내면
-  여전히 이 에이전트로 자동 연결된다 — "사용자가 먼저 말을 걸어서
-  도달"만 막혔지 "체크리스트 완료 후 자연스럽게 이어짐"은 안 막혔다.
-  이게 "데모 제외" 의도와 맞는지는 판단이 필요해 보여 그대로 보고한다.
+- ⚠️ **asset_organizer → retirement_planner 핸드오프(Fast Path)도 같이
+  막았다** — `classify()`는 `pending_handoff`를 키워드 매칭보다 먼저
+  확인하고 `registry.get_optional()`로만 대상 존재 여부를 보므로
+  `keywords=[]`의 영향을 안 받는다. 그래서 자산 정리 체크리스트를 끝내면
+  여전히 이 에이전트로 자동 연결되는 뒷문이 남아 있었고,
+  `agents/asset_organizer/agent.py`의 `_finalize()`에서 `handoffs=[...]`
+  줄을 주석 처리해 닫았다(엔진 보존 원칙에 맞춰 삭제가 아니라 주석 —
+  데모 범위에 다시 들어오면 그 줄만 되살리면 복원된다).
 """
 
 from orchestrator.registry import AgentSpec
