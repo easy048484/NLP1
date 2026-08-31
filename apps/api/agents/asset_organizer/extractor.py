@@ -86,7 +86,18 @@ class ExtractionResult:
 # --------------------------------------------------------------------- 정규식
 
 
+#: ⚠️ 이 파일의 금액 파싱 로직(_NOISE_RE/_UNIT_MULTIPLIERS/_UNIT_RE/
+#: _parse_amount/_THOUSANDS_COMMA_RE)은 agents/retirement_planner/agent.py에
+#: 그대로 로컬 복제돼 있다(cross-agent import 금지 원칙, 그쪽 docstring도
+#: 동일하게 명시) — 여기를 고치면 그쪽도 반드시 같이 고칠 것. AssetType
+#: 중복과 같은 문제 클래스라 agents/common/ 공유 모듈 후보로 이미 CLAUDE.md
+#: 미해결 항목에 있음.
 _NOISE_RE = re.compile(r"정도|쯤|가량|약|한(?=\s*\d)")
+#: "3,200"처럼 천 단위 구분 콤마로 숫자 안에 낀 것만 제거한다(리스트 구분자
+#: 콤마와는 lookaround로 구분 — 숫자-콤마-숫자만 대상). _parse_amount에서
+#: _UNIT_RE 매칭 전에 적용해 "3,200만원"이 "200만원"으로 잘리는 걸 막는다
+#: (실측 버그: 콤마 뒤 숫자만 단위와 결합돼 앞자리가 통째로 날아갔었다).
+_THOUSANDS_COMMA_RE = re.compile(r"(?<=\d),(?=\d)")
 _UNIT_MULTIPLIERS: dict[str, int] = {
     "조": 1_000_000_000_000,
     "억": 100_000_000,
@@ -108,6 +119,7 @@ def _parse_amount(text: str) -> Optional[int]:
     """텍스트에서 원화 금액을 찾아 정수(원)로 돌려준다. 못 찾으면 None —
     절대 0으로 대체하지 않는다 (호출부가 missing 처리 여부를 결정)."""
     cleaned = _NOISE_RE.sub("", text)
+    cleaned = _THOUSANDS_COMMA_RE.sub("", cleaned)
     matches = _UNIT_RE.findall(cleaned)
     if not matches:
         return None
@@ -127,10 +139,15 @@ _ASSET_KEYWORDS: dict[AssetType, tuple[str, ...]] = {
 }
 _INSURANCE_KEYWORDS = ("보험",)
 # 마침표는 소수점과 구분해야 해서 숫자 사이 마침표는 분리 대상에서 뺀다("3.5억" 보존).
+# 콤마도 마찬가지로 천 단위 구분자("3,200")와 나열 구분자("1억, 주식 5천만원")를
+# 구분해야 한다 — 숫자 사이 콤마는 분리 대상에서 뺀다(실측 버그: 안 빼면
+# "3,200만원"이 "3"/"200만원" 두 세그먼트로 쪼개져 앞자리가 통째로 사라졌다.
+# _parse_amount의 _THOUSANDS_COMMA_RE는 이미 분리된 세그먼트 *안에서* 남은
+# 콤마를 정리하는 것이라, 세그먼트 자체가 여기서 잘못 갈라지면 소용없다).
 # "있고"는 콤마 없이 자산·부채를 나열할 때 흔한 연결어("예금 1억 있고 대출
 # 3천만원 있어요") — 안 자르면 한 세그먼트에 숫자가 두 개 이상 섞여
 # _parse_amount가 둘을 합산해버리는 실측 버그가 있었다.
-_SEGMENT_SPLIT_RE = re.compile(r"(?<!\d)[.](?!\d)|[,、]|그리고|또한|있고")
+_SEGMENT_SPLIT_RE = re.compile(r"(?<!\d)[.](?!\d)|(?<!\d),(?!\d)|、|그리고|또한|있고")
 
 
 def _match_asset_type(segment: str) -> Optional[AssetType]:

@@ -62,6 +62,32 @@ def test_asks_current_age_then_monthly_expense_then_simulates():
     assert output.financial_profile.monthly_expense == 2_000_000
 
 
+def test_thousands_comma_parsed_as_single_number():
+    """asset_organizer/extractor.py의 같은 버그(P0-3)의 로컬 복제본 —
+    "3,200만원"을 콤마 뒤 "200만원"으로만 읽고 앞자리를 날리던 걸 하나의
+    숫자로 합쳐 읽도록 고쳤다. 콤마 없는 기존 표현도 회귀 없이 정상
+    동작해야 한다."""
+    assert agent._parse_amount("3,200만원") == 32_000_000
+    assert agent._parse_amount("1,020,000원") == 1_020_000
+    assert agent._parse_amount("5,000만원") == 50_000_000
+    assert agent._parse_amount("3200만원") == 32_000_000
+    assert agent._parse_amount("5000만원") == 50_000_000
+
+
+def test_thousands_comma_monthly_expense_flows_through_conversation():
+    session_id = "r2-comma"
+    output = agent.run(
+        AgentInput(session_id=session_id, user_message="은퇴 준비하고 싶어요")
+    )
+    state = agent.run(_continue(session_id, "60살이에요", output.data[STATE_KEY])).data[
+        STATE_KEY
+    ]
+
+    output = agent.run(_continue(session_id, "생활비는 3,200만원 정도예요", state))
+
+    assert output.financial_profile.monthly_expense == 32_000_000
+
+
 def test_adopts_shared_financial_profile_without_reasking():
     """current_age/monthly_expense가 이미 공유 프로필에 있으면(예:
     asset_organizer나 이전 턴이 채워둠) 재질문하지 않고 바로 계산한다."""

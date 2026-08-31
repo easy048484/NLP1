@@ -57,6 +57,16 @@ _UNIT_MULTIPLIERS: dict[str, int] = {
 }
 _UNIT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(조|억|천만|백만|천|만|원)")
 _NOISE_RE = re.compile(r"정도|쯤|가량|약|한(?=\s*\d)")
+#: ⚠️ 이 금액 파싱 로직(_NOISE_RE/_UNIT_MULTIPLIERS/_UNIT_RE/_parse_amount/
+#: _THOUSANDS_COMMA_RE)은 agents/asset_organizer/extractor.py에 그대로
+#: 로컬 복제돼 있다(cross-agent import 금지 원칙) — 여기를 고치면 그쪽도
+#: 반드시 같이 고칠 것. AssetType 중복과 같은 문제 클래스라 agents/common/
+#: 공유 모듈 후보로 이미 CLAUDE.md 미해결 항목에 있음.
+#: "3,200"처럼 천 단위 구분 콤마로 숫자 안에 낀 것만 제거한다(리스트 구분자
+#: 콤마와는 lookaround로 구분 — 숫자-콤마-숫자만 대상). _parse_amount에서
+#: _UNIT_RE 매칭 전에 적용해 "3,200만원"이 "200만원"으로 잘리는 걸 막는다
+#: (실측 버그: 콤마 뒤 숫자만 단위와 결합돼 앞자리가 통째로 날아갔었다).
+_THOUSANDS_COMMA_RE = re.compile(r"(?<=\d),(?=\d)")
 
 
 def _parse_amount(text: str) -> int | None:
@@ -65,6 +75,7 @@ def _parse_amount(text: str) -> int | None:
     (레지스트리 방식에서 에이전트 패키지는 서로 독립이 원칙). 금액 단위
     처리 규칙을 고칠 일이 생기면 두 곳 다 함께 고칠 것."""
     cleaned = _NOISE_RE.sub("", text)
+    cleaned = _THOUSANDS_COMMA_RE.sub("", cleaned)
     matches = _UNIT_RE.findall(cleaned)
     if not matches:
         return None
