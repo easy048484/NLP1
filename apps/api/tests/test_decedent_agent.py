@@ -261,29 +261,43 @@ def test_run_progress_all_checked_when_confirm_answers_given() -> None:
 
 
 # ---------------------------------------------------------------------------
-# P0-1: body/precedents 는 최상위가 아니라 네임스페이스
-# (data["decedent_estate"]) 안에 들어간다.
+# A안 (#58 P0-1 후속): body/precedents는 요건별로(requirements[rid] 안에)
+# 담긴다. 통짜 최상위 body/precedents(#58 원안)는 제거했다 — 프론트가 기대한
+# 건 요건마다 자기 body·precedents를 갖는 구조(RequirementSignal)였고,
+# 아무도 안 쓰는 통짜 필드를 남겨두면 중복 데이터가 된다.
 # ---------------------------------------------------------------------------
 
 
-def test_run_body_and_precedents_land_in_namespace_not_top_level() -> None:
+def test_run_requirement_body_and_precedents_are_per_requirement() -> None:
     payload = AgentInput(
         session_id="s1",
         user_message=_WILL_TEXT_ADDRESS_MISSING,
         context=_ctx(
-            handwriting_answer="no_or_partial_typed",
+            handwriting_answer="no_or_partial_typed",  # RED — typed_will_invalid
             seal_answer="seal_or_fingerprint",
-            address_envelope_answer="no_envelope",
+            address_envelope_answer="no_envelope",  # address RED — address_missing_invalid
         ),
     )
     output = decedent_estate.run(payload)
 
     ns = output.data["decedent_estate"]
-    assert isinstance(ns["body"], str) and ns["body"]
-    assert isinstance(ns["precedents"], list) and ns["precedents"]
-    # 최상위 평면 키로는 안 나간다 — pending_questions 충돌(오케스트레이터
-    # 병합 버그, router.py 소관) 같은 위험을 새로 만들지 않기 위해서다.
-    assert "body" not in output.data
-    assert "precedents" not in output.data
-    # body 에는 판례 인용 줄이 없다.
-    assert "(대법원" not in ns["body"] and "(서울고법" not in ns["body"]
+    reqs = ns["requirements"]
+
+    handwriting = reqs["handwriting"]
+    assert isinstance(handwriting["body"], str) and handwriting["body"]
+    # body 에는 판례 인용 카드 줄이 없다 (include_precedent_cards=False).
+    assert "(대법원" not in handwriting["body"]
+    handwriting_case_nos = {p["case_no"] for p in handwriting["precedents"]}
+    assert "97다38510" in handwriting_case_nos  # typed_will_invalid
+
+    address = reqs["address"]
+    address_case_nos = {p["case_no"] for p in address["precedents"]}
+    assert "2012다71688" in address_case_nos  # address_missing_invalid
+
+    # 요건별로 격리된다 — 서로 다른 요건의 판례가 섞이지 않는다.
+    assert "97다38510" not in address_case_nos
+    assert "2012다71688" not in handwriting_case_nos
+
+    # 통짜 최상위/네임스페이스 body·precedents는 이제 없다.
+    assert "body" not in output.data and "precedents" not in output.data
+    assert "body" not in ns and "precedents" not in ns

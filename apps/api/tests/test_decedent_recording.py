@@ -330,10 +330,10 @@ def test_progress_all_checked_when_witness_answers_given() -> None:
     assert output.data["progress"] == {"checked": 7, "total": 7}
 
 
-def test_body_and_precedents_in_namespace_for_recording() -> None:
-    """P0-1: 녹음 파이프라인도 handwritten과 동일하게 body/precedents를
-    네임스페이스 안에 채운다 — 예외 3건 중 executor_not_disqualified는
-    참고 문구로만 남고 precedents 배열에는 없어야 한다."""
+def test_requirement_body_and_precedents_for_recording() -> None:
+    """A안: 녹음 파이프라인도 handwritten과 동일하게 요건별로 body/precedents를
+    채운다 — 예외 3건 중 executor_not_disqualified는 참고 문구로만 남고
+    precedents 배열에는 없어야 한다."""
     output = _run(
         _COMPLETE_TRANSCRIPT,
         rec_witness_present_answer="yes",
@@ -341,10 +341,12 @@ def test_body_and_precedents_in_namespace_for_recording() -> None:
         # executor_not_disqualified(참고 문구 예외) 둘 다 precedent_ids 에 포함됨
     )
 
-    ns = output.data["decedent_estate"]
-    assert isinstance(ns["body"], str) and ns["body"]
-    assert "조문상 유언집행자는 증인 결격사유로 열거되어 있지 않습니다" in ns["body"]
-    assert "(민법 제1072조 제1항)" not in ns["body"]
+    eligible = output.data["decedent_estate"]["requirements"]["rec_witness_eligible"]
+    assert isinstance(eligible["body"], str) and eligible["body"]
+    assert (
+        "조문상 유언집행자는 증인 결격사유로 열거되어 있지 않습니다" in eligible["body"]
+    )
+    assert "(민법 제1072조 제1항)" not in eligible["body"]
 
-    case_nos = {p["case_no"] for p in ns["precedents"]}
+    case_nos = {p["case_no"] for p in eligible["precedents"]}
     assert "executor_not_disqualified" not in case_nos  # 예외 3건 중 하나 — 카드 아님

@@ -58,9 +58,10 @@ from .result_formatter import (
     HANDWRITTEN_GUIDE_INTRO,
     RECORDING_GUIDE_INTRO,
     RECORDING_SUMMARY_MESSAGES,
-    cited_precedents,
+    cited_precedents_for_requirement,
     closing_lines,
     format_guide,
+    format_requirement_line,
     format_result,
     guide_payload,
     pending_questions,
@@ -294,7 +295,16 @@ def _has_draft_text(payload: AgentInput, state: DecedentState) -> bool:
 
 
 def _requirement_payload(result: RequirementResult) -> dict[str, Any]:
-    """신호등 UI를 그릴 수 있도록 요건 하나의 판정 결과를 구조화한다."""
+    """신호등 UI를 그릴 수 있도록 요건 하나의 판정 결과를 구조화한다.
+
+    body/precedents(A안, #58 P0-1 후속)는 요건 하나 단위로 담는다 — 프론트
+    RequirementSignal(요건마다 자기 body·precedents를 갖는 구조, "왜
+    그런가요?" 접기/펼치기가 이미 그 모양을 전제로 완성돼 있음)에 맞춘
+    것으로, 통짜 body/precedents(#58 원안)와 달리 이 요건에 실제로 걸린
+    판례만 담긴다. body는 판례 인용 카드 줄을 뺀 §3-2 문구 한 줄
+    (term_note·참고 문구는 남는다) — precedents 배열과 중복되지 않게 하기
+    위해서다.
+    """
     return {
         "id": result.requirement_id,
         "name": result.name,
@@ -304,6 +314,8 @@ def _requirement_payload(result: RequirementResult) -> dict[str, Any]:
             red_label(result.requirement_id) if result.grade == "RED" else None
         ),
         "precedent_ids": result.precedent_ids,
+        "body": format_requirement_line(result, include_precedent_cards=False) or "",
+        "precedents": cited_precedents_for_requirement(result),
         "extracted": result.extracted,
         "followup_question": result.followup_question,
     }
@@ -641,11 +653,8 @@ def _run_handwritten_pipeline(
         data["handoff_reason"] = "가정법원 검인 절차 안내 필요"
 
     reply = format_result(results)
-    body = format_result(results, include_precedent_cards=False)
-    precedents = cited_precedents(results)
     if prefix_notice:
         reply = f"{prefix_notice}\n\n{reply}"
-        body = f"{prefix_notice}\n\n{body}"
 
     return AgentOutput(
         agent=AgentName.DECEDENT_ESTATE,
@@ -658,7 +667,6 @@ def _run_handwritten_pipeline(
             intent=intent,
             requirements=requirements,
             pending_questions=pending,
-            extra_namespaced={"body": body, "precedents": precedents},
         ),
     )
 
@@ -703,16 +711,7 @@ def _run_recording_pipeline(
         ordered_ids=list(FORMAL_RECORDING_REQUIREMENT_IDS),
         messages=RECORDING_SUMMARY_MESSAGES,
     )
-    body = format_result(
-        results,
-        formal_ids=FORMAL_RECORDING_REQUIREMENT_IDS,
-        ordered_ids=list(FORMAL_RECORDING_REQUIREMENT_IDS),
-        messages=RECORDING_SUMMARY_MESSAGES,
-        include_precedent_cards=False,
-    )
-    precedents = cited_precedents(results)
     reply = f"{_RECORDING_TRANSCRIPT_NOTICE}\n\n{reply}"
-    body = f"{_RECORDING_TRANSCRIPT_NOTICE}\n\n{body}"
 
     return AgentOutput(
         agent=AgentName.DECEDENT_ESTATE,
@@ -725,7 +724,6 @@ def _run_recording_pipeline(
             intent=intent,
             requirements=requirements,
             pending_questions=pending,
-            extra_namespaced={"body": body, "precedents": precedents},
         ),
     )
 
@@ -768,13 +766,10 @@ def _run_handwritten_prepare_pipeline(
         reply = f"{reply}\n\n---\n\n**작성하신 초안을 점검한 결과입니다.**\n\n{review_output.reply}"
         # review_output.data 에는 이미 네임스페이스 키가 들어 있다. 중첩 저장을
         # 피하려고 빼고 담고, 상태는 아래에서 한 번만 최상위에 붙인다.
-        review_namespaced = review_output.data.get(STATE_KEY, {})
+        # requirements[rid].body/precedents(A안)는 DecedentState 필드라 이
+        # 필터에 그대로 걸려 살아남는다 — #58 원안(통짜 body/precedents,
+        # extra_namespaced)과 달리 옮겨 담을 필요가 없어졌다.
         review_data = {k: v for k, v in review_output.data.items() if k != STATE_KEY}
-        # body/precedents(P0-1)는 review_output 에서 네임스페이스 안에만 있어서
-        # (extra_namespaced — DecedentState 필드가 아님) 위 필터에 안 걸린다.
-        # 따로 옮겨 담지 않으면 초안 점검 결과에서만 조용히 사라진다.
-        review_data["body"] = review_namespaced.get("body")
-        review_data["precedents"] = review_namespaced.get("precedents", [])
         data["review"] = review_data
         return AgentOutput(
             agent=AgentName.DECEDENT_ESTATE,
@@ -787,10 +782,6 @@ def _run_handwritten_prepare_pipeline(
                 intent=_PREPARE_INTENT,
                 requirements=review_data.get("requirements", {}),
                 pending_questions=review_data.get("pending_questions", []),
-                extra_namespaced={
-                    "body": review_data.get("body"),
-                    "precedents": review_data.get("precedents", []),
-                },
             ),
         )
 
@@ -833,12 +824,9 @@ def _run_recording_prepare_pipeline(
     if has_draft:
         review_output = _run_recording_pipeline(payload, state)
         reply = f"{reply}\n\n---\n\n**작성하신 대본을 점검한 결과입니다.**\n\n{review_output.reply}"
-        review_namespaced = review_output.data.get(STATE_KEY, {})
+        # requirements[rid].body/precedents(A안)는 DecedentState 필드라 아래
+        # 필터에 그대로 걸려 살아남는다 — handwritten prepare와 동일.
         review_data = {k: v for k, v in review_output.data.items() if k != STATE_KEY}
-        # body/precedents(P0-1)는 네임스페이스 안에만 있어(extra_namespaced) 위
-        # 필터에 안 걸린다 — 따로 옮겨 담지 않으면 조용히 사라진다.
-        review_data["body"] = review_namespaced.get("body")
-        review_data["precedents"] = review_namespaced.get("precedents", [])
         data["review"] = review_data
         return AgentOutput(
             agent=AgentName.DECEDENT_ESTATE,
@@ -851,10 +839,6 @@ def _run_recording_prepare_pipeline(
                 intent=_PREPARE_INTENT,
                 requirements=review_data.get("requirements", {}),
                 pending_questions=review_data.get("pending_questions", []),
-                extra_namespaced={
-                    "body": review_data.get("body"),
-                    "precedents": review_data.get("precedents", []),
-                },
             ),
         )
 

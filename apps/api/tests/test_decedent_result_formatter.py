@@ -14,6 +14,7 @@ from pathlib import Path
 from agents.decedent_estate.requirement_checker import check_requirements
 from agents.decedent_estate.result_formatter import (
     cited_precedents,
+    cited_precedents_for_requirement,
     format_requirement_line,
     format_result,
     pending_questions,
@@ -621,3 +622,68 @@ def test_cited_precedents_statute_case_no_falls_back_to_id() -> None:
         if p["summary"] == _precedent("witness_disqualification")["summary"]
     )
     assert entry["case_no"] == "witness_disqualification"
+
+
+# ---------------------------------------------------------------------------
+# A안 (#58 P0-1 후속): cited_precedents_for_requirement — 요건 하나 단위
+# ---------------------------------------------------------------------------
+
+
+def test_cited_precedents_for_requirement_only_returns_that_requirements_own_ids() -> (
+    None
+):
+    """다른 요건의 판례가 섞여 들어오면 안 된다 — date/address가 각자 RED라도
+    date 쪽 결과에는 address 판례가, address 쪽 결과에는 date 판례가 없어야 한다."""
+    text = _will_text(_NAME_LINE)  # 주소·연월일 둘 다 없음
+    results = check_requirements(
+        text,
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+        address_envelope_answer="no_envelope",  # absent만으로는 PENDING이라 확정 필요
+    )
+    assert results["date"].grade == "RED"
+    assert results["address"].grade == "RED"
+
+    date_precedents = cited_precedents_for_requirement(results["date"])
+    address_precedents = cited_precedents_for_requirement(results["address"])
+
+    date_case_nos = {p["case_no"] for p in date_precedents}
+    address_case_nos = {p["case_no"] for p in address_precedents}
+
+    assert _precedent("date_missing_day_invalid")["case_number"] in date_case_nos
+    assert _precedent("address_missing_invalid")["case_number"] in address_case_nos
+    # 격리 확인 — 서로의 판례가 섞이지 않는다.
+    assert date_case_nos.isdisjoint(address_case_nos)
+
+
+def test_cited_precedents_for_requirement_excludes_reference_note_ids() -> None:
+    """예외 3건(카드로 안 만들기로 한 것)은 요건 단위에서도 여전히 제외된다."""
+    text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
+    results = check_requirements(
+        text,
+        handwriting_answer="yes",
+        seal_answer="signature_only",  # RED — fingerprint_seal_valid(예외) 포함
+    )
+    assert "fingerprint_seal_valid" in results["seal"].precedent_ids  # 전제 확인
+
+    seal_precedents = cited_precedents_for_requirement(results["seal"])
+    assert not any(p["case_no"] == "97다38510" for p in seal_precedents)
+
+
+def test_requirement_body_has_no_precedent_citation_lines() -> None:
+    """format_requirement_line(include_precedent_cards=False)로 만드는 요건별
+    body에는 판례 인용 카드 줄이 없어야 한다 — precedents 배열과 중복 방지."""
+    text = _will_text(_NAME_LINE, _DATE_LINE)  # 주소 없음(RED)
+    results = check_requirements(
+        text,
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+        address_envelope_answer="no_envelope",
+    )
+    line_with_cards = format_requirement_line(results["address"])
+    line_without_cards = format_requirement_line(
+        results["address"], include_precedent_cards=False
+    )
+
+    assert _CITATION_LINE_RE.search(line_with_cards)  # 전제 확인
+    assert _CITATION_LINE_RE.search(line_without_cards) is None

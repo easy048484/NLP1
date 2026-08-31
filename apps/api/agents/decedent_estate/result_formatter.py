@@ -521,34 +521,65 @@ _EXCLUDED_FROM_PRECEDENT_LIST = frozenset(_RED_REFERENCE_NOTES) | frozenset(
 )
 
 
+def _precedent_card(precedent_id: str) -> Optional[dict[str, str]]:
+    """precedent_id → {case_no, summary} (예외 3건이거나 id 자체가 없으면 None).
+
+    type이 commentary/statute라 case_number 가 null인 판례는 그 자리에 id를
+    채운다 — 프론트가 case_no 로 필터링하며 null 항목을 통째로 버리기
+    때문에, 값을 비워두면 조문·해설 근거 판례가 전부 누락된다.
+    """
+    if precedent_id in _EXCLUDED_FROM_PRECEDENT_LIST:
+        return None
+    card = _load_precedents().get(precedent_id)
+    if not card:
+        return None
+    return {
+        "case_no": card.get("case_number") or card["id"],
+        "summary": card["summary"],
+    }
+
+
+def cited_precedents_for_requirement(
+    result: RequirementResult,
+) -> list[dict[str, str]]:
+    """요건 하나(result)의 precedent_ids 만 반영한 {case_no, summary} 배열 (A안).
+
+    같은 판례(예: 97다38510)를 여러 요건이 서로 다른 쟁점으로 인용해도,
+    이 함수는 그 요건에 실제로 걸린 precedent_id 만 본다 — 다른 요건의
+    판례가 섞여 들어오지 않는다.
+    """
+    seen: set[str] = set()
+    precedents: list[dict[str, str]] = []
+    for precedent_id in result.precedent_ids:
+        if precedent_id in seen:
+            continue
+        seen.add(precedent_id)
+        card = _precedent_card(precedent_id)
+        if card:
+            precedents.append(card)
+    return precedents
+
+
 def cited_precedents(
     results: dict[str, RequirementResult],
 ) -> list[dict[str, str]]:
-    """이번 판정에서 실제로 인용된 판례를 {case_no, summary} 배열로 모은다 (P0-1).
+    """이번 판정 전체에서 실제로 인용된 판례를 {case_no, summary} 배열로 모은다.
 
-    - results 의 모든 요건에서 precedent_ids 를 훑어 등장 순서대로 중복 제거한다.
-    - _EXCLUDED_FROM_PRECEDENT_LIST(카드로 안 만들기로 한 예외 3건)는 뺀다 —
-      이 셋은 format_requirement_line 이 body 안에 참고 문구로 이미 남긴다.
-    - type이 commentary/statute라 case_number 가 null인 판례는, 그 자리에
-      id 를 채운다 — 프론트가 case_no 로 필터링하며 null 항목을 통째로
-      버리기 때문에, 값을 비워두면 조문·해설 근거 판례가 전부 누락된다.
+    results 의 모든 요건에서 precedent_ids 를 훑어 등장 순서대로 중복
+    제거한다. _EXCLUDED_FROM_PRECEDENT_LIST(카드로 안 만들기로 한 예외
+    3건)는 뺀다 — 이 셋은 format_requirement_line 이 body 안에 참고
+    문구로 이미 남긴다.
     """
     seen: set[str] = set()
     precedents: list[dict[str, str]] = []
     for result in results.values():
         for precedent_id in result.precedent_ids:
-            if precedent_id in _EXCLUDED_FROM_PRECEDENT_LIST or precedent_id in seen:
+            if precedent_id in seen:
                 continue
             seen.add(precedent_id)
-            card = _load_precedents().get(precedent_id)
-            if not card:
-                continue
-            precedents.append(
-                {
-                    "case_no": card.get("case_number") or card["id"],
-                    "summary": card["summary"],
-                }
-            )
+            card = _precedent_card(precedent_id)
+            if card:
+                precedents.append(card)
     return precedents
 
 
