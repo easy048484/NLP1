@@ -537,3 +537,137 @@ def test_llm_fallback_income_type_outside_whitelist_is_kept_as_gita_not_dropped(
     assert result.incomes[0].type == "기타"
     assert result.incomes[0].monthly == 500_000
     assert result.incomes[0].start_age == 65
+
+
+# ------------------------------------------- 6) 사후 모드: 다기관 조회 결과 해석
+
+
+def test_disclosures_split_confirmed_and_unknown_amount_by_institution(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """기획서 패턴 그대로: 기관마다 공개 수준이 다르다 — 예금은 금액까지,
+    투자상품(증권)은 계좌만(잔고 유무만) 확인되는 식. 기관명 자체는
+    결과에 안 담긴다(수집 최소화 원칙, extract_from_image()와 동일)."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "disclosures": [
+                    {"type": "예금", "confidence": "confirmed", "value": 50_000_000},
+                    {"type": "주식", "confidence": "unknown_amount", "value": None},
+                ]
+            }
+        ),
+    )
+
+    items = extractor.extract_disclosures(
+        "OO은행은 예금 5천만원까지 나왔고 OO증권은 계좌만 확인됐어요"
+    )
+
+    assert items is not None
+    assert len(items) == 2
+    confirmed = next(i for i in items if i.confidence == "confirmed")
+    assert confirmed.asset_type == "예금"
+    assert confirmed.value == 50_000_000
+    unknown = next(i for i in items if i.confidence == "unknown_amount")
+    assert unknown.asset_type == "주식"
+    assert unknown.value is None
+
+    # DisclosureItem에는 institution 필드 자체가 없다 — dataclass 필드
+    # 목록으로 직접 확인(우연히 통과하는 게 아니라 구조적으로 없다는 것).
+    from dataclasses import fields
+
+    field_names = {f.name for f in fields(extractor.DisclosureItem)}
+    assert "institution" not in field_names
+    assert field_names == {"asset_type", "confidence", "value"}
+
+
+def test_disclosures_confirmed_without_valid_value_downgrades_to_unknown_amount(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """모델이 지시를 무시하고 confirmed인데 값을 안 채우거나 이상한 값을
+    보내면, 금액을 지어내지 않고 안전한 쪽(unknown_amount)으로 강등한다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "disclosures": [
+                    {"type": "부동산", "confidence": "confirmed", "value": None},
+                ]
+            }
+        ),
+    )
+
+    items = extractor.extract_disclosures("부동산은 금액까지 나왔어요")
+
+    assert items[0].confidence == "unknown_amount"
+    assert items[0].value is None
+
+
+def test_disclosures_ambiguous_confidence_falls_back_to_unknown_amount(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """confidence 값 자체가 화이트리스트 밖("unclear" 등)이면 애매한 쪽으로
+    본다 — 안전한 기본값(unknown_amount)으로 떨어진다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "disclosures": [
+                    {"type": "보험", "confidence": "maybe", "value": 10_000_000},
+                ]
+            }
+        ),
+    )
+
+    items = extractor.extract_disclosures("보험은 가입 여부만 확인됐어요")
+
+    assert items[0].confidence == "unknown_amount"
+    assert items[0].value is None
+
+
+def test_disclosures_type_outside_whitelist_kept_as_gita_not_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """자산 추출과 동일한 PII 방어 원칙 — 화이트리스트 밖 유형(오염
+    가능성 있는 원문)은 드롭하지 않고 "기타"로 보존한다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "disclosures": [
+                    {
+                        "type": "국민은행 예금(계좌 110-123-456789)",
+                        "confidence": "confirmed",
+                        "value": 10_000_000,
+                    },
+                ]
+            }
+        ),
+    )
+
+    items = extractor.extract_disclosures("어떤 조회 결과 문장")
+
+    assert items[0].asset_type == "기타"
+    assert not any("계좌" in str(v) for v in items[0].__dict__.values())
+
+
+def test_disclosures_returns_none_without_api_key(monkeypatch: pytest.MonkeyPatch):
+    """LLM을 쓸 수 없으면 None을 돌려준다 — 호출부(agent.py)가 이 신호를
+    보고 기존 일반 추출 경로로 폴백한다(조용히 빈 결과로 확정하지 않음)."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    assert extractor.extract_disclosures("아무 문장") is None
+
+
+def test_disclosures_returns_none_on_llm_failure(monkeypatch: pytest.MonkeyPatch):
+    _install_fake_llm(monkeypatch, exc=TimeoutError("network timeout"))
+
+    assert extractor.extract_disclosures("아무 문장") is None
+
+
+def test_disclosures_prompt_instructs_excluding_institution_names():
+    """수집 최소화 원칙이 프롬프트에 실제로 박혀 있는지 — 나중에 문구가
+    실수로 빠지는 걸 막는 회귀 잠금."""
+    prompt = extractor._build_disclosure_system_prompt()
+    assert "은행" in prompt and "결과에 포함하지 마라" in prompt

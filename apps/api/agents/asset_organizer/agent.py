@@ -32,6 +32,29 @@ monthly_payment/end_age가 비어 있으면 한 번만(강제로 캐묻지 않�
 schemas.FinancialProfile(flat 집계)로 눌러서 AgentOutput.financial_profile에
 실어 보낸다 — 그 과정에서 정보가 어떻게 줄어드는지는 _to_shared_profile()
 바로 위 docstring에 정리했다.
+
+⚠️ 팀 계획서 확정(2026-08-31, retirement_planner 데모 제외 이후): 이
+에이전트가 "상속재산(estate) 파악"을 전담한다 — 생전(본인 재산 목록화,
+위 설명이 그대로 적용)과 사후(남은 가족이 안심상속 원스톱서비스 등에서
+조회한 결과를 해석) 두 축 모두. 두 모드를 가르는 방식은 decedent_estate
+의 intent 게이트(review/prepare, agents/decedent_estate/agent.py 참고)와
+완전히 같은 패턴 — context 평면 키("mode": "pre_need"|"post_death")로
+매 턴 override 가능한 세션 플래그이지, 발화 문맥으로 매 턴 추론하지
+않는다(_resolve_mode 참고). 사후 모드에서는 "OO은행은 잔액까지 나왔고
+OO증권은 계좌만 확인됐어요" 같은 다기관 조회 결과 문장을
+extractor.extract_disclosures()로 먼저 해석하고, 실패/못 찾으면 조용히
+버리지 않고 기존 일반 추출 경로로 폴백한다.
+
+이와 함께 자산 금액에 3단계 신뢰도를 도입했다: confirmed(금액까지 확인,
+기존 동작과 동일 기본값) / unknown_amount(존재는 확인, 금액은 영구적으로
+모름 — 생전 모드에서 "몰라요"로 답했거나 사후 모드에서 기관이 존재만
+확인해준 경우, 다시 캐묻지 않음) / 미확인(아직 언급 자체가 안 됨, 기존
+체크리스트 로직 그대로). unknown_amount 자산은 순자산·flat 집계
+어디에서도 조용히 0으로 잡히지 않고 총액에서 명시적으로 제외되며
+(_format_summary/_to_shared_profile 참고), itemized 원본에는 confidence
+가 그대로 남아 나중에 tax_calculator 등이 판단 근거로 쓸 수 있다. 이번
+라운드는 재산 목록화에만 집중한다 — 세금 계산·배분 판단은 여전히 범위
+밖이다.
 """
 
 from __future__ import annotations
@@ -75,6 +98,33 @@ _OPENING_PROMPT = (
     "은행 앱 화면이나 안심상속 조회 결과를 사진으로 올려주셔도 됩니다."
 )
 
+#: 생전(본인 재산 목록화, 기존 기본 동작) / 사후(남은 가족이 안심상속
+#: 원스톱서비스 등에서 조회한 결과 해석) 두 모드. decedent_estate의 intent
+#: 게이트(review/prepare, agents/decedent_estate/agent.py._resolve_intent)와
+#: 완전히 같은 패턴을 그대로 따른다 — 새 메커니즘을 발명하지 않았다:
+#: context 최상위 평면 키("mode")로 매 턴 명시적으로 보낼 수 있고(이번 턴
+#: 값이 저장된 상태보다 우선 — handoff.build_agent_context 원칙과 동일),
+#: 미지정이면 조용히 기존 동작(pre_need)으로 기본 처리하며(하위 호환),
+#: 값이 있는데 화이트리스트 밖이면 재질문한다. `schemas.AgentInput.axis`
+#: (오케스트레이터가 "키워드 후보 0개" 폴백에만 쓰는 축)와는 의도적으로
+#: 분리했다 — decedent_estate도 자기 axis(POST_DEATH 하나)와 별개로
+#: intent를 자기 안에서 따로 관리한다, 같은 이유.
+_PRE_NEED_MODE = "pre_need"
+_POST_DEATH_MODE = "post_death"
+_MODE_VALUES = (_PRE_NEED_MODE, _POST_DEATH_MODE)
+
+_MODE_QUESTION = (
+    "본인 재산을 정리하시는 건가요, 아니면 돌아가신 가족분의 재산을 정리하시는 "
+    "건가요?"
+)
+
+_POST_DEATH_OPENING_PROMPT = (
+    "돌아가신 가족분의 재산을 정리해드릴게요. 안심상속 원스톱서비스 등에서 "
+    "조회하신 결과를 편하게 알려주세요 — 기관마다 확인되는 수준이 달라서, "
+    '"OO은행은 잔액까지 나왔고 OO증권은 계좌만 확인됐어요" 처럼 아시는 만큼만 '
+    "말씀해주셔도 됩니다. 은행 앱 화면이나 조회 결과를 사진으로 올려주셔도 됩니다."
+)
+
 _IMAGE_UNREADABLE_REPLY = (
     "이미지가 잘 안 보이는데 다시 올려주시거나 말씀으로 알려주실 수 있을까요?"
 )
@@ -90,6 +140,10 @@ _PENSION_FOLLOWUP_QUESTION = (
 _PENSION_ANNUITY_RE = re.compile(r"연금")
 
 _NEGATIVE_ANSWER_RE = re.compile(r"없|아니")
+#: "없어요"(retract — 항목 자체가 없다는 뜻, 기존 동작)와 구분되는 "몰라요"
+#: (존재는 있는데 금액을 모른다는 뜻) — 3단계 신뢰도의 "금액모름"으로
+#: 영구 확정한다. _wants_unknown_amount() 참고.
+_DONT_KNOW_AMOUNT_RE = re.compile(r"몰라|모르")
 
 # 부채 정밀 모드 후속질문 답변 해석용. "(?<!\d)...(?!\d)"로 앞뒤에 숫자가
 # 더 없는 "독립된" 1~3자리 숫자만 잡는다 — 이게 없으면 "2030년까지"의
@@ -128,6 +182,7 @@ def _format_krw(amount: int) -> str:
 
 def _empty_state() -> dict[str, Any]:
     return {
+        "mode": None,
         "assets": [],
         "liabilities": [],
         "insurance": [],
@@ -144,13 +199,39 @@ def _empty_state() -> dict[str, Any]:
 
 
 def _load_state(context: dict[str, Any] | None) -> dict[str, Any]:
-    namespaced = (context or {}).get(STATE_KEY, {})
+    context = context or {}
+    namespaced = context.get(STATE_KEY, {})
     state = _empty_state()
     if isinstance(namespaced, dict):
         for key in state:
             if key in namespaced:
                 state[key] = namespaced[key]
+
+    # decedent_estate/state.py의 평면 키 폴백과 동일한 패턴 — 네임스페이스
+    # (지난 턴 상태)가 기본이고, 이번 턴에 평면 키가 명시적으로 왔으면 그
+    # 값이 우선한다("사용자가 이번 턴에 명시적으로 답한 값이 우선" 원칙,
+    # handoff.build_agent_context와 동일). 빈 문자열은 "미지정"으로 보고
+    # 무시한다 — 안 그러면 아직 선택 안 한 프론트가 mode=""를 보냈을 때
+    # 이미 저장된 정상 값을 지워서 모드 게이트가 다시 열려버린다.
+    flat_mode = context.get("mode")
+    if flat_mode is not None and flat_mode != "":
+        state["mode"] = flat_mode
     return state
+
+
+def _resolve_mode(state: dict[str, Any]) -> tuple[str, bool]:
+    """모드를 pre_need/post_death로 정리한다. decedent_estate._resolve_intent()
+    와 완전히 같은 패턴 — 미지정(None)이면 조용히 기존 동작(pre_need)으로
+    기본 처리하고(하위 호환 — mode를 모르는 기존 호출부도 그대로 생전
+    체크리스트를 탄다), 값이 있는데 화이트리스트 밖이면 재질문 대상으로
+    삼는다(두 번째 반환값 True). 잘못된 값 자체는 반환하지 않는다 — 호출부가
+    재질문 여부만 보고 판단하면 된다."""
+    mode = state.get("mode")
+    if mode is None:
+        return _PRE_NEED_MODE, False
+    if mode not in _MODE_VALUES:
+        return _PRE_NEED_MODE, True
+    return mode, False
 
 
 def _output(
@@ -195,8 +276,15 @@ def _drop_pending_amount(state: dict[str, Any], kind: str, type_value: str) -> N
 
 
 def _append_resolved_pending_item(
-    state: dict[str, Any], item: dict[str, Any], amount: int
+    state: dict[str, Any],
+    item: dict[str, Any],
+    amount: int,
+    *,
+    confidence: str = "confirmed",
 ) -> None:
+    """confidence는 자산(asset_value)에만 의미가 있다 — 부채는 이번 라운드
+    3단계 신뢰도 범위 밖이라(과제 경계, "이번 라운드는 재산 목록화에만
+    집중") 항상 confirmed 취급 그대로 둔다."""
     if item["kind"] == "asset_value":
         state["assets"].append(
             {
@@ -204,6 +292,7 @@ def _append_resolved_pending_item(
                 "value": amount,
                 "liquid": None,
                 "return_rate": None,
+                "confidence": confidence,
             }
         )
     else:
@@ -220,6 +309,10 @@ def _append_resolved_pending_item(
 
 def _is_negative_answer(message: str) -> bool:
     return bool(_NEGATIVE_ANSWER_RE.search(message))
+
+
+def _wants_unknown_amount(message: str) -> bool:
+    return bool(_DONT_KNOW_AMOUNT_RE.search(message))
 
 
 def _merge_extraction(
@@ -268,6 +361,30 @@ def _merge_extraction(
         _add_pending_amount(state, item)
 
     return bool(asset_result.assets or liabilities or asset_result.insurance_tags)
+
+
+def _merge_disclosures(
+    state: dict[str, Any], items: list[extractor.DisclosureItem]
+) -> bool:
+    """사후 모드(extractor.extract_disclosures) 결과를 state에 반영한다.
+    confidence=="unknown_amount"인 항목은 pending_amounts에 넣지 않고
+    (다시 캐묻지 않음) 곧바로 자산 목록에 영구 확정으로 반영한다 —
+    value=0은 실제 금액이 아니라 구조적 자리표시자일 뿐이며, 순자산
+    계산은 반드시 confidence로 걸러서 써야 한다(_format_summary/
+    _to_shared_profile 참고, models.Asset.confidence 필드 설명과 동일)."""
+    for item in items:
+        state["assets"].append(
+            {
+                "type": item.asset_type,
+                "value": item.value if item.confidence == "confirmed" else 0,
+                "liquid": None,
+                "return_rate": None,
+                "confidence": item.confidence,
+            }
+        )
+        _mark_checked(state, item.asset_type)
+        _drop_pending_amount(state, "asset_value", item.asset_type)
+    return bool(items)
 
 
 def _liabilities_needing_followup(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -402,15 +519,36 @@ def _apply_pension_followup_answer(
     )
 
 
+def _is_confirmed(asset: dict[str, Any]) -> bool:
+    """3단계 신뢰도 중 "confirmed"(금액까지 확인됨)인지. 기존(이번 라운드
+    이전) 자산 dict는 confidence 키 자체가 없을 수 있어 기본값을
+    "confirmed"로 둔다 — models.Asset.confidence의 기본값과 동일하게
+    맞춰 하위 호환을 유지한다."""
+    return asset.get("confidence", "confirmed") == "confirmed"
+
+
 def _format_summary(state: dict[str, Any]) -> str:
     lines = ["확정된 자산·부채 목록입니다."]
 
     assets = state["assets"]
-    total_assets = sum(a["value"] for a in assets)
+    confirmed_assets = [a for a in assets if _is_confirmed(a)]
+    unknown_amount_assets = [a for a in assets if not _is_confirmed(a)]
+    # 순자산 총액에 "금액모름" 항목을 조용히 0으로 넣지 않는다 — tax_calculator
+    # 때 확정한 "미확인은 0원이 아니다" 원칙과 동일. 대신 목록에는 표시하고
+    # 총액에서 빠졌다는 걸 명시적으로 안내한다(아래).
+    total_assets = sum(a["value"] for a in confirmed_assets)
     if assets:
         lines.append("\n[자산]")
-        lines.extend(f"- {a['type']}: {_format_krw(a['value'])}" for a in assets)
+        lines.extend(
+            f"- {a['type']}: {_format_krw(a['value'])}" for a in confirmed_assets
+        )
+        lines.extend(f"- {a['type']}: 금액 확인 안 됨" for a in unknown_amount_assets)
         lines.append(f"자산 합계: {_format_krw(total_assets)}")
+        if unknown_amount_assets:
+            lines.append(
+                f"({len(unknown_amount_assets)}개 항목은 금액이 확인되지 않아 "
+                "총액에서 제외됨)"
+            )
     else:
         lines.append("\n[자산] 없음")
 
@@ -483,6 +621,13 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
        반영한다(assets에 남아 있는 퇴직연금 원금과는 이중 계산되지 않음 —
        liquid=False라 잔액 계산엔 애초에 원금이 안 들어가고 소득 흐름만
        추가되는 구조, adapter.py 참고).
+    7. confidence=="unknown_amount"(3단계 신뢰도 — 사후 모드에서 기관이
+       존재만 확인해준 경우, 또는 생전 모드에서 "몰라요"로 답한 경우)인
+       자산은 real_estate_value/financial_assets/other_assets 세 필드
+       어디에도 안 들어간다 — 확인 안 된 금액을 0으로 넣으면 순자산이
+       실제보다 적어 보이게 왜곡된다(3번과 같은 원칙). extra의 itemized
+       assets에는 confidence 그대로 남아 있으니, 정확한 총액이 필요한
+       소비자는 flat 필드만 보지 말고 그걸 직접 걸러서 써야 한다.
 
     checked_categories에 있는 카테고리만 값을 채운다(전부는 아니어도
     최소 하나는 확인된 상태) — 아직 안 물어본 카테고리까지 0으로 채우면
@@ -494,17 +639,27 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
     liabilities = state["liabilities"]
     insurance = state["insurance"]
 
-    real_estate_value = sum(a["value"] for a in assets if a["type"] == "부동산")
+    # 7번 참고 — "금액모름" 자산(confidence != "confirmed")은 flat 집계
+    # 세 필드(real_estate_value/financial_assets/other_assets) 어디에도
+    # 안 들어간다. value=0이 구조적 자리표시자일 뿐이라 그대로 더하면
+    # "확인 안 함"과 "확인했더니 0원"이 섞여 순자산이 실제보다 적어 보이는
+    # 왜곡이 생긴다 — 3번과 같은 이유(추측 분류 금지)의 연장. itemized
+    # 원본(아래 extra)에는 confidence 그대로 담아 보존한다.
+    confirmed_assets = [a for a in assets if _is_confirmed(a)]
+
+    real_estate_value = sum(
+        a["value"] for a in confirmed_assets if a["type"] == "부동산"
+    )
     # 3번 참고 — tax_calculator 담당자 확정 기준대로 예금/주식/펀드만
     # financial_assets로 분류한다. 부동산은 위에서 이미 분리했고, 그 외
     # (기타/자동차/퇴직연금 등)는 전부 other_assets로 남긴다 — 배타적
     # 분류라 세 필드가 겹치지 않는다.
     financial_assets = sum(
-        a["value"] for a in assets if a["type"] in _FINANCIAL_ASSET_TYPES
+        a["value"] for a in confirmed_assets if a["type"] in _FINANCIAL_ASSET_TYPES
     )
     other_assets = sum(
         a["value"]
-        for a in assets
+        for a in confirmed_assets
         if a["type"] != "부동산" and a["type"] not in _FINANCIAL_ASSET_TYPES
     )
     total_debts = sum(liability["remaining_balance"] for liability in liabilities)
@@ -609,6 +764,14 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
     message = (payload.user_message or "").strip()
     has_image = bool(payload.image_base64)
 
+    # -1) 생전/사후 모드 게이트 — decedent_estate의 will_type/intent 게이트와
+    #     완전히 같은 위치(가장 먼저)·같은 방식(잘못된 값만 재질문)이다.
+    mode, mode_invalid = _resolve_mode(state)
+    if mode_invalid:
+        state["mode"] = None  # 잘못된 값은 저장하지 않는다 — 다음 턴에 또 재질문
+        return _output(state, _MODE_QUESTION)
+    state["mode"] = mode
+
     is_first_turn = not (
         state["assets"]
         or state["liabilities"]
@@ -618,7 +781,10 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
         or state["pending_amounts"]
     )
     if is_first_turn and not message and not has_image:
-        return _output(state, _OPENING_PROMPT)
+        opening = (
+            _POST_DEATH_OPENING_PROMPT if mode == _POST_DEATH_MODE else _OPENING_PROMPT
+        )
+        return _output(state, opening)
 
     if has_image:
         return _handle_image_turn(payload, state)
@@ -671,18 +837,53 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
             _append_resolved_pending_item(state, item, bare_amount)
             resolved_via_bare_amount = True
         elif _is_negative_answer(message) and not re.search(r"\d", message):
-            # "없어요"/"모르겠어요" — 그 항목은 '보유 안 함'으로 보고 대기에서 뺀다.
-            # ("주식 없어요"처럼 유형 키워드가 섞여 있어도, 숫자가 없고 순수
-            #  부정이면 되묻기 루프에 빠지지 않게 여기서 소비한다.)
+            # "없어요" — 그 항목 자체를 정정("사실은 없다")으로 보고
+            # 대기에서 뺀다(자산 기록 자체를 안 만듦). "주식 없어요"처럼
+            # 유형 키워드가 섞여 있어도, 숫자가 없고 순수 부정이면 되묻기
+            # 루프에 빠지지 않게 여기서 소비한다.
             state["pending_amounts"].pop(0)
+            resolved_via_bare_amount = True
+        elif _wants_unknown_amount(message):
+            # "몰라요"/"모르겠어요" — "없어요"(정정)와 다르게, 존재는
+            # 확인됐지만 금액을 모른다는 뜻이다. 3단계 신뢰도의
+            # "금액모름"으로 영구 확정하고 다시 캐묻지 않는다(부채/퇴직연금
+            # 후속질문의 "한 번만 묻고 종결" 원칙과 동일 — 여기선 애초에
+            # 물어봐도 답이 안 나올 걸 아는 경우라 더더욱 재질문 의미 없음).
+            item = state["pending_amounts"].pop(0)
+            _append_resolved_pending_item(state, item, 0, confidence="unknown_amount")
             resolved_via_bare_amount = True
 
     if not resolved_via_bare_amount:
-        asset_result = extractor.extract_financial_slots(message)
-        liabilities, liability_missing = extractor.extract_liabilities(message)
-        found_new_items = _merge_extraction(
-            state, asset_result, liabilities, liability_missing
+        # 사후 모드는 여러 기관의 조회 결과 해석을 먼저 시도한다 — 정규식
+        # 만으로는 부족할 가능성이 높아 LLM 폴백 경로(extractor.py의
+        # extract_disclosures)를 재사용한다. None(LLM 사용 불가/호출 실패)
+        # 이거나 빈 리스트(성공했지만 이 문장에서 못 찾음)면 조용히 버리지
+        # 않고 기존 일반 추출 경로로 폴백한다 — "애매하면 안전한 쪽"
+        # 원칙을 완전 실패시가 아니라 여기서도 지킨다.
+        disclosures = (
+            extractor.extract_disclosures(message) if mode == _POST_DEATH_MODE else None
         )
+        liabilities, liability_missing = extractor.extract_liabilities(message)
+
+        if disclosures:
+            found_new_items = _merge_disclosures(state, disclosures)
+            # 부채는 이 전용 파서 범위 밖이라(과제 경계) 같은 문장에 섞여
+            # 있을 수 있는 부채 언급은 기존 정규식 경로로 별도 처리한다 —
+            # 자산 파트는 이미 반영했으므로 빈 ExtractionResult를 넘긴다.
+            found_new_items = (
+                _merge_extraction(
+                    state,
+                    extractor.ExtractionResult(status="ok"),
+                    liabilities,
+                    liability_missing,
+                )
+                or found_new_items
+            )
+        else:
+            asset_result = extractor.extract_financial_slots(message)
+            found_new_items = _merge_extraction(
+                state, asset_result, liabilities, liability_missing
+            )
 
         # "없어요"처럼 순수 부정 답변일 때만 남은 대기 카테고리를 전부
         # 확정한다 — "아니요, 예금 3천 있어요"처럼 실제 항목이 섞여 있으면

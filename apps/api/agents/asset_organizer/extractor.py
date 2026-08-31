@@ -625,3 +625,129 @@ def extract_from_image(
         missing=missing,
     )
     return result, liabilities, liability_missing
+
+
+# --------------------------------------------------- 사후 모드: 조회 결과 해석
+
+
+@dataclass
+class DisclosureItem:
+    """안심상속 원스톱서비스 등 여러 기관의 조회 결과 한 문장에서 뽑아낸
+    자산 하나. 기관별로 공개 수준이 다르다는 게 핵심이라(예금·부동산·세금은
+    금액까지, 보험은 가입여부만, 투자상품은 잔고 유무만 나오는 식) — 이건
+    사용자가 몰라서가 아니라 기관이 애초에 그 정보를 안 준 것이다.
+
+    ⚠️ 기관명(은행/증권사명 등)은 의도적으로 안 담는다 — extract_from_image()
+    의 "수집 최소화 원칙"(계좌번호·예금주명과 함께 은행/지점명도 결과에서
+    뺀다)과 동일한 이유로, 이 결과가 소비되는 지점(agent.py)까지 기관명이
+    흘러갈 필요가 없다."""
+
+    asset_type: AssetType
+    confidence: Literal["confirmed", "unknown_amount"]
+    value: Optional[int]  # confidence=="confirmed"일 때만 값, 아니면 None
+
+
+_DISCLOSURE_MAX_TOKENS = 500
+_DISCLOSURE_SYSTEM_PROMPT_TEMPLATE = (
+    "너는 안심상속 원스톱서비스 등 여러 기관의 재산 조회 결과를 한 번에 "
+    "설명하는 문장에서, 자산 유형별로 '금액까지 확인됐는지' 또는 '존재만 "
+    "확인되고 금액은 아직 모르는지'를 구조화해서 뽑는 도구다. 기관마다 "
+    "공개하는 정보 수준이 다르다는 걸 이해해야 한다 — 흔한 패턴은 예금·"
+    "부동산·세금 체납은 금액까지 나오고, 보험은 가입 여부만, 주식·펀드 "
+    "같은 투자상품은 잔고 유무만 나오는 식이다. 하지만 이건 참고용 "
+    "패턴일 뿐, 완벽한 전 기관 커버리지를 목표로 하지 마라 — 사용자가 "
+    "실제로 말한 내용을 우선하되, 금액이 명시됐는지 애매하면 반드시 "
+    "unknown_amount로 표시하고 절대 금액을 지어내지 마라.\n"
+    "절대 판정하거나 조언하지 마라 — 너는 오직 값 추출만 한다.\n"
+    "수집 최소화 원칙: 자산 유형·확인 수준·금액 외에는 아무것도 추출하지 "
+    "마라. 은행/증권사/보험사 등 기관명, 계좌번호, 예금주명, 주민등록번호, "
+    "전화번호 등은 문장에 등장하더라도 절대 결과에 포함하지 마라.\n"
+    "반드시 아래 JSON 형식으로만 답하라. 코드블록이나 다른 설명을 절대 "
+    "덧붙이지 마라.\n"
+    "{{\n"
+    '  "disclosures": [{{"type": "{asset_types}", '
+    '"confidence": "confirmed|unknown_amount", '
+    '"value": 원단위 정수 또는 null}}]\n'
+    "}}"
+)
+
+
+def _build_disclosure_system_prompt() -> str:
+    """_build_system_prompt()와 같은 이유로 화이트리스트에서 자동 파생 —
+    자산 유형이 늘어나도 이 프롬프트를 손으로 맞출 필요가 없다."""
+    return _DISCLOSURE_SYSTEM_PROMPT_TEMPLATE.format(
+        asset_types="|".join(_VALID_ASSET_TYPES)
+    )
+
+
+def _apply_disclosure_payload(payload: dict[str, Any]) -> list[DisclosureItem]:
+    """LLM JSON을 DisclosureItem 리스트로 정리한다. 화이트리스트 밖 유형은
+    자산 추출과 동일한 원칙으로 "기타"로 보존(드롭 안 함). confidence가
+    화이트리스트 밖이거나 값 자체가 이상하면 안전한 쪽("unknown_amount")
+    으로 떨어뜨린다 — 애매할 때 실제보다 좋아 보이는 쪽으로 왜곡되면
+    안 되기 때문이다."""
+    items: list[DisclosureItem] = []
+    for raw in payload.get("disclosures") or []:
+        if not isinstance(raw, dict):
+            continue
+        asset_type = raw.get("type")
+        if asset_type not in _VALID_ASSET_TYPES:
+            asset_type = "기타"
+
+        confidence = raw.get("confidence")
+        value = raw.get("value")
+        valid_value = (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value >= 0
+        )
+        if confidence == "confirmed" and valid_value:
+            items.append(
+                DisclosureItem(
+                    asset_type=asset_type, confidence="confirmed", value=int(value)
+                )
+            )
+        else:
+            # confidence=="confirmed"인데 value가 이상해도(모델이 지시를
+            # 어긴 경우) 금액을 지어내지 않고 안전하게 강등한다.
+            items.append(
+                DisclosureItem(
+                    asset_type=asset_type, confidence="unknown_amount", value=None
+                )
+            )
+    return items
+
+
+def extract_disclosures(text: str) -> Optional[list[DisclosureItem]]:
+    """사후 모드 전용: 여러 기관의 조회 결과가 섞인 문장에서 기관별 확인
+    수준을 구조화해서 뽑는다. 정규식 1차 시도 없이 곧바로 LLM을 쓴다 —
+    "OO은행은 잔액까지 나왔고 OO증권은 계좌만 확인됐어요" 같은 문장은
+    기관명·서술 조합이 너무 다양해서 정규식으로 안정적으로 커버하기
+    어렵다고 판단했다(extract_financial_slots()의 LLM 클라이언트
+    인프라 — _client()/_parse_json_response()/_strip_code_fence() —
+    는 그대로 재사용한다).
+
+    키가 없거나 호출이 실패하면 None을 돌려준다 — 호출부(agent.py)가
+    이 신호를 보고 기존 extract_financial_slots() 일반 추출 경로로
+    폴백해서, 사후 모드에서도 이 전용 파서가 못 잡는 문장을 조용히
+    버리지 않는다."""
+    client = _client()
+    if client is None:
+        return None
+
+    try:
+        response = client.messages.create(
+            model=_MODEL,
+            max_tokens=_DISCLOSURE_MAX_TOKENS,
+            system=_build_disclosure_system_prompt(),
+            messages=[{"role": "user", "content": text}],
+            timeout=_TIMEOUT_SECONDS,
+        )
+        payload = _parse_json_response(response.content[0].text)
+    except Exception:
+        return None
+
+    if payload is None:
+        return None
+
+    return _apply_disclosure_payload(payload)
