@@ -53,6 +53,8 @@ _PRE_PLANNING = re.compile(
 class GraphState(TypedDict, total=False):
     user_message: str
     family_graph: Optional[dict[str, Any]]
+    #: 세션 공유 상속재산 (schemas.FinancialProfile). 빚 vs 재산 판정에 씁니다.
+    estate: Any
     session_id: str
     today: date
     use_llm: bool
@@ -104,6 +106,7 @@ def node_resolve(state: GraphState) -> GraphState:
         state["heir"],
         family_graph=state.get("family_graph"),
         today=state["today"],
+        estate=state.get("estate"),
     )
     return {"plan": plan}
 
@@ -196,6 +199,13 @@ def node_finalize(state: GraphState) -> GraphState:
 
     if state.get("asked_slot"):
         data["asked_slot"] = state["asked_slot"]
+
+    # 안내를 마친 뒤 되물을 슬롯은 답변 본문이 아니라 별도 질문 블록으로 내보낸다.
+    # (사망일처럼 안내 자체를 막는 blocking 질문은 그대로 reply 로 둔다.)
+    if plan is not None and plan.follow_up and prompts.blocking_question(plan) is None:
+        follow_up_q = prompts.follow_up_prompt(plan.follow_up)
+        if follow_up_q is not None:
+            data["pending_questions"] = [follow_up_q]
 
     if _PRE_PLANNING.search(state.get("user_message", "")) and heir.death_date is None:
         # 상속이 아직 개시되지 않은 경우의 역전환 (연동 지점 5번)

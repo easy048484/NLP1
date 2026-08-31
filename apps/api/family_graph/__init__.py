@@ -1,3 +1,10 @@
+from .heirs import (
+    HeirClassification,
+    HeirInfo,
+    UnsupportedFamilyCase,
+    classify_heirs,
+    select_legal_heirs,
+)
 from .models import FamilyGraph, FamilyMember, RelationType
 from .repository import get_heirs_dict
 from .router import router
@@ -8,4 +15,9 @@ __all__ = [
     "RelationType",
     "get_heirs_dict",
     "router",
+    "HeirClassification",
+    "HeirInfo",
+    "UnsupportedFamilyCase",
+    "classify_heirs",
+    "select_legal_heirs",
 ]

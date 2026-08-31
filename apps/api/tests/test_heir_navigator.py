@@ -343,6 +343,14 @@ def test_guidance_comes_before_follow_up_question():
     # 되묻는 건 뒤에 하나만
     assert output.data["plan"]["blocking_slot"] is None
     assert output.data["asked_slot"] == output.data["plan"]["follow_up"]
+    # 그 질문은 답변 본문이 아니라 별도 질문 블록(pending_questions)으로 나간다
+    pending = output.data["pending_questions"]
+    assert len(pending) == 1
+    assert pending[0]["requirement"] == output.data["plan"]["follow_up"]
+    assert pending[0]["options"]
+    from agents.heir_navigator.prompts import QUESTIONS
+
+    assert QUESTIONS[output.data["plan"]["follow_up"]] not in output.reply
 
 
 def test_non_urgent_deadlines_are_still_shown():

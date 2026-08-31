@@ -225,12 +225,78 @@ def test_scope_confirmation_precedes_suggestions():
     assert second.data[STATE_KEY]["asked_slot"] == "decedent_is_resident"
 
 
+def test_flat_shared_fields_are_candidates_not_confirmed_inputs():
+    shared = FinancialProfile(
+        real_estate_value=600_000_000,
+        financial_assets=200_000_000,
+        other_assets=100_000_000,
+        total_debts=80_000_000,
+        financial_debts=50_000_000,
+    )
+    first = turn(shared=shared)
+    state = first.data[STATE_KEY]
+    assert state["values"] == {}
+    assert state["confirmed_fields"] == []
+    assert state["profile_candidates"] == {
+        "original_inherited_property": 900_000_000,
+        "debts": 80_000_000,
+    }
+    # 자료 범위에 대한 동의는 개별 금액까지 확정한 것이 아니다.
+    second = turn("네", state, shared)
+    assert second.data[STATE_KEY]["values"] == {}
+    assert second.data[STATE_KEY]["confirmed_fields"] == []
+
+
+@pytest.mark.parametrize(
+    "shared",
+    [
+        FinancialProfile(real_estate_value=800_000_000),
+        FinancialProfile(financial_assets=0),
+    ],
+)
+def test_incomplete_flat_profile_does_not_confirm_partial_total(shared):
+    first = turn(
+        shared=shared,
+        explicit={
+            "decedent_is_resident": True,
+            "spouse_exists": False,
+            "children_count": 1,
+        },
+    )
+    second = turn("네", first.data[STATE_KEY], shared)
+    state = second.data[STATE_KEY]
+    assert state["asked_slot"] == "original_inherited_property"
+    assert "original_inherited_property" not in state["profile_candidates"]
+    assert "original_inherited_property" not in state["values"]
+    assert "financial_assets" not in state["values"]
+
+
 def test_rejected_scope_does_not_use_retirement_assets():
     shared = profile(assets=[{"type": "예금", "value": 500_000_000}])
     first = turn(shared=shared)
     second = turn("아니요", first.data[STATE_KEY], shared)
     assert "original_inherited_property" not in second.data[STATE_KEY]["values"]
     assert second.data[STATE_KEY]["profile_scope_confirmed"] is False
+
+
+def test_rejected_profile_does_not_reappear_on_following_turn():
+    shared = profile(assets=[{"type": "예금", "value": 500_000_000}])
+    first = turn(
+        shared=shared,
+        explicit={
+            "decedent_is_resident": True,
+            "spouse_exists": False,
+            "children_count": 1,
+        },
+    )
+    rejected = turn("아니요", first.data[STATE_KEY], shared)
+    pending = turn("모름", rejected.data[STATE_KEY], shared)
+    state = pending.data[STATE_KEY]
+    assert state["profile_scope_confirmed"] is False
+    assert state["asked_slot"] == "original_inherited_property"
+    assert "original_inherited_property" not in state["values"]
+    assert "financial_assets" not in state["values"]
+    assert state["last_result"] is None
 
 
 def test_confirmed_candidate_is_saved_with_source():

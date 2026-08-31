@@ -13,6 +13,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from family_graph.heirs import classify_heirs
 from schemas import AgentInput, AgentName, AgentOutput
 
 from .calculator import calculate_inheritance_tax
@@ -311,62 +312,32 @@ def _apply_family_graph(
     family_graph: dict[str, Any] | None,
     state: dict[str, Any],
 ) -> None:
-    """가족관계 그래프의 배우자·자녀 정보를 계산 입력으로 변환한다."""
+    """가족관계 그래프의 배우자·자녀 정보를 계산 입력으로 변환한다.
 
-    if not isinstance(family_graph, dict):
+    상속인 순위 판정은 공용 모듈(family_graph.heirs.classify_heirs)에 위임한다 —
+    heir_share_analyzer·heir_navigator와 같은 규칙을 쓰기 위해서다.
+    """
+    classification = classify_heirs(family_graph)
+    if not classification.has_family_data:
         return
 
     values = state["values"]
-    heirs = family_graph.get("heirs")
+    values["spouse_exists"] = classification.spouse_exists
+    values["children_count"] = classification.children_count
+    state["has_grandchild_heir"] = classification.has_grandchild_heir
+    _mark_confirmed(state, "spouse_exists")
+    _mark_confirmed(state, "children_count")
 
-    if isinstance(heirs, list):
-        alive_heirs = [
-            heir for heir in heirs if isinstance(heir, dict) and heir.get("alive", True)
-        ]
-
-        spouse_exists = any(heir.get("relation") == "spouse" for heir in alive_heirs)
-        children_count = sum(heir.get("relation") == "child" for heir in alive_heirs)
-
-        has_grandchild_heir = any(
-            heir.get("relation") == "grandchild" for heir in alive_heirs
-        )
-
-        state["has_grandchild_heir"] = spouse_exists and has_grandchild_heir
-        # 민법 제1003조: 배우자는 1순위(직계비속) 또는 2순위(직계존속)
-        # 상속인이 있으면 그들과 공동상속하고, 둘 다 없을 때만 단독상속인이
-        # 된다 — 형제자매(3순위)는 배우자가 있으면 애초에 상속인이 아니므로
-        # family_graph에 같이 등록돼 있어도 단독상속 여부에 영향을 주면
-        # 안 된다. grandchild/grandparent는 대습상속(자녀·부모가 먼저
-        # 사망한 경우의 대체) 자리라 1·2순위와 동일하게 취급한다.
-        # ⚠️ 대습상속의 정확한 지분 계산(예: 대습자가 여럿일 때 원래 몫을
-        # 나누는 것)까지는 다루지 않는다 — 여기서는 "단독상속 여부"만
-        # 정확히 가리는 것이 목적이다.
-        _HIGHER_PRIORITY_RELATIONS = {"child", "parent", "grandchild", "grandparent"}
-        has_higher_priority_heir = any(
-            heir.get("relation") in _HIGHER_PRIORITY_RELATIONS for heir in alive_heirs
-        )
-        spouse_is_sole_heir = spouse_exists and not has_higher_priority_heir
-
-        values["spouse_exists"] = spouse_exists
-        values["children_count"] = children_count
-        values["spouse_is_sole_heir"] = spouse_is_sole_heir
-
-        _mark_confirmed(state, "spouse_exists")
-        _mark_confirmed(state, "children_count")
+    # spouse_is_sole_heir는 부모(2순위) 정보까지 있는 완전한 상속인 목록
+    # (형태 A: {"heirs": [...]})일 때만 확정한다. 레거시 형태
+    # ({"spouse_alive", "num_children"})는 부모 생존 여부를 알 수 없으므로
+    # 기존처럼 사용자에게 물어본다.
+    has_full_heir_list = isinstance(family_graph, dict) and isinstance(
+        family_graph.get("heirs"), list
+    )
+    if has_full_heir_list:
+        values["spouse_is_sole_heir"] = classification.spouse_is_sole_heir
         _mark_confirmed(state, "spouse_is_sole_heir")
-        return
-
-    # 과거 형식의 가족관계 데이터도 임시로 지원한다.
-    if "spouse_alive" in family_graph:
-        values["spouse_exists"] = bool(family_graph["spouse_alive"])
-        _mark_confirmed(state, "spouse_exists")
-
-    if "num_children" in family_graph:
-        try:
-            values["children_count"] = int(family_graph["num_children"])
-            _mark_confirmed(state, "children_count")
-        except (TypeError, ValueError):
-            pass
 
 
 def _parse_yes_or_no(message: str) -> bool | None:
@@ -701,6 +672,8 @@ def run(payload: AgentInput) -> AgentOutput:
     # 수집·검토·지원 불가 응답에 이전 턴의 세액이 남지 않도록 한다.
     state["last_result"] = None
 
+    # 공유 자료는 이 경로에서 후보로만 읽는다. 별도 자동 입력을 병행하면
+    # 범위 거절·자료 변경 시에도 미확인 금액이 확정값으로 되살아난다.
     profile_changed = _apply_financial_profile(payload, state)
     _apply_structured_context(payload, state)
     _apply_family_graph(payload.family_graph, state)
@@ -846,6 +819,9 @@ def run(payload: AgentInput) -> AgentOutput:
     state["missing_fields"] = []
     state["last_result"] = result.model_dump(mode="json")
     reply = result_reply(result)
+    will_note = _will_status_note(payload.will_status)
+    if will_note:
+        reply = f"{will_note}\n\n{reply}"
 
     return AgentOutput(
         agent=AgentName.TAX_CALCULATOR,
@@ -853,3 +829,18 @@ def run(payload: AgentInput) -> AgentOutput:
         next_action=None,
         data={STATE_KEY: state},
     )
+
+
+def _will_status_note(will_status: Any) -> str | None:
+    """decedent_estate가 같은 세션에서 유언장을 점검했으면, 상속세 계산이
+    유언장 내용까지 반영한 게 아님을 한 줄로 덧붙인다(계산 자체엔 영향 없음)."""
+    if will_status is None or not getattr(will_status, "checked", False):
+        return None
+    if getattr(will_status, "no_will", False):
+        return "유언장이 없는 경우를 전제로 법정상속분 기준으로 계산했습니다."
+    if getattr(will_status, "has_effect", None) is True:
+        return (
+            "유효한 유언장이 확인되었습니다. 아래 계산은 법정상속분 기준이며, "
+            "유언에 따른 실제 분배·배우자 상속액은 유언 내용에 맞춰 다시 확인하세요."
+        )
+    return None

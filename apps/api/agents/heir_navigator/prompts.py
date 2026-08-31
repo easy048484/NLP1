@@ -61,6 +61,32 @@ QUESTIONS: dict[str, str] = {
 }
 
 
+#: 안내 뒤에 되물을 슬롯을 화면에서 "별도 질문 블록(선택지)"으로 띄우기 위한 보기.
+#: 각 라벨은 slots.rule_based 의 정규식이 그대로 인식하도록 맞춰 둡니다.
+FOLLOW_UP_OPTIONS: dict[str, list[str]] = {
+    "progress": [
+        "아직 아무것도 못 했어요",
+        "사망신고는 했어요",
+        "안심상속 원스톱까지 신청했어요",
+        "재산 조회 결과까지 받았어요",
+    ],
+    "has_debt": [
+        "빚이 있었어요",
+        "빚은 없었어요",
+        "아직 몰라요",
+    ],
+    "will_exists": [
+        "유언장이 있어요",
+        "유언장이 없어요",
+        "아직 몰라요",
+    ],
+    "agreement": [
+        "아직 시작 전이에요",
+        "협의를 진행 중이에요",
+    ],
+}
+
+
 def _fmt_date(value: date | None) -> str:
     return value.isoformat() if value else "미확인"
 
@@ -129,6 +155,10 @@ def facts_block(plan: ProcedurePlan, state: HeirState, *, today: date) -> str:
         for entry in blocked[:3]:
             lines.append(f"- {entry.title}: 먼저 {', '.join(entry.blocked_by)}가 필요")
 
+    if plan.solvency:
+        lines.append("\n[고인의 재산 vs 빚 — 확인된 값 기준, 계산 금지·문구만 전달]")
+        lines.append(f"- {plan.solvency.note}")
+
     if plan.branches:
         lines.append("\n[빚이 있을 때의 선택지 — 추천 금지, 결과만 전달]")
         for branch in plan.branches:
@@ -150,8 +180,9 @@ def facts_block(plan: ProcedurePlan, state: HeirState, *, today: date) -> str:
 
     if plan.follow_up and plan.follow_up in QUESTIONS:
         lines.append(
-            "\n[안내를 마친 뒤 마지막에 한 개만 되물을 것 — 이 내용을 자연스럽게 풀어 쓰세요]\n"
-            f"{QUESTIONS[plan.follow_up]}"
+            "\n[되묻지 말 것]\n"
+            "안내만 하고 끝맺으세요. 추가로 확인할 내용은 화면이 별도 질문 블록으로 "
+            "처리하므로, 답변 본문에는 질문을 넣지 마세요."
         )
 
     lines.append(f"\n[안내 문구 — 답변 끝에 반드시 포함]\n{plan.disclaimer}")
@@ -217,6 +248,11 @@ def deterministic_reply(plan: ProcedurePlan, state: HeirState) -> str:
         rest = ", ".join(action.title for action in plan.next_actions[1:4])
         parts.append(f"이어서 준비하실 것: {rest}\n")
 
+    if plan.solvency:
+        parts.append("**고인의 재산과 빚**")
+        parts.append(plan.solvency.note)
+        parts.append("")
+
     if plan.branches:
         parts.append(
             "**빚이 있는 경우의 선택지** (어느 쪽이 나은지는 안내드리지 않습니다)"
@@ -242,8 +278,8 @@ def deterministic_reply(plan: ProcedurePlan, state: HeirState) -> str:
 
     parts.append(f"> {plan.disclaimer}")
 
-    if plan.follow_up and plan.follow_up in QUESTIONS:
-        parts.append(f"\n---\n\n{QUESTIONS[plan.follow_up]}")
+    # 안내 뒤 되물을 질문은 답변 본문에 넣지 않는다.
+    # node_finalize 가 data["pending_questions"] 로 내보내고, 화면이 별도 블록으로 띄운다.
 
     return "\n".join(parts).strip()
 
@@ -252,3 +288,17 @@ def blocking_question(plan: ProcedurePlan) -> str | None:
     """안내를 만들기 전에 반드시 물어야 하는 슬롯."""
     slot = plan.blocking_slot
     return slot if slot in QUESTIONS else None
+
+
+def follow_up_prompt(slot: str | None) -> dict | None:
+    """안내를 마친 뒤 되물을 슬롯을 화면용 구조화 질문(선택지 포함)으로 변환."""
+    if not slot or slot not in QUESTIONS:
+        return None
+    return {
+        "requirement": slot,
+        "field": "",
+        "question": QUESTIONS[slot],
+        "options": [
+            {"label": text, "value": text} for text in FOLLOW_UP_OPTIONS.get(slot, [])
+        ],
+    }
