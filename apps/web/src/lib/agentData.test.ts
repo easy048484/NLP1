@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { hasPendingQuestions, parsePendingQuestions, parseSignals } from "./agentData";
+import {
+  hasPendingQuestions,
+  parsePendingQuestions,
+  parseShares,
+  parseSignals,
+  parseTaxResult,
+} from "./agentData";
 
 /**
  * 오케스트레이터가 여러 에이전트를 한 턴에 실행하면 node_compose() 가
@@ -197,5 +203,51 @@ describe("parseSignals", () => {
     expect(parseSignals({ decedent_estate: { requirements: {} } })).toBeNull();
     expect(parseSignals({ decedent_estate: {} })).toBeNull();
     expect(parseSignals({})).toBeNull();
+  });
+
+  it("현재 agent(decedent_estate) namespace에 requirements가 없으면 다른 agent namespace의 값을 대신 보여주면 안 된다", () => {
+    const data = {
+      decedent_estate: { will_type: "handwritten" },
+      heir_navigator: {
+        requirements: {
+          other: { id: "other", name: "다른 요건", grade: "GREEN", body: "다른 에이전트 값" },
+        },
+      },
+    };
+    // decedent_estate 카드를 렌더링 중인 상황을 가정(agentKey 전달) — 이
+    // 카드는 자기 요건이 없으므로 "유언 요건 점검" 카드 자체가 뜨면 안
+    // 된다(다른 agent 값 유입 금지).
+    expect(parseSignals(data, "decedent_estate")).toBeNull();
+  });
+});
+
+describe("parseTaxResult / parseShares — 다른 agent namespace 오염 방지", () => {
+  it("parseTaxResult: 현재(decedent_estate) namespace에 결과가 없으면 다른 agent(tax_calculator)의 값을 대신 보여주면 안 된다", () => {
+    const data = {
+      decedent_estate: { will_type: "handwritten" },
+      tax_calculator: {
+        result: { rows: [{ label: "과세표준", amount: 100 }], status: "calculated" },
+      },
+    };
+    expect(parseTaxResult(data, "decedent_estate")).toBeNull();
+  });
+
+  it("parseShares: 현재(decedent_estate) namespace에 분배표가 없으면 다른 agent(heir_share_analyzer)의 값을 대신 보여주면 안 된다", () => {
+    const data = {
+      decedent_estate: { will_type: "handwritten" },
+      heir_share_analyzer: {
+        shares: [{ heir: "배우자", statutory_share: "1.5/3.5" }],
+      },
+    };
+    expect(parseShares(data, "decedent_estate")).toBeNull();
+  });
+
+  it("agentKey 없는 legacy 호출은 기존처럼 아무 namespace나 순회해서 찾는다", () => {
+    const data = {
+      tax_calculator: {
+        result: { rows: [{ label: "과세표준", amount: 100 }], status: "calculated" },
+      },
+    };
+    expect(parseTaxResult(data)?.final_amount).toBe(100);
   });
 });
