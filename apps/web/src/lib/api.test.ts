@@ -229,6 +229,19 @@ describe("normalizeChatResponse — estate / will_status 평면 필드", () => {
     expect(normalizeChatResponse(currentBackendResponse())?.estate).toBeNull();
   });
 
+  it("total_debts 가 없고 financial_debts 만 오면 부채로 폴백한다", () => {
+    const r = normalizeChatResponse(
+      currentBackendResponse({
+        financial_profile: { real_estate_value: 500_000_000, financial_debts: 80_000_000 },
+      }),
+    );
+    expect(r?.estate).toEqual({
+      totalAssets: 500_000_000,
+      totalDebts: 80_000_000,
+      net: 420_000_000,
+    });
+  });
+
   it("will_status.checked 가 boolean 이면 파싱, 없으면 null", () => {
     const withWill = normalizeChatResponse(
       currentBackendResponse({

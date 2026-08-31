@@ -251,3 +251,107 @@ describe("parseTaxResult / parseShares — 다른 agent namespace 오염 방지"
     expect(parseTaxResult(data)?.final_amount).toBe(100);
   });
 });
+
+/**
+ * 실제 tax_calculator/models.py InheritanceTaxResult 모양.
+ * rows/final_amount/filing_due 같은 키는 없고 flat named int 만 온다 —
+ * 예전 parseTaxResult 는 여기서 null 을 반환해 "상속세 시산" 카드가 아예
+ * 안 떴다. contribution.data 는 state(= {status, last_result, ...}) 슬라이스.
+ */
+function taxCalculatorData() {
+  return {
+    status: "calculated",
+    last_result: {
+      total_inherited_property: 1_000_000_000,
+      deductible_expenses: 50_000_000,
+      taxable_inheritance_value: 950_000_000,
+      total_inheritance_deduction: 700_000_000,
+      inheritance_tax_base: 250_000_000,
+      calculated_inheritance_tax: 40_000_000,
+      filing_tax_credit: 1_200_000,
+      estimated_tax_due: 38_800_000,
+      estimated_filing_deadline: "2026-08-31",
+      warnings: ["돌아가신 날짜를 입력하지 않아 신고기한은 계산하지 않았어요."],
+    },
+  };
+}
+
+describe("parseTaxResult — 실제 InheritanceTaxResult(flat) 파싱", () => {
+  it("flat named 필드로 내역 행을 만든다", () => {
+    const tax = parseTaxResult(taxCalculatorData(), "tax_calculator");
+    expect(tax).not.toBeNull();
+    const labels = tax!.rows.map((r) => r.label);
+    expect(labels).toContain("세금을 매기는 기준 금액");
+    expect(tax!.rows.find((r) => r.label === "세금을 매기는 기준 금액")?.amount).toBe(
+      250_000_000,
+    );
+  });
+
+  it("최종세액은 estimated_tax_due, 신고기한은 estimated_filing_deadline 에서 온다", () => {
+    const tax = parseTaxResult(taxCalculatorData(), "tax_calculator")!;
+    expect(tax.final_amount).toBe(38_800_000);
+    expect(tax.filing_due).toBe("2026-08-31");
+  });
+
+  it("status 는 last_result 가 아니라 부모 state 에서 읽는다", () => {
+    const tax = parseTaxResult(taxCalculatorData(), "tax_calculator")!;
+    expect(tax.status).toBe("calculated");
+    const collecting = { ...taxCalculatorData(), status: "collecting" };
+    expect(parseTaxResult(collecting, "tax_calculator")!.status).toBe("collecting");
+  });
+
+  it("warnings 를 notes 로 넘긴다", () => {
+    const tax = parseTaxResult(taxCalculatorData(), "tax_calculator")!;
+    expect(tax.notes?.[0]).toContain("신고기한은 계산하지 않았");
+  });
+});
+
+/**
+ * 실제 heir_share_analyzer/models.py HeirShareResult 모양.
+ * 상속인 목록은 last_result.heirs (HeirShareBreakdown[]) 에 있고,
+ * 필드명은 statutory_share_fraction / forced_share_rate_fraction.
+ * 예전 parseShares 는 shares/distribution 만 봐서 카드가 안 떴다.
+ */
+function heirShareData() {
+  return {
+    status: "no_simple_gap",
+    last_result: {
+      basis_amount: 700_000_000,
+      heirs: [
+        {
+          name: "김배우",
+          relation: "spouse",
+          statutory_share_fraction: "3/7",
+          statutory_share_amount: 300_000_000,
+          forced_share_rate_fraction: "1/2",
+          basic_forced_share_estimate: 150_000_000,
+        },
+        {
+          name: "김자녀",
+          relation: "child",
+          statutory_share_fraction: "2/7",
+          statutory_share_amount: 200_000_000,
+          forced_share_rate_fraction: "1/2",
+          basic_forced_share_estimate: 100_000_000,
+        },
+      ],
+    },
+  };
+}
+
+describe("parseShares — 실제 HeirShareResult.heirs 파싱", () => {
+  it("last_result.heirs 에서 상속인별 비율을 읽는다", () => {
+    const shares = parseShares(heirShareData(), "heir_share_analyzer");
+    expect(shares).not.toBeNull();
+    expect(shares!.map((s) => s.heir)).toEqual(["김배우", "김자녀"]);
+    expect(shares!.find((s) => s.heir === "김배우")).toMatchObject({
+      statutory: "3/7",
+      forced: "1/2",
+    });
+  });
+
+  it("heirs 가 비어 있으면 null", () => {
+    const empty = { last_result: { heirs: [] } };
+    expect(parseShares(empty, "heir_share_analyzer")).toBeNull();
+  });
+});

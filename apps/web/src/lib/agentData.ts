@@ -206,6 +206,52 @@ export function hasPendingQuestions(data: Record<string, unknown>, agentKey?: st
   return (parsePendingQuestions(data, agentKey) ?? []).length > 0;
 }
 
+/**
+ * 백엔드 tax_calculator/models.py `InheritanceTaxResult` 의 flat 필드 →
+ * 내역 테이블 행. 라벨은 presentation.py `result_reply` 와 같은 표현으로 맞춰
+ * 본문 답변과 카드가 같은 말을 쓰게 한다. 최종세액(estimated_tax_due)은 행이
+ * 아니라 final_amount 로 따로 나간다.
+ * ⚠️ 라벨·행 구성은 승원 확인 대상 (표시 결정).
+ */
+const TAX_ROW_FIELDS: readonly [string, string][] = [
+  ["total_inherited_property", "상속재산 전체 금액"],
+  ["deductible_expenses", "빚과 인정되는 비용"],
+  ["taxable_inheritance_value", "세금 계산에 반영되는 재산"],
+  ["total_inheritance_deduction", "공제되는 금액"],
+  ["inheritance_tax_base", "세금을 매기는 기준 금액"],
+  ["calculated_inheritance_tax", "세율을 적용해 계산한 세금"],
+  ["filing_tax_credit", "기한 내 신고로 줄어드는 금액"],
+];
+
+function taxRowsFrom(rec: Record<string, unknown>): { label: string; amount: number }[] {
+  // 1) 이미 rows/breakdown/items 로 오면 그대로 (미래 계약 대비)
+  const rowsRaw = rec.rows ?? rec.breakdown ?? rec.items;
+  if (Array.isArray(rowsRaw)) {
+    return rowsRaw
+      .map((r) => {
+        const rr = asRecord(r);
+        const label = asString(rr?.label);
+        const amount = asNumber(rr?.amount ?? rr?.value);
+        return label && amount != null ? { label, amount } : null;
+      })
+      .filter((r): r is { label: string; amount: number } => !!r);
+  }
+  const map = asRecord(rowsRaw);
+  if (map) {
+    return Object.entries(map)
+      .map(([label, v]) => {
+        const amount = asNumber(v);
+        return amount != null ? { label, amount } : null;
+      })
+      .filter((r): r is { label: string; amount: number } => !!r);
+  }
+  // 2) 실제 백엔드: flat named 필드에서 알려진 것만 골라 순서대로
+  return TAX_ROW_FIELDS.map(([field, label]) => {
+    const amount = asNumber(rec[field]);
+    return amount != null ? { label, amount } : null;
+  }).filter((r): r is { label: string; amount: number } => !!r);
+}
+
 export function parseTaxResult(
   data: Record<string, unknown>,
   agentKey?: string,
@@ -214,32 +260,12 @@ export function parseTaxResult(
   const rec = asRecord(raw);
   if (!rec) return null;
 
-  // rows: [{label, amount}] 또는 {label: amount} 맵
-  let rows: { label: string; amount: number }[] = [];
-  const rowsRaw = rec.rows ?? rec.breakdown ?? rec.items;
-  if (Array.isArray(rowsRaw)) {
-    rows = rowsRaw
-      .map((r) => {
-        const rr = asRecord(r);
-        const label = asString(rr?.label);
-        const amount = asNumber(rr?.amount ?? rr?.value);
-        return label && amount != null ? { label, amount } : null;
-      })
-      .filter((r): r is { label: string; amount: number } => !!r);
-  } else {
-    const map = asRecord(rowsRaw);
-    if (map) {
-      rows = Object.entries(map)
-        .map(([label, v]) => {
-          const amount = asNumber(v);
-          return amount != null ? { label, amount } : null;
-        })
-        .filter((r): r is { label: string; amount: number } => !!r);
-    }
-  }
+  const rows = taxRowsFrom(rec);
   if (rows.length === 0) return null;
 
-  const statusRaw = asString(rec.status) ?? "calculated";
+  // status 는 last_result 가 아니라 부모 state 에 있다 (state["status"]).
+  const statusRaw =
+    asString(deepFindScoped(data, agentKey, "status")) ?? asString(rec.status) ?? "calculated";
   return {
     status:
       statusRaw === "collecting" ||
@@ -249,9 +275,14 @@ export function parseTaxResult(
         : "calculated",
     rows,
     final_amount:
-      asNumber(rec.final_amount ?? rec.final ?? rec.total) ?? rows[rows.length - 1]?.amount ?? null,
-    filing_due: asString(rec.filing_due ?? rec.due_date) ?? null,
-    notes: asArray(rec.notes)
+      asNumber(
+        rec.estimated_tax_due ?? rec.final_amount ?? rec.final ?? rec.total,
+      ) ??
+      rows[rows.length - 1]?.amount ??
+      null,
+    filing_due:
+      asString(rec.estimated_filing_deadline ?? rec.filing_due ?? rec.due_date) ?? null,
+    notes: asArray(rec.warnings ?? rec.notes)
       .map((n) => asString(n))
       .filter((n): n is string => !!n),
   };
@@ -302,26 +333,45 @@ export function parsePlan(data: Record<string, unknown>): AgentPlan | null {
   };
 }
 
-/** heir_share_analyzer: 분배표 [{heir, statutory_share, forced_share?}] */
+/** heir_share_analyzer: 분배표 한 행. */
 export interface ShareRow {
   heir: string;
+  /** 법정상속분 (비율 문자열, 예 "3/7") */
   statutory: string;
+  /** 유류분율 (비율 문자열, 예 "1/2") */
   forced?: string | null;
 }
+
+/**
+ * 상속인 목록의 실제 위치: 백엔드 HeirShareResult 는 `last_result.heirs`
+ * (HeirShareBreakdown[]) 에 담는다. 평면 heirs/shares/distribution 도 폴백.
+ */
+function shareList(data: Record<string, unknown>, agentKey: string | undefined): unknown[] {
+  const lr = asRecord(deepFindScoped(data, agentKey, "last_result", "result"));
+  if (lr && Array.isArray(lr.heirs)) return lr.heirs;
+  return asArray(deepFindScoped(data, agentKey, "heirs", "shares", "distribution"));
+}
+
 export function parseShares(data: Record<string, unknown>, agentKey?: string): ShareRow[] | null {
-  const raw = deepFindScoped(data, agentKey, "shares", "distribution");
-  const list = asArray(raw);
+  const list = shareList(data, agentKey);
   if (list.length === 0) return null;
   const rows: ShareRow[] = [];
   for (const r of list) {
     const rr = asRecord(r);
     if (!rr) continue;
-    const heir = asString(rr.heir ?? rr.name ?? rr.relation);
+    const heir = asString(rr.name ?? rr.heir ?? rr.relation);
     if (!heir) continue;
     rows.push({
       heir,
-      statutory: asString(rr.statutory_share ?? rr.statutory ?? rr.share) ?? "—",
-      forced: asString(rr.forced_share ?? rr.forced) ?? null,
+      // HeirShareBreakdown.statutory_share_fraction (구 계약: statutory_share/share)
+      statutory:
+        asString(rr.statutory_share_fraction ?? rr.statutory_share ?? rr.statutory ?? rr.share) ??
+        "—",
+      // HeirShareBreakdown.forced_share_rate_fraction.
+      // ⚠️ 승원 확인: 유류분 칸에 비율(1/2) 대신 금액을 보여주려면
+      //    basic_forced_share_estimate(원, estate 값 없으면 0)로 바꾼다.
+      forced:
+        asString(rr.forced_share_rate_fraction ?? rr.forced_share ?? rr.forced) ?? null,
     });
   }
   return rows.length ? rows : null;

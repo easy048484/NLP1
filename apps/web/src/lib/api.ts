@@ -109,7 +109,9 @@ function readEstate(obj: Record<string, unknown>): EstateSummary | null {
   const re = asNum(fp.real_estate_value);
   const fa = asNum(fp.financial_assets);
   const oa = asNum(fp.other_assets);
-  const td = asNum(fp.total_debts);
+  // FinancialProfile 은 total_debts 와 financial_debts 를 따로 둔다. 보통 asset_organizer
+  // 가 total_debts 를 채우지만, financial_debts 만 온 경우 부채가 0으로 빠지지 않게 폴백.
+  const td = asNum(fp.total_debts) ?? asNum(fp.financial_debts);
   if (re === null && fa === null && oa === null && td === null) return null;
   const totalAssets = (re ?? 0) + (fa ?? 0) + (oa ?? 0);
   const totalDebts = td ?? 0;
