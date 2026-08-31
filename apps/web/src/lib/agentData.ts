@@ -56,6 +56,37 @@ function deepFindNamespaceFirst(data: Record<string, unknown>, key: string): unk
   return undefined;
 }
 
+/**
+ * agentKey가 있으면 다른 agent의 namespace로는 절대 새지 않는다 — 후보
+ * key들(우선순위 순) 중 자기 namespace(data[agentKey])에서 먼저 찾고,
+ * 없으면 평면(top-level) 키로만 폴백한다(다른 agent namespace 순회 금지).
+ * agentKey가 없을 때(legacy 호출)만 기존 deepFind처럼 아무 namespace나
+ * 순회해서 찾는다. (#59/#63과 동일 원칙 — parsePendingQuestions 참고)
+ */
+function deepFindScoped(
+  data: Record<string, unknown>,
+  agentKey: string | undefined,
+  ...keys: string[]
+): unknown {
+  if (agentKey) {
+    const own = asRecord(data[agentKey]);
+    if (own) {
+      for (const k of keys) {
+        if (k in own) return own[k];
+      }
+    }
+    for (const k of keys) {
+      if (k in data) return data[k];
+    }
+    return undefined;
+  }
+  for (const k of keys) {
+    const v = deepFind(data, k);
+    if (v !== undefined) return v;
+  }
+  return undefined;
+}
+
 const GRADE_MAP: Record<string, SignalGrade> = {
   green: "green",
   red: "red",
@@ -81,14 +112,17 @@ const GRADE_BADGE: Record<SignalGrade, string> = {
   pending: "확인 대기",
 };
 
-export function parseSignals(data: Record<string, unknown>): RequirementSignal[] | null {
+export function parseSignals(
+  data: Record<string, unknown>,
+  agentKey?: string,
+): RequirementSignal[] | null {
   // guide/signals는 배열 형태만 지원한다 — 지금 실제로 오는 건 requirements뿐이고,
   // decedent_estate.requirements는 {id: item} dict라 asArray()로는 항상 빈 배열이
   // 됐다(카드가 한 번도 렌더되지 않은 원인). requirements만 dict/array 둘 다 받는다.
-  const guideOrSignals = asArray(deepFind(data, "guide") ?? deepFind(data, "signals"));
+  const guideOrSignals = asArray(deepFindScoped(data, agentKey, "guide", "signals"));
   const list = guideOrSignals.length
     ? guideOrSignals
-    : asArrayOrRecordValues(deepFind(data, "requirements"));
+    : asArrayOrRecordValues(deepFindScoped(data, agentKey, "requirements"));
   if (list.length === 0) return null;
 
   const signals: RequirementSignal[] = [];
@@ -172,9 +206,11 @@ export function hasPendingQuestions(data: Record<string, unknown>, agentKey?: st
   return (parsePendingQuestions(data, agentKey) ?? []).length > 0;
 }
 
-export function parseTaxResult(data: Record<string, unknown>): TaxResult | null {
-  const raw =
-    deepFind(data, "last_result") ?? deepFind(data, "tax_result") ?? deepFind(data, "result");
+export function parseTaxResult(
+  data: Record<string, unknown>,
+  agentKey?: string,
+): TaxResult | null {
+  const raw = deepFindScoped(data, agentKey, "last_result", "tax_result", "result");
   const rec = asRecord(raw);
   if (!rec) return null;
 
@@ -272,8 +308,8 @@ export interface ShareRow {
   statutory: string;
   forced?: string | null;
 }
-export function parseShares(data: Record<string, unknown>): ShareRow[] | null {
-  const raw = deepFind(data, "shares") ?? deepFind(data, "distribution");
+export function parseShares(data: Record<string, unknown>, agentKey?: string): ShareRow[] | null {
+  const raw = deepFindScoped(data, agentKey, "shares", "distribution");
   const list = asArray(raw);
   if (list.length === 0) return null;
   const rows: ShareRow[] = [];

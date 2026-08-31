@@ -34,10 +34,10 @@ export function AgentCards({
   const { send } = useApp();
   const data = contribution.data ?? {};
 
-  const signals = parseSignals(data);
+  const signals = parseSignals(data, contribution.agent);
   const pending = parsePendingQuestions(data, contribution.agent);
-  const tax = parseTaxResult(data);
-  const shares = parseShares(data);
+  const tax = parseTaxResult(data, contribution.agent);
+  const shares = parseShares(data, contribution.agent);
 
   const cards: ReactElement[] = [];
 
