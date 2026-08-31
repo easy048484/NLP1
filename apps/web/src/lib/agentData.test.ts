@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePendingQuestions, parseSignals } from "./agentData";
+import { hasPendingQuestions, parsePendingQuestions, parseSignals } from "./agentData";
 
 /**
  * 오케스트레이터가 여러 에이전트를 한 턴에 실행하면 node_compose() 가
@@ -70,6 +70,43 @@ describe("parsePendingQuestions", () => {
 
   it("네임스페이스와 최상위 모두 없으면 null 을 반환한다", () => {
     expect(parsePendingQuestions({ decedent_estate: { body: "x" } })).toBeNull();
+  });
+});
+
+describe("hasPendingQuestions", () => {
+  it("여러 agent namespace가 동시에 있어도 agentKey로 지정한 자기 namespace만 반영한다", () => {
+    const data = {
+      decedent_estate: {
+        pending_questions: [{ question: "유언장에 도장을 찍으셨나요?", field: "seal_answer" }],
+      },
+      heir_navigator: {
+        note: "no pending_questions here",
+      },
+    };
+
+    expect(hasPendingQuestions(data, "decedent_estate")).toBe(true);
+    expect(hasPendingQuestions(data, "heir_navigator")).toBe(false);
+  });
+
+  it("다른 agent namespace에만 질문이 있으면 현재 agent는 false여야 한다", () => {
+    const data = {
+      decedent_estate: { note: "no pending_questions here" },
+      heir_navigator: {
+        pending_questions: [{ question: "피상속인의 자녀가 몇 명인가요?", field: "child_count" }],
+      },
+    };
+
+    expect(hasPendingQuestions(data, "decedent_estate")).toBe(false);
+    expect(hasPendingQuestions(data, "heir_navigator")).toBe(true);
+  });
+
+  it("agentKey 없이 호출하는 legacy 입력은 기존처럼 최상위/첫 네임스페이스로 동작한다", () => {
+    const data = {
+      pending_questions: [{ question: "폴백 질문", field: "x" }],
+      some_other_agent: { note: "no pending_questions here" },
+    };
+    expect(hasPendingQuestions(data)).toBe(true);
+    expect(hasPendingQuestions({ decedent_estate: { body: "x" } })).toBe(false);
   });
 });
 

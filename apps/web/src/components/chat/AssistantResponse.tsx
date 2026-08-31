@@ -15,7 +15,7 @@ import { AgentCards } from "./AgentCards";
 export function AssistantResponse({ response }: { response: ChatResponse }) {
   const agents = dedupeAgents(response);
   const followups = response.contributions.filter((c) =>
-    hasPendingQuestions(c.data ?? {}),
+    hasPendingQuestions(c.data ?? {}, c.agent),
   );
 
   return (
