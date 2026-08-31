@@ -198,20 +198,22 @@ def test_full_checklist_exports_flat_financial_profile_with_extra_detail():
     assert "순자산: 7,000만원" in output.reply
 
 
-def test_finalize_hands_off_to_retirement_planner():
-    """체크리스트가 끝나면 develop 재작업 전 원래 의도대로 retirement_planner에
-    핸드오프를 걸어야 한다 — 실제 오케스트레이터로 실행해서 확인한 결과,
-    이 신호가 없으면 사용자가 "은퇴"/"노후"/"연금" 키워드를 새로 말하지
-    않는 한 asset_organizer에 계속 머물러 있었다(체크리스트 완료 응답만
-    반복). handoffs가 비어 있지 않아야 오케스트레이터의 Fast Path가
-    다음 턴을 자동으로 retirement_planner에 보낸다(orchestrator/handoff.py
-    규약)."""
+def test_finalize_no_longer_hands_off_to_retirement_planner():
+    """⚠️ 2026-08-30 데모 제외 결정으로 retirement_planner 핸드오프를
+    비활성화했다(agent.py의 _finalize() 참고 — 주석 처리해서 나중에
+    복원 가능하게 남겨둠). 체크리스트가 끝나면 이제 handoffs가 비어
+    있어야 하고, 자산·부채 목록 + 순자산 요약만 보여주고 거기서
+    끝나야 한다 — 별도 트리거나 안내 문구 없이."""
     output = agent.run(AgentInput(session_id="ho1", user_message="예금 1억 있어요"))
     output = agent.run(_continue("ho1", "없어요", output.data[STATE_KEY]))
 
     assert output.data[STATE_KEY]["status"] == "done"
-    assert len(output.handoffs) == 1
-    assert output.handoffs[0].target == AgentName.RETIREMENT_PLANNER
+    assert output.handoffs == []
+    assert "순자산" in output.reply
+    # 노후자금 시뮬레이션으로 이어가자는 안내 문구가 없어야 한다.
+    assert "은퇴" not in output.reply
+    assert "노후" not in output.reply
+    assert "시뮬레이션" not in output.reply
 
 
 # ======================================= financial_assets/other_assets 분류

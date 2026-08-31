@@ -17,16 +17,18 @@ retirement_planner 라우팅 진입점 회귀 테스트.
    로도 후보가 될 수 없게 막았다 — 근본 원인(오케스트레이터의 substring
    매칭 방식 자체)은 여전히 손대지 않음(agents/retirement_planner/
    CLAUDE.md 참고).
+4. keywords=[]만으로는 "사용자가 먼저 말 걸어서 도달"만 막히고,
+   asset_organizer._finalize()의 핸드오프(Fast Path)는 keywords와 무관해서
+   (pending_handoff를 키워드 매칭보다 먼저 확인) 여전히 동작했다(실측
+   확인). "데모 제외" 의도를 완전히 반영하기 위해 이 핸드오프도 마저
+   비활성화했다(agent.py의 _finalize() 참고 — 주석 처리해서 나중에
+   복원 가능하게 남겨둠). 이제는 체크리스트 완료 후에도 asset_organizer
+   에서 그냥 끝난다.
 
 ⚠️ `is_stub=True`도 같이 되돌렸지만, 이것만으로는 라우팅이 안 막힌다는 걸
 실측으로 확인했다 — orchestrator.planner.classify()의 Standard 경로
 (키워드 후보 1개)는 is_stub을 아예 확인하지 않는다. 실질적인 차단 장치는
 `keywords=[]`다.
-
-⚠️ asset_organizer → retirement_planner 핸드오프(Fast Path)는 keywords와
-무관하게(pending_handoff를 키워드 매칭보다 먼저 확인) 그대로 동작한다 —
-"사용자가 먼저 말을 걸어서 도달"만 막혔지 "체크리스트 완료 후 자연스럽게
-이어짐"은 안 막혔다.
 """
 
 from __future__ import annotations
@@ -106,18 +108,18 @@ def test_nohu_euntoe_phrases_no_longer_reach_retirement_planner():
     assert output.agent == AgentName.HEIR_NAVIGATOR
 
 
-def test_asset_organizer_handoff_still_reaches_retirement_planner_despite_exclusion():
-    """⚠️ 중요한 예외: keywords=[]로 "사용자가 먼저 말 걸어서 도달"은
-    막았지만, asset_organizer._finalize()의 핸드오프(Fast Path)는
-    registry.get_optional()로만 대상 존재 여부를 확인하고 키워드 매칭을
-    거치지 않으므로 그대로 동작한다 — 체크리스트 완료 후에는 여전히
-    자동으로 이어진다."""
+def test_asset_organizer_handoff_no_longer_reaches_retirement_planner():
+    """⚠️ 이전엔 keywords=[]로 "사용자가 먼저 말 걸어서 도달"만 막고
+    asset_organizer._finalize()의 핸드오프(Fast Path)는 keywords와 무관해서
+    그대로 동작했다 — 2026-08-30 그 핸드오프 자체도 마저 비활성화하면서
+    (agent.py 참고, "데모 제외" 의도를 완전히 반영) 체크리스트 완료 후에도
+    더 이상 retirement_planner로 자동으로 이어지지 않는다."""
     session = "kw-collision-4"
     router.route(AgentInput(session_id=session, user_message="자산 정리해줘"))
     router.route(AgentInput(session_id=session, user_message="예금 1억 있어요"))
     done = router.route(AgentInput(session_id=session, user_message="없어요"))
-    assert any(h.target == AgentName.RETIREMENT_PLANNER for h in done.handoffs)
+    assert done.handoffs == []
 
     output = router.route(AgentInput(session_id=session, user_message="네 감사합니다"))
-    assert output.agent == AgentName.RETIREMENT_PLANNER
-    assert output.path == "fast"
+    assert output.agent != AgentName.RETIREMENT_PLANNER
+    assert output.agent == AgentName.ASSET_ORGANIZER

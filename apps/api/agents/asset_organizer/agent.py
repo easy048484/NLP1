@@ -529,25 +529,30 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
 
 
 def _finalize(state: dict[str, Any]) -> AgentOutput:
-    """체크리스트가 끝나면 develop 재작업 전 원래 의도("체크리스트 끝나면
-    자연스럽게 시뮬레이션까지 이어짐")대로 retirement_planner에 핸드오프를
-    건다. handoff.py 규약대로 AgentOutput.handoffs에 담으면(레거시
-    next_action 문자열이 아니라) 오케스트레이터가 다음 턴을 Fast Path로
-    바로 retirement_planner에 보낸다 — 실제로 실행해서 확인한 결과, 이
-    신호가 없으면 사용자가 "은퇴"/"노후"/"연금" 같은 키워드를 새로 말하지
-    않는 한 asset_organizer에 계속 머물러 있었다(체크리스트 완료 응답만
-    반복)."""
+    """체크리스트가 끝나면 자산·부채 목록 + 순자산 요약만 보여주고 거기서
+    끝난다.
+
+    ⚠️ retirement_planner 핸드오프는 2026-08-30 데모 제외 결정으로
+    비활성화했다(retirement_planner/spec.py의 keywords=[]와 같은 결정 —
+    거기서 "사용자가 먼저 말 걸어서 도달"은 막았지만, 이 핸드오프
+    (Fast Path)는 keywords와 무관해서 실제로 실행해보면 여전히 살아
+    있었다). 원래는 develop 재작업 전 의도("체크리스트 끝나면 자연스럽게
+    시뮬레이션까지 이어짐")대로 handoff.py 규약(AgentOutput.handoffs)에
+    담아 오케스트레이터가 다음 턴을 Fast Path로 retirement_planner에
+    보내게 했었다 — TODO: retirement_planner가 데모 범위에 다시 들어오면
+    아래 handoffs= 줄의 주석을 풀어서 복원할 것(엔진 자체는 계속
+    보존돼 있으므로 복원 자체는 이 줄만 되살리면 된다)."""
     state["status"] = "done"
     return _output(
         state,
         _format_summary(state),
         financial_profile=_to_shared_profile(state),
-        handoffs=[
-            HandoffRequest(
-                target=AgentName.RETIREMENT_PLANNER,
-                reason="자산·부채 체크리스트 완료 — 은퇴자금 시뮬레이션으로 이어감",
-            )
-        ],
+        # handoffs=[
+        #     HandoffRequest(
+        #         target=AgentName.RETIREMENT_PLANNER,
+        #         reason="자산·부채 체크리스트 완료 — 은퇴자금 시뮬레이션으로 이어감",
+        #     )
+        # ],
     )
 
 
