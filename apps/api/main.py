@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import orchestrator
 from auth import router as auth_router
 from family_graph import router as family_graph_router
-from orchestrator import route
+from orchestrator import llm_policy, route
 from orchestrator.session_store import PostgresSessionStore
 from schemas import AgentInput, ChatResponse
 
@@ -40,9 +40,19 @@ app.include_router(auth_router)
 app.include_router(family_graph_router)
 
 
+# 데모·운영 환경(ORCHESTRATOR_USE_LLM=required)에서는 키 누락을 기동 시점에
+# 시끄럽게 실패시킵니다 — 조용한 규칙 기반 폴백으로 열화된 채 데모하는 사고 방지.
+if llm_policy.llm_required() and not os.getenv("ANTHROPIC_API_KEY", "").strip():
+    raise RuntimeError(
+        "ORCHESTRATOR_USE_LLM=required 인데 ANTHROPIC_API_KEY가 비어 있습니다. "
+        "루트 .env 또는 배포 환경변수에 키를 넣으세요."
+    )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    """llm: "on"(정상) | "off"(플래그로 끔) | "unconfigured"(키 없음 → 폴백 동작 중)."""
+    return {"status": "ok", "llm": llm_policy.llm_status()}
 
 
 @app.post("/chat", response_model=ChatResponse)

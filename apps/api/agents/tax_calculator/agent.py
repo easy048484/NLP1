@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from decimal import Decimal
+from copy import deepcopy
 from typing import Any
 
 from pydantic import ValidationError
@@ -15,9 +15,12 @@ from pydantic import ValidationError
 from family_graph.heirs import classify_heirs
 from schemas import AgentInput, AgentName, AgentOutput
 
+from agents._money import parse_money as _parse_shared_money
+
 from .calculator import calculate_inheritance_tax
 from .models import InheritanceTaxInput
 from .presentation import result_reply, user_error_reply
+from .profile_bridge import profile_candidates, tax_snapshot
 
 STATE_KEY = "tax_calculator"
 
@@ -30,12 +33,19 @@ BOOL_SLOTS = {
 
 MONEY_SLOTS = {
     "original_inherited_property",
+    "deemed_inherited_property",
     "debts",
     "financial_assets",
     "financial_debts",
     "prior_gifts_to_heirs",
     "prior_gifts_to_non_heirs",
     "spouse_actual_inheritance",
+}
+
+DEEMED_SLOTS = {
+    "insurance_proceeds": "사망으로 지급되는 보험금",
+    "trust_property": "신탁재산 또는 신탁이익을 받을 권리",
+    "retirement_benefits": "사망으로 지급되는 퇴직금·퇴직수당 등",
 }
 
 QUESTIONS = {
@@ -56,15 +66,22 @@ QUESTIONS = {
     ),
     "original_inherited_property": (
         "부동산, 예금, 주식 등 본래의 상속재산은 총 얼마인가요? "
-        "예: '10억원' 또는 '500000000원'"
+        "예: '10억원' 또는 '500000000원'. 보험금·신탁·퇴직금은 별도로 "
+        "확인하며 같은 재산을 두 번 더하지 않도록 해야 합니다."
+    ),
+    "deemed_inherited_property": (
+        "사망으로 받는 보험금, 신탁재산, 퇴직금처럼 상속재산으로 함께 "
+        "계산되는 금액은 총 얼마인가요? 없다면 '0원'이라고 입력해주세요."
     ),
     "debts": (
         "상속재산에서 차감할 대출이나 그 밖의 채무는 얼마인가요? "
         "없다면 '0원'이라고 입력해주세요."
     ),
     "financial_assets": (
-        "예금·적금·주식·보험금 등 공제대상 금융재산은 얼마인가요? "
-        "없다면 '0원'이라고 입력해주세요."
+        "전체 상속재산 중 공제대상 예금·적금·주식·펀드 등의 금액은 얼마인가요? "
+        "최대주주 등 보유주식이나 신고하지 않은 타인 명의 금융재산은 "
+        "공제에서 제외될 수 있습니다. 보험금 등이 있다면 공제 포함 여부도 "
+        "확인해주세요. 없다면 '0원', 분류가 불확실하면 '모름'으로 답해주세요."
     ),
     "financial_debts": (
         "전체 채무 중 금융기관에서 빌린 금융채무는 얼마인가요? "
@@ -80,7 +97,8 @@ QUESTIONS = {
     ),
     "spouse_actual_inheritance": (
         "배우자가 실제로 상속받는 순재산은 얼마인가요? "
-        "아직 정해지지 않았다면 '0원'이라고 입력해주세요."
+        "받는 재산이 없다면 '0원', 아직 정해지지 않았다면 '모름'이라고 "
+        "입력해주세요. 미정인 금액은 임의로 0원으로 계산하지 않습니다."
     ),
     "filing_within_deadline": (
         "정해진 신고기한 안에 상속세를 신고할 예정인가요? "
@@ -100,6 +118,15 @@ def _empty_state() -> dict[str, Any]:
         "missing_fields": [],
         "last_result": None,
         "has_grandchild_heir": False,
+        "profile_snapshot": None,
+        "profile_candidates": {},
+        "profile_sources": {},
+        "profile_warnings": [],
+        "profile_scope_confirmed": None,
+        "profile_reconfirm": [],
+        "profile_changed": False,
+        "deemed_items": {},
+        "deemed_review_required": False,
     }
 
 
@@ -125,6 +152,20 @@ def _load_state(context: dict[str, Any] | None) -> dict[str, Any]:
     if isinstance(raw_state.get("last_result"), dict):
         state["last_result"] = dict(raw_state["last_result"])
 
+    for key in (
+        "profile_snapshot",
+        "profile_candidates",
+        "profile_sources",
+        "deemed_items",
+    ):
+        if isinstance(raw_state.get(key), dict):
+            state[key] = deepcopy(raw_state[key])
+    for key in ("profile_warnings", "profile_reconfirm"):
+        if isinstance(raw_state.get(key), list):
+            state[key] = list(raw_state[key])
+    if isinstance(raw_state.get("profile_scope_confirmed"), bool):
+        state["profile_scope_confirmed"] = raw_state["profile_scope_confirmed"]
+    state["deemed_review_required"] = raw_state.get("deemed_review_required") is True
     state["has_grandchild_heir"] = raw_state.get("has_grandchild_heir") is True
     return state
 
@@ -138,74 +179,141 @@ def _mark_confirmed(state: dict[str, Any], field_name: str) -> None:
         confirmed_fields.append(field_name)
 
 
-def _apply_structured_context(
-    payload: AgentInput,
-    state: dict[str, Any],
+def _save_value(
+    state: dict[str, Any], field_name: str, value: Any, source: str = "user"
 ) -> None:
-    """프론트나 테스트가 context로 직접 전달한 계산 입력을 반영한다."""
+    if field_name == "deemed_inherited_property" and value != 0:
+        # 과거 후보 금융재산에는 새 보험금·신탁재산이 반영되지 않았을 수 있다.
+        if state["profile_sources"].get("financial_assets") == "profile_confirmed":
+            state["values"].pop("financial_assets", None)
+            state["profile_sources"].pop("financial_assets", None)
+            if "financial_assets" in state["confirmed_fields"]:
+                state["confirmed_fields"].remove("financial_assets")
+    state["values"][field_name] = value
+    state["profile_sources"][field_name] = source
+    _mark_confirmed(state, field_name)
+    if field_name in state["profile_reconfirm"]:
+        state["profile_reconfirm"].remove(field_name)
+    state["last_result"] = None
 
+
+def _apply_structured_context(payload: AgentInput, state: dict[str, Any]) -> None:
+    """명시적 입력은 공유 후보보다 우선한다. None은 미확인으로 취급한다."""
     tax_input = (payload.context or {}).get("tax_input")
-
     if not isinstance(tax_input, dict):
         return
-
-    allowed_fields = InheritanceTaxInput.model_fields
-
     for field_name, value in tax_input.items():
-        if field_name not in allowed_fields:
+        if field_name not in InheritanceTaxInput.model_fields:
             continue
+        if value is None:
+            state["values"].pop(field_name, None)
+            state["profile_sources"].pop(field_name, None)
+            if field_name in state["profile_reconfirm"]:
+                state["profile_reconfirm"].remove(field_name)
+            if field_name in state["confirmed_fields"]:
+                state["confirmed_fields"].remove(field_name)
+            state["last_result"] = None
+            if field_name == "deemed_inherited_property":
+                state["deemed_items"] = {}
+        else:
+            _save_value(state, field_name, value, "explicit_tax_input")
+            if field_name == "deemed_inherited_property":
+                state["deemed_review_required"] = False
+        # 구조화 입력과 같은 턴의 채팅을 다시 파싱해 값을 덮지 않는다.
+        if state["asked_slot"] == field_name or (
+            field_name == "deemed_inherited_property"
+            and state["asked_slot"] in {*DEEMED_SLOTS, "deemed_amounts_confirmed"}
+        ):
+            state["asked_slot"] = None
 
-        state["values"][field_name] = value
-        _mark_confirmed(state, field_name)
+
+def _apply_financial_profile(payload: AgentInput, state: dict[str, Any]) -> bool:
+    """후보만 저장한다. 변경된 자료에는 예전 질문의 답을 적용하지 않는다."""
+    if payload.financial_profile is None:
+        return False
+    snapshot = tax_snapshot(payload.financial_profile)
+    if snapshot is None or snapshot == state["profile_snapshot"]:
+        return False
+    had_snapshot = state["profile_snapshot"] is not None
+    candidates, warnings = profile_candidates(snapshot)
+    state["profile_snapshot"] = snapshot
+    state["profile_candidates"] = candidates
+    state["profile_warnings"] = warnings
+    state["profile_scope_confirmed"] = None
+    state["profile_changed"] = had_snapshot
+    state["profile_reconfirm"] = []
+    for field_name, source in list(state["profile_sources"].items()):
+        if source == "profile_confirmed":
+            state["values"].pop(field_name, None)
+            state["profile_sources"].pop(field_name, None)
+            if field_name in state["confirmed_fields"]:
+                state["confirmed_fields"].remove(field_name)
+    if had_snapshot:
+        state["profile_reconfirm"] = [
+            field
+            for field, value in candidates.items()
+            if field in state["values"] and state["values"][field] != value
+        ]
+        # 공유 자료가 바뀌면 과거 '보험금 등 없음' 답변도 다시 확인한다.
+        if (
+            state["profile_sources"].get("deemed_inherited_property")
+            == "itemized_confirmed"
+        ):
+            state["deemed_items"] = {}
+            state["values"].pop("deemed_inherited_property", None)
+            state["profile_sources"].pop("deemed_inherited_property", None)
+            if "deemed_inherited_property" in state["confirmed_fields"]:
+                state["confirmed_fields"].remove("deemed_inherited_property")
+    state["last_result"] = None
+    state["asked_slot"] = None
+    return True
 
 
-def _apply_shared_estate(
-    payload: AgentInput,
-    state: dict[str, Any],
-) -> None:
-    """세션 공유 상속재산(financial_profile)에서 계산 슬롯을 미리 채운다.
+def _candidate_for_slot(slot: str, state: dict[str, Any]) -> int | None:
+    if state["profile_scope_confirmed"] is not True:
+        return None
+    # 보험금·신탁이 있으면 금융공제 포함 여부까지 다시 확인한다.
+    if (
+        slot == "financial_assets"
+        and state["values"].get("deemed_inherited_property", 0) != 0
+    ):
+        return None
+    return state["profile_candidates"].get(slot)
 
-    asset_organizer가 이미 자산·부채를 정리했으면 사용자에게 총상속재산·채무·
-    금융재산을 다시 묻지 않는다. 값이 일부만 있으면 나머지 슬롯만 기존 Q&A로
-    질문한다(부분 병합). 이미 사용자가 직접 확인한 값(confirmed_fields)은
-    덮어쓰지 않는다.
-    """
-    estate = payload.financial_profile
-    if estate is None:
-        return
 
-    values = state["values"]
-    confirmed = state["confirmed_fields"]
-
-    total_assets = sum(
-        v
-        for v in (
-            estate.real_estate_value,
-            estate.financial_assets,
-            estate.other_assets,
+def _is_unknown(message: str) -> bool:
+    return any(
+        word in message.replace(" ", "")
+        for word in (
+            "모르",
+            "몰라",
+            "모름",
+            "미확인",
+            "아직",
+            "불확실",
+            "확실하지",
+            "알수없",
+            "정보없",
+            "자료없",
+            "확인못",
         )
-        if v is not None
-    )
-    has_any_asset_field = any(
-        v is not None
-        for v in (
-            estate.real_estate_value,
-            estate.financial_assets,
-            estate.other_assets,
-        )
     )
 
-    def _prefill(field_name: str, value: int | None) -> None:
-        if value is None or field_name in confirmed:
-            return
-        values[field_name] = value
-        _mark_confirmed(state, field_name)
 
-    if has_any_asset_field:
-        _prefill("original_inherited_property", total_assets)
-    _prefill("financial_assets", estate.financial_assets)
-    _prefill("debts", estate.total_debts)
-    _prefill("financial_debts", estate.financial_debts)
+def _parse_money(message: str) -> int | None:
+    """공용 금액 파서를 쓰되 상속세의 미확정 답변을 0원으로 확정하지 않는다."""
+    if _is_unknown(message):
+        return None
+    return _parse_shared_money(message)
+
+
+def _strict_confirmation(message: str) -> bool | None:
+    normalized = message.strip().replace(" ", "").rstrip(".!")
+    if normalized in {"네", "예", "응", "맞아", "맞아요", "확인", "확인했어요"}:
+        return True
+    if normalized in {"아니", "아니요", "아뇨", "아니오"}:
+        return False
+    return None
 
 
 def _apply_family_graph(
@@ -242,6 +350,9 @@ def _apply_family_graph(
 
 def _parse_yes_or_no(message: str) -> bool | None:
     """사용자 답변에서 네/아니요를 해석한다."""
+
+    if _is_unknown(message):
+        return None
 
     normalized = message.strip().lower().replace(" ", "")
 
@@ -290,154 +401,158 @@ def _parse_count(message: str) -> int | None:
     return int(match.group())
 
 
-def _parse_small_korean_amount(text: str) -> Decimal | None:
-    """만보다 작은 구간의 천·백·십 단위를 계산한다."""
-
-    if not text:
-        return Decimal("1")
-
-    if re.fullmatch(r"\d+(?:\.\d+)?", text):
-        return Decimal(text)
-
-    small_units = {
-        "천": Decimal("1000"),
-        "백": Decimal("100"),
-        "십": Decimal("10"),
-    }
-
-    total = Decimal("0")
-    position = 0
-
-    for match in re.finditer(r"(\d+(?:\.\d+)?)?(천|백|십)", text):
-        if match.start() != position:
-            return None
-
-        number = Decimal(match.group(1) or "1")
-        total += number * small_units[match.group(2)]
-        position = match.end()
-
-    tail = text[position:]
-
-    if tail:
-        if re.fullmatch(r"\d+(?:\.\d+)?", tail) is None:
-            return None
-
-        total += Decimal(tail)
-
-    return total
-
-
-def _parse_money(message: str) -> int | None:
-    """'10억', '9천5백만원', '300000000원'을 원 단위 정수로 변환한다."""
-
-    normalized = message.strip().replace(",", "").replace(" ", "")
-
-    if "없" in normalized:
-        return 0
-
-    if re.fullmatch(r"0+원?", normalized):
-        return 0
-
-    amount_text = normalized.removesuffix("원")
-
-    if re.fullmatch(r"\d+", amount_text):
-        return int(amount_text)
-
-    if re.fullmatch(r"[0-9.조억만천백십]+", amount_text) is None:
-        return None
-
-    big_units = {
-        "조": 1_000_000_000_000,
-        "억": 100_000_000,
-        "만": 10_000,
-    }
-
-    total = Decimal("0")
-    position = 0
-    previous_multiplier: int | None = None
-
-    for match in re.finditer(r"[조억만]", amount_text):
-        multiplier = big_units[match.group()]
-
-        # 큰 단위는 조 → 억 → 만 순서로만 입력할 수 있다.
-        if previous_multiplier is not None and multiplier >= previous_multiplier:
-            return None
-
-        section = amount_text[position : match.start()]
-
-        if not section and position != 0:
-            return None
-
-        section_value = _parse_small_korean_amount(section)
-
-        if section_value is None:
-            return None
-
-        total += section_value * multiplier
-        position = match.end()
-        previous_multiplier = multiplier
-
-    tail = amount_text[position:]
-
-    if tail:
-        tail_value = _parse_small_korean_amount(tail)
-
-        if tail_value is None:
-            return None
-
-        total += tail_value
-
-    return int(total)
-
-
-def _apply_previous_answer(
-    message: str,
-    state: dict[str, Any],
-) -> bool:
-    """직전 질문에 대한 사용자 답변을 상태에 반영한다."""
-
-    asked_slot = state.get("asked_slot")
-
-    if not isinstance(asked_slot, str):
+def _apply_previous_answer(message: str, state: dict[str, Any]) -> bool:
+    """공유 후보 확인과 금액 직접입력을 구분한다."""
+    slot = state.get("asked_slot")
+    if not isinstance(slot, str):
+        return True
+    if (
+        slot in {*DEEMED_SLOTS, "deemed_amounts_confirmed"}
+        and message.strip() == "다시 입력"
+    ):
+        state["deemed_items"] = {}
+        state["deemed_review_required"] = False
+        state["asked_slot"] = None
+        state["last_result"] = None
+        return True
+    if _is_unknown(message):
+        return False
+    if slot == "profile_scope_confirmed":
+        answer = _strict_confirmation(message)
+        if answer is None:
+            return False
+        state["profile_scope_confirmed"] = answer
+        if not answer:
+            state["profile_reconfirm"] = []
+        state["asked_slot"] = None
+        return True
+    if slot in DEEMED_SLOTS:
+        amount = _parse_money(message)
+        if amount is None:
+            return False
+        state["deemed_items"][slot] = amount
+        state["deemed_review_required"] = False
+        state["asked_slot"] = None
+        state["last_result"] = None
+        if len(state["deemed_items"]) == len(DEEMED_SLOTS):
+            if sum(state["deemed_items"].values()) == 0:
+                _save_value(state, "deemed_inherited_property", 0, "itemized_confirmed")
+        return True
+    if slot == "deemed_amounts_confirmed":
+        answer = _strict_confirmation(message)
+        if answer is not True:
+            state["deemed_review_required"] = answer is False
+            return False
+        _save_value(
+            state,
+            "deemed_inherited_property",
+            sum(state["deemed_items"].values()),
+            "itemized_confirmed",
+        )
+        state["deemed_review_required"] = False
+        state["asked_slot"] = None
         return True
 
-    if asked_slot in BOOL_SLOTS:
-        parsed_value = _parse_yes_or_no(message)
-    elif asked_slot == "children_count":
-        parsed_value = _parse_count(message)
-    elif asked_slot in MONEY_SLOTS:
-        parsed_value = _parse_money(message)
+    candidate = _candidate_for_slot(slot, state)
+    if candidate is not None and _strict_confirmation(message) is True:
+        value = candidate
+        source = "profile_confirmed"
     else:
-        parsed_value = None
-
-    if parsed_value is None:
+        source = "user"
+        if slot in BOOL_SLOTS:
+            value = _parse_yes_or_no(message)
+        elif slot == "children_count":
+            value = _parse_count(message)
+        elif slot in MONEY_SLOTS:
+            value = _parse_money(message)
+        else:
+            value = None
+    if value is None:
         return False
-
-    state["values"][asked_slot] = parsed_value
-    _mark_confirmed(state, asked_slot)
+    _save_value(state, slot, value, source)
     state["asked_slot"] = None
-
     return True
 
 
-def _missing_slots(values: dict[str, Any]) -> list[str]:
-    """계산 전에 사용자에게 물어봐야 할 항목을 순서대로 반환한다."""
+def _question_for_slot(slot: str, state: dict[str, Any]) -> str:
+    if slot == "profile_scope_confirmed":
+        prefix = (
+            "공유 재무자료가 변경되어 다시 확인할게요.\n\n"
+            if state["profile_changed"]
+            else ""
+        )
+        return prefix + (
+            "다른 에이전트의 재무자료가 있어요. 이 자료가 지금 계산할 "
+            "돌아가신 분의 재산·채무이며, 사망일 기준으로 빠짐없이 정리한 "
+            "금액인가요? 본인의 은퇴자금이나 다른 시점의 자료라면 '아니요'로 "
+            "답해주세요. 맞으면 '네', 불확실하면 '모름'으로 답해주세요. "
+            "보험금·신탁·퇴직금은 별도로 확인합니다."
+        )
+    if slot in DEEMED_SLOTS:
+        prefix = ""
+        if slot == "insurance_proceeds" and (state.get("profile_snapshot") or {}).get(
+            "items", {}
+        ).get("insurance"):
+            prefix = (
+                "자산정리에 보험 항목이 있지만 가입금액을 그대로 사용하지 않을게요. "
+            )
+        return prefix + (
+            f"{DEEMED_SLOTS[slot]}이 있나요? 있다면 금액, 없다면 '0원', "
+            "확인되지 않았다면 '모름'이라고 알려주세요. 입력한 금액의 "
+            "과세 포함 여부와 기존 재산과의 중복은 별도로 확인합니다."
+        )
+    if slot == "deemed_amounts_confirmed":
+        amounts = "\n".join(
+            f"- {label}: {state['deemed_items'][key]:,}원"
+            for key, label in DEEMED_SLOTS.items()
+        )
+        return (
+            amounts + "\n\n이 금액은 아직 세금 계산에 반영하지 않았어요. "
+            "보험은 사망 지급 여부·실제 보험료 부담자, 신탁은 권리 내용, "
+            "퇴직급여는 유족연금 등 제외 항목을 확인해야 합니다. "
+            "위 금액 전부가 과세대상이고 본래의 상속재산에 중복 포함되지 "
+            "않았음을 신고자료 또는 세무 전문가에게 확인했나요? "
+            "'네'일 때만 합산합니다. '아니요' 또는 '모름'이면 "
+            "보험금 지급내역·보험료 납입내역, 신탁계약서, 퇴직급여 명세를 "
+            "확인한 뒤 이어갈 수 있어요. 금액을 고치려면 '다시 입력'이라고 답해주세요."
+        )
+    question = QUESTIONS[slot]
+    candidate = _candidate_for_slot(slot, state)
+    if slot in state["profile_reconfirm"]:
+        question = (
+            f"기존 직접 입력은 {state['values'][slot]:,}원입니다. 자료와 달라 다시 확인합니다.\n"
+            + question
+        )
+    if candidate is not None:
+        question += (
+            f"\n공유 목록으로 합산한 후보 금액은 {candidate:,}원입니다. "
+            "위 조건과 금액이 맞으면 '네', 수정하려면 정확한 금액을 입력해주세요."
+        )
+    if slot == "financial_assets":
+        question += "\n'기타'가 있다면 실제 상품 종류를 확인한 후 포함 여부를 정해주세요. 불확실하면 계산을 보류할 수 있어요."
+    if slot in {
+        "financial_assets",
+        "financial_debts",
+        "original_inherited_property",
+        "debts",
+    }:
+        if state["profile_scope_confirmed"] is True and state["profile_warnings"]:
+            question += "\n참고: " + " ".join(state["profile_warnings"])
+    return question
 
-    slot_order = [
-        "decedent_is_resident",
-        "spouse_exists",
-        "children_count",
-    ]
 
-    # 배우자가 있고 자녀가 없으면, 배우자가 단독상속인인지(부모님과 공동상속이
-    # 아닌지) 자녀 수 바로 다음에 확인해야 한다 — 안 물어보면 spouse_is_sole_heir가
-    # 기본값 False로 남아 계산이 실패한다.
+def _missing_slots(values: dict[str, Any], state: dict[str, Any]) -> list[str]:
+    slots = ["decedent_is_resident", "spouse_exists", "children_count"]
     if values.get("spouse_exists") is True and values.get("children_count") == 0:
-        slot_order.append("spouse_is_sole_heir")
-
-    slot_order.extend(
+        slots.append("spouse_is_sole_heir")
+    slots.append("original_inherited_property")
+    if values.get("deemed_inherited_property") is None:
+        missing_items = [
+            key for key in DEEMED_SLOTS if key not in state["deemed_items"]
+        ]
+        slots.extend(missing_items or ["deemed_amounts_confirmed"])
+    slots.extend(
         [
-            "original_inherited_property",
             "debts",
             "financial_assets",
             "financial_debts",
@@ -445,32 +560,43 @@ def _missing_slots(values: dict[str, Any]) -> list[str]:
             "prior_gifts_to_non_heirs",
         ]
     )
-
     if values.get("spouse_exists") is True:
-        slot_order.append("spouse_actual_inheritance")
-
-    slot_order.append("filing_within_deadline")
-
-    return [slot for slot in slot_order if slot not in values]
+        slots.append("spouse_actual_inheritance")
+    slots.append("filing_within_deadline")
+    return [
+        slot
+        for slot in slots
+        if values.get(slot) is None or slot in state["profile_reconfirm"]
+    ]
 
 
 def run(payload: AgentInput) -> AgentOutput:
     """상속세 정보를 수집하고 계산 결과를 반환한다."""
 
     state = _load_state(payload.context)
+    # 수집·검토·지원 불가 응답에 이전 턴의 세액이 남지 않도록 한다.
+    state["last_result"] = None
 
+    # 공유 자료는 이 경로에서 후보로만 읽는다. 별도 자동 입력을 병행하면
+    # 범위 거절·자료 변경 시에도 미확인 금액이 확정값으로 되살아난다.
+    profile_changed = _apply_financial_profile(payload, state)
     _apply_structured_context(payload, state)
-    _apply_shared_estate(payload, state)
     _apply_family_graph(payload.family_graph, state)
 
-    if not _apply_previous_answer(payload.user_message, state):
+    if not profile_changed and not _apply_previous_answer(payload.user_message, state):
         asked_slot = state["asked_slot"]
-        state["status"] = "collecting"
-        state["missing_fields"] = _missing_slots(state["values"])
+        state["status"] = (
+            "needs_review" if state["deemed_review_required"] else "collecting"
+        )
+        state["last_result"] = None
+        state["missing_fields"] = [asked_slot]
 
         return AgentOutput(
             agent=AgentName.TAX_CALCULATOR,
-            reply=("답변을 이해하지 못했습니다.\n\n" f"{QUESTIONS[asked_slot]}"),
+            reply=(
+                "확인되지 않은 정보는 0원으로 처리하지 않고 계산을 보류할게요.\n\n"
+                f"{_question_for_slot(asked_slot, state)}"
+            ),
             next_action=None,
             data={STATE_KEY: state},
         )
@@ -535,18 +661,33 @@ def run(payload: AgentInput) -> AgentOutput:
             data={STATE_KEY: state},
         )
 
-    missing_slots = _missing_slots(values)
+    if (
+        state["profile_snapshot"] is not None
+        and state["profile_scope_confirmed"] is None
+    ):
+        state["status"] = "collecting"
+        state["last_result"] = None
+        state["asked_slot"] = "profile_scope_confirmed"
+        state["missing_fields"] = ["profile_scope_confirmed"]
+        return AgentOutput(
+            agent=AgentName.TAX_CALCULATOR,
+            reply=_question_for_slot("profile_scope_confirmed", state),
+            data={STATE_KEY: state},
+        )
+
+    missing_slots = _missing_slots(values, state)
 
     if missing_slots:
         next_slot = missing_slots[0]
 
         state["status"] = "collecting"
+        state["last_result"] = None
         state["asked_slot"] = next_slot
         state["missing_fields"] = missing_slots
 
         return AgentOutput(
             agent=AgentName.TAX_CALCULATOR,
-            reply=QUESTIONS[next_slot],
+            reply=_question_for_slot(next_slot, state),
             next_action=None,
             data={STATE_KEY: state},
         )
@@ -556,6 +697,7 @@ def run(payload: AgentInput) -> AgentOutput:
         result = calculate_inheritance_tax(tax_input)
     except (ValidationError, ValueError) as exc:
         state["status"] = "needs_review"
+        state["last_result"] = None
         state["asked_slot"] = None
         state["last_error"] = str(exc)
 
@@ -566,11 +708,21 @@ def run(payload: AgentInput) -> AgentOutput:
             data={STATE_KEY: state},
         )
 
+    result.warnings.append(
+        "보험금·신탁·퇴직금 등은 확인한 입력만 반영했습니다. "
+        "법적 과세 자격·평가액·증빙을 자동 검증한 확정 세액이 아닙니다."
+    )
+    if state["profile_scope_confirmed"] is True:
+        result.warnings.extend(state["profile_warnings"])
+    if result.estimated_tax_due == 0:
+        result.warnings.append(
+            "예상세액 0원은 입력 조건의 결과이며 납세·신고 의무가 없다는 확정 판단이 아닙니다."
+        )
+    result.warnings = list(dict.fromkeys(result.warnings))
     state["status"] = "calculated"
     state["asked_slot"] = None
     state["missing_fields"] = []
     state["last_result"] = result.model_dump(mode="json")
-
     reply = result_reply(result)
     will_note = _will_status_note(payload.will_status)
     if will_note:

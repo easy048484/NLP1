@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from decimal import Decimal
 from typing import Any
 
 from pydantic import ValidationError
 
 from schemas import AgentInput, AgentName, AgentOutput
+
+from agents._money import parse_money as _parse_money
 
 from .calculator import UnsupportedFamilyCase, calculate_heir_share
 from .models import AnalysisStage, ComplexityFlag, HeirShareInput
@@ -170,41 +171,14 @@ def _parse_date(message: str) -> str | None:
         return None
 
 
-def _parse_money(message: str) -> int | None:
-    normalized = message.strip().replace(",", "").replace(" ", "")
-    if "없" in normalized:
-        return 0
-    normalized = normalized.removesuffix("원")
-    if re.fullmatch(r"\d+", normalized):
-        return int(normalized)
-
-    units = {"조": 1_000_000_000_000, "억": 100_000_000, "만": 10_000}
-    total = Decimal("0")
-    position = 0
-    previous_unit: int | None = None
-    matched = False
-    for match in re.finditer(r"(\d+(?:\.\d+)?)(조|억|만)", normalized):
-        if match.start() != position:
-            return None
-        multiplier = units[match.group(2)]
-        if previous_unit is not None and multiplier >= previous_unit:
-            return None
-        total += Decimal(match.group(1)) * multiplier
-        previous_unit = multiplier
-        position = match.end()
-        matched = True
-    if not matched or position != len(normalized):
-        return None
-    return int(total)
-
-
 def _parse_planned_acquisitions(message: str) -> dict[str, int] | None:
     normalized = message.strip()
     if any(keyword in normalized for keyword in ("미정", "모름", "아직")):
         return {}
 
     result: dict[str, int] = {}
-    for item in re.split(r"[,;\n]", normalized):
+    # 숫자 사이의 콤마는 천 단위 구분자이고, 나머지 콤마는 사람별 구분자다.
+    for item in re.split(r"[;\n]|(?<!\d),|,(?!\d)", normalized):
         if not item.strip():
             continue
         match = re.fullmatch(r"\s*([^=:]+?)\s*[=:]\s*(.+?)\s*", item)

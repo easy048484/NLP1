@@ -146,6 +146,45 @@ def test_negative_answer_mixed_with_new_item_only_resolves_mentioned_item(
     assert "펀드" in output2.reply
 
 
+def test_negated_liability_mention_completes_category_without_asking_amount():
+    """실측 재현된 버그(Round 15): "대출은 없어요"가 "대출 존재는 확정, 금액만
+    모름"으로 잘못 처리돼 방금 없다고 답한 대출의 금액을 되묻고 있었다.
+    부정 표현과 유형 키워드가 같은 세그먼트에 있으면 그 유형은 확인
+    완료(없음)로 처리하고 금액을 재질문하지 않아야 한다."""
+    state = agent.run(
+        AgentInput(session_id="neg-liab", user_message="예금 3천만원 있어요")
+    ).data[STATE_KEY]
+
+    output = agent.run(_continue("neg-liab", "대출은 없어요", state))
+    state2 = output.data[STATE_KEY]
+
+    assert "부채" in state2["checked_categories"]
+    assert state2["liabilities"] == []
+    assert state2["pending_amounts"] == []
+    assert "얼마" not in output.reply
+
+
+def test_negated_asset_mention_completes_category_without_asking_amount():
+    """자산 쪽도 같은 클래스의 버그 — "예금은 없어요"가 "예금은 있는데 금액을
+    모른다"로 잘못 처리되면 안 된다. (대출 5천만원 있어요로 시작해 이후
+    자연스럽게 부채 정밀 모드 후속질문으로 넘어가는 것은 정상 흐름이라
+    "얼마"라는 단어 자체를 금지하지 않고, 예금이 pending_amounts로 안 남는지만
+    확인한다.)"""
+    state = agent.run(
+        AgentInput(session_id="neg-asset", user_message="대출 5천만원 있어요")
+    ).data[STATE_KEY]
+
+    output = agent.run(_continue("neg-asset", "예금은 없어요", state))
+    state2 = output.data[STATE_KEY]
+
+    assert "예금" in state2["checked_categories"]
+    assert not any(a["type"] == "예금" for a in state2["assets"])
+    assert not any(
+        item.get("asset_type") == "예금" for item in state2["pending_amounts"]
+    )
+    assert "예금" not in output.reply
+
+
 def test_liability_without_amount_asks_then_resolves_via_bare_number():
     output1 = agent.run(AgentInput(session_id="i6", user_message="대출이 좀 있어요"))
 
@@ -196,6 +235,24 @@ def test_full_checklist_exports_flat_financial_profile_with_extra_detail():
         for liability in extra["liabilities"]
     )
     assert "순자산: 7,000만원" in output.reply
+
+
+def test_finalize_no_longer_hands_off_to_retirement_planner():
+    """⚠️ 2026-08-30 데모 제외 결정으로 retirement_planner 핸드오프를
+    비활성화했다(agent.py의 _finalize() 참고 — 주석 처리해서 나중에
+    복원 가능하게 남겨둠). 체크리스트가 끝나면 이제 handoffs가 비어
+    있어야 하고, 자산·부채 목록 + 순자산 요약만 보여주고 거기서
+    끝나야 한다 — 별도 트리거나 안내 문구 없이."""
+    output = agent.run(AgentInput(session_id="ho1", user_message="예금 1억 있어요"))
+    output = agent.run(_continue("ho1", "없어요", output.data[STATE_KEY]))
+
+    assert output.data[STATE_KEY]["status"] == "done"
+    assert output.handoffs == []
+    assert "순자산" in output.reply
+    # 노후자금 시뮬레이션으로 이어가자는 안내 문구가 없어야 한다.
+    assert "은퇴" not in output.reply
+    assert "노후" not in output.reply
+    assert "시뮬레이션" not in output.reply
 
 
 # ======================================= financial_assets/other_assets 분류
@@ -335,6 +392,92 @@ def test_ambiguous_followup_answer_falls_back_to_simple_mode_without_loop():
 
 def test_parse_end_age_rejects_calendar_year_expression():
     assert agent._parse_end_age("2030년까지 갚아요", current_age=58) is None
+
+
+# ================================ 부채 후속질문 게이트가 다른 후속질문을 안 가로채는지
+
+
+def test_liability_simple_mode_resolved_flag_prevents_reasking():
+    """부채가 단순 모드로 확정되면(예: "몰라요") liability_followup_resolved가
+    True로 마킹돼, 다음 턴에 같은 후속질문이 다시 뜨지 않아야 한다 — 실측
+    재현됐던 버그: monthly_payment/end_age 필드가 영구히 비어 있어서
+    _liabilities_needing_followup()만으로 판단하면 계속 "아직 답변
+    대기 중"으로 오판했다."""
+    session_id = "gate1"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="대출 5천만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    assert state["liability_followup_asked"] is True
+    assert state["liability_followup_resolved"] is False  # 아직 답변 전
+
+    output = agent.run(_continue(session_id, "몰라요", state))
+    state2 = output.data[STATE_KEY]
+    assert state2["liability_followup_resolved"] is True
+    assert state2["status"] == "done"
+
+    # 다음 턴에 아무 말이나 보내도 부채 후속질문이 다시 뜨면 안 된다.
+    output2 = agent.run(_continue(session_id, "네 알겠습니다", state2))
+    assert "월 얼마씩 갚고" not in output2.reply
+
+
+def test_pension_followup_gets_asked_after_liability_simple_mode_resolves():
+    """이전엔 버그로 인해 부채가 단순 모드로 남으면(필드가 계속 비어 있어)
+    liability 게이트가 매 턴 재발동해서 퇴직연금 후속질문 차례가 영영 안
+    왔다 — 이제는 부채 답변 직후 곧바로 퇴직연금 후속질문이 나와야 한다
+    (버그가 재현되던 시나리오를 그대로 재검증)."""
+    session_id = "gate2"
+    state = agent.run(
+        AgentInput(
+            session_id=session_id,
+            user_message="대출 5천만원, 퇴직연금 8천만원 있어요",
+        )
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    assert state["liability_followup_asked"] is True
+
+    output = agent.run(_continue(session_id, "몰라요", state))  # 부채 후속질문 답변
+    state2 = output.data[STATE_KEY]
+
+    assert "퇴직연금은 일시금으로 받으실 예정인가요" in output.reply
+    assert state2["pension_followup_asked"] is True
+    assert state2["status"] == "collecting"  # 아직 안 끝남 — 퇴직연금 답변 대기 중
+
+
+def test_liability_and_pension_followups_each_asked_exactly_once():
+    """부채·퇴직연금이 같은 대화에 함께 있어도 각자 후속질문을 정확히 한
+    번씩만 받고, 둘 다 해결된 뒤에는 어느 쪽도 다시 뜨지 않아야 한다."""
+    session_id = "gate3"
+    state = agent.run(
+        AgentInput(
+            session_id=session_id,
+            user_message="대출 5천만원, 퇴직연금 8천만원 있어요",
+        )
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+
+    output = agent.run(_continue(session_id, "몰라요", state))
+    assert "퇴직연금은 일시금으로 받으실 예정인가요" in output.reply
+    state = output.data[STATE_KEY]
+
+    output = agent.run(
+        _continue(session_id, "연금으로 65살부터 월 100만원씩 받을 거예요", state)
+    )
+    state = output.data[STATE_KEY]
+
+    assert state["status"] == "done"
+    assert state["liability_followup_asked"] is True
+    assert state["liability_followup_resolved"] is True
+    assert state["pension_followup_asked"] is True
+    assert state["pension_followup_resolved"] is True
+    assert state["incomes"] == [
+        {"type": "퇴직연금", "monthly": 1_000_000, "start_age": 65, "end_age": None}
+    ]
+
+    # 마무리 이후 아무 말이나 보내도 두 후속질문 다 다시 뜨면 안 된다.
+    output2 = agent.run(_continue(session_id, "감사합니다", state))
+    assert "월 얼마씩 갚고" not in output2.reply
+    assert "퇴직연금은 일시금으로" not in output2.reply
 
 
 # =============================================== 퇴직연금 수령 방식 후속질문
@@ -691,3 +834,505 @@ def test_image_api_failure_asks_to_reupload_without_guessing(
 
     assert output.reply == agent._IMAGE_UNREADABLE_REPLY
     assert output.data[STATE_KEY]["assets"] == []
+
+
+def test_image_unclear_field_pii_never_reaches_reply_or_state(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """ "unclear"는 화이트리스트가 없는 완전 자유텍스트라 모델이 계좌번호·
+    이름·주민등록번호 같은 걸 그대로 적어 보낼 수 있다 — 프롬프트가
+    금지해도 실측으로 확인해야 하는 지점(PR 열린 이슈 참고). 이 값이
+    reply나 세션 저장 데이터(output.data) 어디에도 그대로 노출되지
+    않아야 한다."""
+    pii_text = (
+        "계좌번호 110-123-456789, 예금주 홍길동, 주민등록번호 900101-1234567 확인됨"
+    )
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "unreadable": False,
+                "assets": [{"type": "예금", "value": 50_000_000}],
+                "liabilities": [],
+                "insurance": [],
+                "unclear": [pii_text],
+            }
+        ),
+    )
+
+    output = agent.run(
+        AgentInput(
+            session_id="img_pii1",
+            user_message="",
+            image_base64="fake-base64-data",
+            image_media_type="image/png",
+        )
+    )
+
+    haystack = repr(output.reply) + repr(output.data)
+    assert pii_text not in haystack
+    assert "계좌번호" not in haystack
+    assert "홍길동" not in haystack
+    assert "주민등록번호" not in haystack
+
+
+# ============================================ 생전/사후 모드 게이트 (decedent_estate와 동일 패턴)
+
+
+def test_mode_unset_defaults_silently_to_pre_need():
+    """decedent_estate._resolve_intent()와 동일하게, mode를 아예 안 보내면
+    되묻지 않고 조용히 기존 동작(생전)으로 진행한다 — 하위 호환."""
+    output = agent.run(AgentInput(session_id="mode1", user_message="예금 3천 있어요"))
+
+    state = output.data[STATE_KEY]
+    assert state["mode"] == "pre_need"
+    assert "돌아가신" not in output.reply
+
+
+def test_mode_explicit_pre_need_shows_original_opening_prompt():
+    output = agent.run(
+        AgentInput(
+            session_id="mode2",
+            user_message="",
+            context={"mode": "pre_need"},
+        )
+    )
+
+    assert "자산" in output.reply and "부채" in output.reply
+    assert "돌아가신" not in output.reply
+    assert output.data[STATE_KEY]["mode"] == "pre_need"
+
+
+def test_mode_explicit_post_death_shows_post_death_opening_prompt():
+    output = agent.run(
+        AgentInput(
+            session_id="mode3",
+            user_message="",
+            context={"mode": "post_death"},
+        )
+    )
+
+    assert "돌아가신" in output.reply
+    assert output.data[STATE_KEY]["mode"] == "post_death"
+
+
+def test_mode_invalid_value_reasks_without_persisting():
+    """유효하지 않은 명시적 mode 값이 오면(오케스트레이터 버그 등)
+    decedent_estate와 동일하게 재확인 질문을 하고, 잘못된 값을 그대로
+    저장해두지 않는다(다음 턴에 같은 잘못된 값이 반복 사용되는 것 방지)."""
+    output = agent.run(
+        AgentInput(
+            session_id="mode4",
+            user_message="자산 정리해줘",
+            context={"mode": "bogus"},
+        )
+    )
+
+    assert output.data[STATE_KEY]["mode"] is None
+    assert "본인 재산" in output.reply and "가족분" in output.reply
+
+
+def test_mode_persists_across_turns_without_resending_flat_key():
+    """이번 턴에 mode를 안 보내도, namespaced 세션 상태(STATE_KEY)에 저장된
+    이전 턴의 mode가 그대로 유지돼야 한다 — flat key는 "이번 턴 명시적
+    답변이 우선"일 때만 override하는 것이지 매턴 필수가 아니다."""
+    state1 = agent.run(
+        AgentInput(
+            session_id="mode5",
+            user_message="",
+            context={"mode": "post_death"},
+        )
+    ).data[STATE_KEY]
+    assert state1["mode"] == "post_death"
+
+    output2 = agent.run(_continue("mode5", "예금은 확인됐어요", state1))
+
+    assert output2.data[STATE_KEY]["mode"] == "post_death"
+
+
+def test_mode_flat_key_this_turn_overrides_persisted_state():
+    """decedent_estate 규약과 동일: 이번 턴에 명시적으로 다른 mode를 보내면
+    저장된 값보다 이번 턴 값이 우선한다."""
+    state1 = agent.run(
+        AgentInput(
+            session_id="mode6",
+            user_message="",
+            context={"mode": "pre_need"},
+        )
+    ).data[STATE_KEY]
+
+    output2 = agent.run(
+        AgentInput(
+            session_id="mode6",
+            user_message="",
+            context={STATE_KEY: state1, "mode": "post_death"},
+        )
+    )
+
+    assert output2.data[STATE_KEY]["mode"] == "post_death"
+
+
+# ===================================================== 3단계 금액 신뢰도: "몰라요"
+
+
+def test_dont_know_amount_creates_permanent_unknown_amount_asset():
+    """유형은 알지만 금액을 모르면("몰라요") confirmed가 아니라
+    unknown_amount로 영구 확정하고, pending_amounts에서 제거한다."""
+    output1 = agent.run(AgentInput(session_id="unk1", user_message="집 한 채 있어요"))
+    state1 = output1.data[STATE_KEY]
+    assert state1["pending_amounts"][0]["asset_type"] == "부동산"
+
+    output2 = agent.run(_continue("unk1", "몰라요", state1))
+    state2 = output2.data[STATE_KEY]
+
+    asset = next(a for a in state2["assets"] if a["type"] == "부동산")
+    assert asset["confidence"] == "unknown_amount"
+    assert asset["value"] == 0
+    assert state2["pending_amounts"] == []
+
+
+def test_unknown_amount_asset_is_never_reasked_in_next_turn():
+    """한 번 unknown_amount로 확정되면, 이후 아무 턴에서도 그 항목의 금액을
+    다시 묻지 않아야 한다(부채/퇴직연금 후속질문의 "한 번 답하면 끝"
+    원칙과 동일하게, 재질문 자체가 무의미하다는 게 더 확실한 케이스)."""
+    state1 = agent.run(
+        AgentInput(session_id="unk2", user_message="집 한 채 있어요")
+    ).data[STATE_KEY]
+    state2 = agent.run(_continue("unk2", "몰라요", state1)).data[STATE_KEY]
+
+    output3 = agent.run(_continue("unk2", "없어요", state2))
+
+    assert "부동산" not in output3.reply or "얼마" not in output3.reply
+    state3 = output3.data[STATE_KEY]
+    assert state3["pending_amounts"] == []
+    assert len([a for a in state3["assets"] if a["type"] == "부동산"]) == 1
+
+
+# ============================================ 3단계 신뢰도 + 순자산 계산 제외/안내
+
+
+def test_net_worth_excludes_unknown_amount_and_shows_disclaimer():
+    session_id = "nw1"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 1억 있고 집 한 채 있어요")
+    ).data[STATE_KEY]
+
+    state = agent.run(_continue(session_id, "몰라요", state)).data[
+        STATE_KEY
+    ]  # 부동산 금액
+    output = agent.run(_continue(session_id, "없어요", state))
+
+    assert output.financial_profile.real_estate_value == 0
+    assert output.financial_profile.financial_assets == 100_000_000
+    assert "1개 항목은 금액이 확인되지 않아 총액에서 제외됨" in output.reply
+    assert "금액 확인 안 됨" in output.reply
+
+
+def test_extra_asset_organizer_items_carry_confidence_field():
+    session_id = "nw2"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="집 한 채 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "몰라요", state)).data[STATE_KEY]
+    output = agent.run(_continue(session_id, "없어요", state))
+
+    extra = output.financial_profile.extra["asset_organizer"]
+    asset = next(a for a in extra["assets"] if a["type"] == "부동산")
+    assert asset["confidence"] == "unknown_amount"
+
+
+def test_all_confirmed_assets_show_no_disclaimer():
+    """모든 항목이 confirmed면 기존 동작과 완전히 동일해야 한다 —
+    제외 안내 문구가 붙지 않는다(회귀 방지)."""
+    session_id = "nw3"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 1억 있어요")
+    ).data[STATE_KEY]
+    output = agent.run(_continue(session_id, "없어요", state))
+
+    assert "제외됨" not in output.reply
+    assert output.financial_profile.financial_assets == 100_000_000
+
+
+# ===================================================== 사후 모드: 다기관 조회 결과 해석
+
+
+def test_post_death_mode_mixed_institution_sentence_splits_confirmed_and_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """기획서 3-1/5-3절 예시 그대로: 한 문장에 여러 기관의 조회 결과가
+    섞여 와도, 기관별 공개 수준에 맞춰 confirmed/unknown_amount로 정확히
+    나뉘어야 한다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "disclosures": [
+                    {"type": "예금", "confidence": "confirmed", "value": 30_000_000},
+                    {"type": "주식", "confidence": "unknown_amount", "value": None},
+                ]
+            }
+        ),
+    )
+
+    output = agent.run(
+        AgentInput(
+            session_id="pd1",
+            user_message="OO은행은 잔액까지 나왔고 OO증권은 계좌만 확인됐어요",
+            context={"mode": "post_death"},
+        )
+    )
+
+    state = output.data[STATE_KEY]
+    deposit = next(a for a in state["assets"] if a["type"] == "예금")
+    stock = next(a for a in state["assets"] if a["type"] == "주식")
+    assert deposit["confidence"] == "confirmed" and deposit["value"] == 30_000_000
+    assert stock["confidence"] == "unknown_amount" and stock["value"] == 0
+    assert "예금" in state["checked_categories"]
+    assert "주식" in state["checked_categories"]
+
+
+def test_post_death_mode_falls_back_to_regular_extraction_when_no_disclosures(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """사후 모드여도 extract_disclosures()가 빈 결과/None을 돌려주면
+    (다기관 패턴이 아닌 평범한 문장) 기존 일반 추출 경로로 폴백해야
+    한다 — 사후 모드가 일반 자산 언급을 못 알아듣게 만들면 안 된다."""
+    _install_fake_llm(monkeypatch, text=json.dumps({"disclosures": []}))
+
+    output = agent.run(
+        AgentInput(
+            session_id="pd2",
+            user_message="예금 3천만원 있어요",
+            context={"mode": "post_death"},
+        )
+    )
+
+    state = output.data[STATE_KEY]
+    assert any(
+        a["type"] == "예금"
+        and a["value"] == 30_000_000
+        and a["confidence"] == "confirmed"
+        for a in state["assets"]
+    )
+
+
+def test_pre_need_mode_never_calls_disclosure_extraction(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """생전 모드에서는 다기관 조회 해석 경로 자체를 안 타야 한다 — 켜져
+    있으면 몰라도 될 LLM 호출이 추가되고, 잘못 파싱될 위험도 생긴다."""
+    calls: list[str] = []
+
+    def _fake_extract_disclosures(text: str):
+        calls.append(text)
+        return None
+
+    monkeypatch.setattr(
+        agent.extractor, "extract_disclosures", _fake_extract_disclosures
+    )
+
+    agent.run(
+        AgentInput(
+            session_id="pd3",
+            user_message="예금 3천만원 있어요",
+            context={"mode": "pre_need"},
+        )
+    )
+
+    assert calls == []
+
+
+def test_post_death_disclosure_merge_marks_categories_checked_without_reasking(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """사후 모드에서 존재만 확인된(unknown_amount) 항목도 checked_categories
+    에 반영돼야 한다 — 안 그러면 "금액 몰라요"라고 이미 답한 카테고리를
+    다시 "아직 말씀 안 하신 항목"으로 되물어보는 모순이 생긴다."""
+
+    def _fake_extract_disclosures(text: str):
+        from agents.asset_organizer.extractor import DisclosureItem
+
+        return [
+            DisclosureItem(asset_type="보험", confidence="unknown_amount", value=None)
+        ]
+
+    monkeypatch.setattr(
+        agent.extractor, "extract_disclosures", _fake_extract_disclosures
+    )
+
+    output = agent.run(
+        AgentInput(
+            session_id="pd5",
+            user_message="OO보험은 가입 여부만 확인됐어요",
+            context={"mode": "post_death"},
+        )
+    )
+
+    state = output.data[STATE_KEY]
+    assert "보험" in state["checked_categories"]
+    assert "보험" not in output.reply or "얼마" not in output.reply
+
+
+# ============================================ Round 12: 정보 유실 방어(fail-safe)
+
+
+def test_post_death_full_parse_failure_returns_explicit_reask_without_silent_drop(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """사후 모드에서 extract_disclosures()가 LLM 미가용으로 None을 돌려주고
+    (API 키 없음), 폴백한 일반 추출기(extract_financial_slots)마저 정규식·
+    LLM 둘 다 이 문장에서 아무 자산 유형도 못 알아보면 — Round 11까지는
+    이 상태가 조용히 다음 체크리스트 질문으로 넘어가면서 사용자가 방금 한
+    답이 아무 흔적 없이 사라졌다. Round 12 fail-safe: 성공한 것처럼
+    넘어가지 않고 명시적으로 재질문한다."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    output = agent.run(
+        AgentInput(
+            session_id="fs1",
+            user_message="OO은행에서 안내받은 내용이 있는데 정확히는 잘 모르겠어요",
+            context={"mode": "post_death"},
+        )
+    )
+
+    assert output.reply == agent._PARSE_FAILED_REPLY
+    state = output.data[STATE_KEY]
+    # 아무 항목도 조용히 확정되지 않았어야 한다 — "이해 못함"을 "없음"으로
+    # 둔갑시키지 않는다.
+    assert state["assets"] == []
+    assert state["checked_categories"] == []
+    assert state["status"] == "collecting"
+
+
+def test_pre_need_full_parse_failure_also_gets_explicit_reask(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """같은 조용한 실패 방어는 사후 모드 전용이 아니다 — _merge_extraction()
+    자체의 수정이라 생전 모드(기본 모드)에서도 동일하게 적용돼야 한다."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    output = agent.run(
+        AgentInput(
+            session_id="fs2",
+            user_message="음... 그게 좀 애매한데 뭐라고 말씀드려야 할지 모르겠네요",
+        )
+    )
+
+    assert output.reply == agent._PARSE_FAILED_REPLY
+    assert output.data[STATE_KEY]["assets"] == []
+
+
+def test_post_death_llm_unavailable_but_regex_understands_message_normally(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """우선순위 B: extract_disclosures()가 LLM 미가용으로 실패해도, 폴백한
+    일반 추출기가 정규식만으로 완전히 이해할 수 있는 평범한 문장이면
+    기존 동작 그대로 조용히 성공해야 한다 — 회귀 방지(모든 실패를
+    재질문으로 바꿔버리면 안 된다)."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    output = agent.run(
+        AgentInput(
+            session_id="fs3",
+            user_message="예금 3천만원 있어요",
+            context={"mode": "post_death"},
+        )
+    )
+
+    state = output.data[STATE_KEY]
+    assert any(
+        a["type"] == "예금"
+        and a["value"] == 30_000_000
+        and a["confidence"] == "confirmed"
+        for a in state["assets"]
+    )
+    assert output.reply != agent._PARSE_FAILED_REPLY
+    assert "정확히 분류하지 못했어요" not in output.reply
+
+
+def test_partial_parse_success_keeps_understood_items_and_notes_the_rest(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """우선순위 C의 부분 성공 케이스(기획서 예시 "A은행은 3천만원, B증권은
+    계좌만 확인, C보험은 잘 모르겠어요"와 같은 구조): 문장 일부는 이해했고
+    일부는 못했다. 이해한 항목(예금)은 그대로 반영해 진행하되, 놓친 부분이
+    있었다는 사실은 숨기지 않고 안내를 덧붙인다 — 이미 이해한 항목까지
+    통째로 재질문으로 되돌리지 않는다."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    output = agent.run(
+        AgentInput(
+            session_id="fs4",
+            user_message="예금 3천만원 있고 OO은행에서 안내받은 내용이 있어요",
+            context={"mode": "post_death"},
+        )
+    )
+
+    state = output.data[STATE_KEY]
+    assert any(
+        a["type"] == "예금" and a["value"] == 30_000_000 for a in state["assets"]
+    )
+    assert "예금" in state["checked_categories"]
+    assert output.reply != agent._PARSE_FAILED_REPLY
+    assert "말씀 중 일부는 정확히 분류하지 못했어요" in output.reply
+
+
+def test_post_death_disclosure_llm_exception_falls_back_and_partial_note_not_shown_when_fully_understood(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """extract_disclosures() 자체가 LLM 예외로 실패해도(키는 있지만 호출이
+    터짐), 폴백한 일반 추출기가 이 문장을 정규식만으로 완전히 이해하면
+    LLM을 다시 태울 필요조차 없다 — 이 경우 부분 실패 안내가 붙으면 안
+    된다(정말 다 이해했으니까)."""
+    _install_fake_llm(monkeypatch, exc=TimeoutError("network timeout"))
+
+    output = agent.run(
+        AgentInput(
+            session_id="fs5",
+            user_message="예금 3천만원 있어요",
+            context={"mode": "post_death"},
+        )
+    )
+
+    state = output.data[STATE_KEY]
+    assert any(
+        a["type"] == "예금" and a["value"] == 30_000_000 for a in state["assets"]
+    )
+    assert "정확히 분류하지 못했어요" not in output.reply
+
+
+def test_post_death_disclosure_llm_exception_and_general_extractor_also_fails(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """우선순위 C 재확인: extract_disclosures()가 예외로 실패하고, 폴백한
+    일반 추출기의 자체 LLM 호출도(같은 장애로) 실패하면서 정규식도 이
+    문장에서 유형을 못 알아보면 — 명시적 재질문으로 수렴해야 한다."""
+    _install_fake_llm(monkeypatch, exc=TimeoutError("network timeout"))
+
+    output = agent.run(
+        AgentInput(
+            session_id="fs6",
+            user_message="OO은행에서 안내받은 내용이 있는데 정확히는 잘 모르겠어요",
+            context={"mode": "post_death"},
+        )
+    )
+
+    assert output.reply == agent._PARSE_FAILED_REPLY
+    assert output.data[STATE_KEY]["assets"] == []
+
+
+def test_parse_failure_does_not_mark_any_category_checked():
+    """재질문으로 수렴할 때, 이해하지 못한 카테고리를 임의로 "확인함"으로
+    표시하지 않는다 — 다음 턴에도 여전히 정상적으로 되물을 수 있어야
+    한다(추측 금지 원칙)."""
+    output1 = agent.run(
+        AgentInput(session_id="fs7", user_message="아무 의미 없는 문장이에요 그냥")
+    )
+    assert output1.data[STATE_KEY]["checked_categories"] == []
+
+    output2 = agent.run(
+        _continue("fs7", "예금 3천만원 있어요", output1.data[STATE_KEY])
+    )
+    state2 = output2.data[STATE_KEY]
+    assert any(a["type"] == "예금" for a in state2["assets"])

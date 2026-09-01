@@ -58,8 +58,10 @@ from .result_formatter import (
     HANDWRITTEN_GUIDE_INTRO,
     RECORDING_GUIDE_INTRO,
     RECORDING_SUMMARY_MESSAGES,
+    cited_precedents_for_requirement,
     closing_lines,
     format_guide,
+    format_requirement_line,
     format_result,
     guide_payload,
     pending_questions,
@@ -118,7 +120,11 @@ def _valid_will_type_values() -> tuple[str, ...]:
 
 
 def _namespaced(
-    state: DecedentState, data: dict[str, Any], **updates: Any
+    state: DecedentState,
+    data: dict[str, Any],
+    *,
+    extra_namespaced: Optional[dict[str, Any]] = None,
+    **updates: Any,
 ) -> dict[str, Any]:
     """data 에 네임스페이스 상태(data["decedent_estate"])를 얹어 돌려준다.
 
@@ -128,9 +134,22 @@ def _namespaced(
 
     ⚠️ 여기 담기는 것은 DecedentState 필드뿐이라 유언장 원문은 구조적으로
     들어갈 수 없다 (state.py 참고 — C안).
+
+    extra_namespaced: DecedentState 필드는 아니지만 네임스페이스
+    (data["decedent_estate"]) 안에는 넣고 싶은 값 — P0-1의 body/precedents가
+    쓴다. `**updates`(pydantic 모델 필드)와 달리 저장 정책(C안, state.py의
+    "담는 것" 목록)을 확장하지 않는다: extract_state_to_persist가 이 raw
+    dict를 그대로 세션에 저장하긴 하지만, 다음 턴 load_state가
+    DecedentState.model_validate 로 복원할 때 모델에 없는 필드라 조용히
+    버려진다 — 그래서 실질적으로 "매 턴 results 로부터 새로 계산해 넣는
+    표시용 값"으로만 남는다(requirements 처럼 응답 때마다 재계산되는 것과
+    같은 성격이지 세션 상태가 아니다).
     """
     persisted = state.model_copy(update=updates)
-    return {**data, STATE_KEY: dump_state(persisted)}
+    namespaced = dump_state(persisted)
+    if extra_namespaced:
+        namespaced = {**namespaced, **extra_namespaced}
+    return {**data, STATE_KEY: namespaced}
 
 
 def _resolve_intent(
@@ -276,7 +295,16 @@ def _has_draft_text(payload: AgentInput, state: DecedentState) -> bool:
 
 
 def _requirement_payload(result: RequirementResult) -> dict[str, Any]:
-    """신호등 UI를 그릴 수 있도록 요건 하나의 판정 결과를 구조화한다."""
+    """신호등 UI를 그릴 수 있도록 요건 하나의 판정 결과를 구조화한다.
+
+    body/precedents(A안, #58 P0-1 후속)는 요건 하나 단위로 담는다 — 프론트
+    RequirementSignal(요건마다 자기 body·precedents를 갖는 구조, "왜
+    그런가요?" 접기/펼치기가 이미 그 모양을 전제로 완성돼 있음)에 맞춘
+    것으로, 통짜 body/precedents(#58 원안)와 달리 이 요건에 실제로 걸린
+    판례만 담긴다. body는 판례 인용 카드 줄을 뺀 §3-2 문구 한 줄
+    (term_note·참고 문구는 남는다) — precedents 배열과 중복되지 않게 하기
+    위해서다.
+    """
     return {
         "id": result.requirement_id,
         "name": result.name,
@@ -286,6 +314,8 @@ def _requirement_payload(result: RequirementResult) -> dict[str, Any]:
             red_label(result.requirement_id) if result.grade == "RED" else None
         ),
         "precedent_ids": result.precedent_ids,
+        "body": format_requirement_line(result, include_precedent_cards=False) or "",
+        "precedents": cited_precedents_for_requirement(result),
         "extracted": result.extracted,
         "followup_question": result.followup_question,
     }
@@ -736,6 +766,9 @@ def _run_handwritten_prepare_pipeline(
         reply = f"{reply}\n\n---\n\n**작성하신 초안을 점검한 결과입니다.**\n\n{review_output.reply}"
         # review_output.data 에는 이미 네임스페이스 키가 들어 있다. 중첩 저장을
         # 피하려고 빼고 담고, 상태는 아래에서 한 번만 최상위에 붙인다.
+        # requirements[rid].body/precedents(A안)는 DecedentState 필드라 이
+        # 필터에 그대로 걸려 살아남는다 — #58 원안(통짜 body/precedents,
+        # extra_namespaced)과 달리 옮겨 담을 필요가 없어졌다.
         review_data = {k: v for k, v in review_output.data.items() if k != STATE_KEY}
         data["review"] = review_data
         return AgentOutput(
@@ -791,6 +824,8 @@ def _run_recording_prepare_pipeline(
     if has_draft:
         review_output = _run_recording_pipeline(payload, state)
         reply = f"{reply}\n\n---\n\n**작성하신 대본을 점검한 결과입니다.**\n\n{review_output.reply}"
+        # requirements[rid].body/precedents(A안)는 DecedentState 필드라 아래
+        # 필터에 그대로 걸려 살아남는다 — handwritten prepare와 동일.
         review_data = {k: v for k, v in review_output.data.items() if k != STATE_KEY}
         data["review"] = review_data
         return AgentOutput(

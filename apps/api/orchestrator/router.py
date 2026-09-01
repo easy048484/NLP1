@@ -182,6 +182,7 @@ def node_compose(state: GraphState) -> GraphState:
         will_status=state["execution"].will_status,
         data=merged_data,
         agents=[o.agent for o in outputs],
+        contributions=outputs,
         path=plan.path,
         verification=verification,
     )

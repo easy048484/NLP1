@@ -6,9 +6,21 @@ client = TestClient(app)
 
 
 def test_health() -> None:
+    # conftest 가 매 테스트 전에 ANTHROPIC_API_KEY 를 비우므로 기본은 unconfigured.
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    assert resp.json() == {"status": "ok", "llm": "unconfigured"}
+
+
+def test_health_llm_on(monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    assert client.get("/health").json()["llm"] == "on"
+
+
+def test_health_llm_off(monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("ORCHESTRATOR_USE_LLM", "off")
+    assert client.get("/health").json()["llm"] == "off"
 
 
 def test_chat_default_route() -> None:

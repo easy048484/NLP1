@@ -142,6 +142,18 @@ export interface WillStatus {
   has_effect?: boolean | null;
 }
 
+/**
+ * compose 단계(orchestrator/compose.py)의 숫자·날짜 검증 결과.
+ * 백엔드 VerificationResult 와 1:1. `ok === false` 면 "확인 필요" 배지를 띄운다.
+ */
+export interface VerificationResult {
+  ok: boolean;
+  /** "single" | "synthesized" | "concat" | "concat_after_failure" (자유 문자열) */
+  mode: string;
+  /** 원문과 어긋난 숫자·날짜 설명 목록 */
+  mismatches: string[];
+}
+
 /** `/chat` 의 최종 응답. */
 export interface ChatResponse {
   /** compose 된 최종 답변 (마크다운) */
@@ -150,6 +162,15 @@ export interface ChatResponse {
   needs_review: boolean;
   /** 이번 턴에 기여한 에이전트별 원문 + data */
   contributions: AgentOutput[];
+  /**
+   * 이번 턴에 실제로 실행된 에이전트 목록(실행 순서). 백엔드 ChatResponse.agents.
+   * normalizeChatResponse 가 이걸 순회해 contributions[] 를 만든다.
+   */
+  agents: AgentName[];
+  /** 실행 경로 등급 — "fast" | "standard" | "full". 백엔드 ChatResponse.path. */
+  path: string;
+  /** compose 숫자 검증 결과. 백엔드가 안 보내면 null. */
+  verification?: VerificationResult | null;
   plan?: AgentPlan | null;
   /** 백엔드 flat FinancialProfile 에서 뽑은 재산 요약 */
   estate?: EstateSummary | null;

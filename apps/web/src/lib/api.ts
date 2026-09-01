@@ -1,9 +1,11 @@
 import type {
   AgentInput,
+  AgentName,
   AgentOutput,
   ChatResponse,
   ConsultAxis,
   EstateSummary,
+  VerificationResult,
   WillStatus,
 } from "../types";
 import { parsePlan } from "./agentData";
@@ -24,6 +26,42 @@ function readNeedsReview(obj: Record<string, unknown>): boolean {
   if (obj.needs_review === true) return true;
   const v = asRecord(obj.verification);
   return v.ok === false;
+}
+
+/** 백엔드 VerificationResult → 타입 있는 형태. 없으면 null. */
+function readVerification(obj: Record<string, unknown>): VerificationResult | null {
+  if (!obj.verification || typeof obj.verification !== "object") return null;
+  const v = asRecord(obj.verification);
+  return {
+    ok: v.ok === true,
+    mode: typeof v.mode === "string" ? v.mode : "",
+    mismatches: Array.isArray(v.mismatches)
+      ? v.mismatches.filter((m): m is string => typeof m === "string")
+      : [],
+  };
+}
+
+/**
+ * `contributions[]` 없는 구버전 백엔드 폴백: `response.agents` 를 순회해
+ * `data[<agent>]` 네임스페이스 슬라이스만으로 contribution 을 만든다.
+ *
+ * 현재 백엔드는 ChatResponse.contributions 로 에이전트별 원본 출력을 직접
+ * 내려주므로 이 함수는 타지 않는다. 평면 병합 키를 소유자별로 재분배하던
+ * LEGACY_FLAT_KEYS 방어(겹치는 pending_questions 가 두 에이전트에 복사되던
+ * 임시 처리)는 contributions 도입으로 제거했다.
+ */
+function splitContributions(
+  agents: AgentName[],
+  rawData: Record<string, unknown>,
+): AgentOutput[] {
+  const seen = new Set<AgentName>();
+  const out: AgentOutput[] = [];
+  for (const agent of agents) {
+    if (seen.has(agent)) continue;
+    seen.add(agent);
+    out.push({ agent, reply: "", data: { ...asRecord(rawData[agent]) } });
+  }
+  return out;
 }
 
 /** 백엔드 flat FinancialProfile → 패널용 재산 요약. 값이 하나도 없으면 null. */
@@ -70,41 +108,83 @@ export interface ChatCallResult {
   latencyMs: number;
 }
 
+function readAgents(obj: Record<string, unknown>): AgentName[] {
+  return Array.isArray(obj.agents)
+    ? obj.agents.filter((a): a is AgentName => typeof a === "string")
+    : [];
+}
+
+function readPath(obj: Record<string, unknown>): string {
+  return typeof obj.path === "string" ? obj.path : "standard";
+}
+
 /**
- * 백엔드가 이미 최종 계약(`ChatResponse`)을 반환하면 그대로 쓰고,
- * 아직 과도기라 단일 `AgentOutput`만 반환하면 1-contribution 짜리
- * `ChatResponse`로 감싼다 — 화면 코드는 항상 `ChatResponse`만 본다.
+ * 백엔드 `/chat` 응답을 화면이 다루는 `ChatResponse` 모양으로 정규화한다.
+ * - 최종 계약(`contributions[]`)을 이미 주면 그대로 쓴다.
+ * - 현재 백엔드처럼 `agents[]` + 평면 병합 `data` 를 주면 agents 를 순회해
+ *   에이전트별 contribution 으로 쪼갠다(splitContributions).
+ * - 아주 옛 단일 `AgentOutput` 은 1-contribution 으로 감싼다.
+ * 화면 코드는 언제나 `ChatResponse` 만 본다.
  */
 export function normalizeChatResponse(raw: unknown): ChatResponse | null {
   if (raw === null || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
 
-  // 최종 계약: contributions[] 가 있음
+  const agents = readAgents(obj);
+
+  // 이미 최종 계약(contributions[]) 을 주는 백엔드 — 그대로 쓴다.
   if (Array.isArray(obj.contributions)) {
+    const contributions = obj.contributions as AgentOutput[];
     return {
       reply: typeof obj.reply === "string" ? obj.reply : "",
       needs_review: readNeedsReview(obj),
-      contributions: obj.contributions as AgentOutput[],
+      contributions,
+      agents: agents.length > 0 ? agents : contributions.map((c) => c.agent),
+      path: readPath(obj),
+      verification: readVerification(obj),
       plan: parsePlan(obj),
       estate: readEstate(obj),
       will_status: readWillStatus(obj),
       family_graph: (obj.family_graph as ChatResponse["family_graph"]) ?? null,
       primary_agent:
         (obj.primary_agent as ChatResponse["primary_agent"]) ??
-        ((obj.contributions as AgentOutput[])[0]?.agent ?? null),
+        (contributions[0]?.agent ?? null),
     };
   }
 
   // 현재 백엔드: ChatResponse = AgentOutput + {agents, path, verification,
-  // financial_profile(flat), will_status}. contributions/plan/needs_review 는
-  // 프론트가 여기서 만든다 (plan 은 data.plan 의 heir_navigator ProcedurePlan
-  // (timeline...) 을 parsePlan 으로 프론트 AgentPlan 모양으로 변환).
+  // financial_profile(flat), will_status}. 합성 data 는 obj.data 에 평면 병합돼
+  // 있고, contributions[] 는 여기서 agents 를 순회해 만든다.
+  const rawData = asRecord(obj.data);
+
+  if (agents.length > 0) {
+    return {
+      reply: typeof obj.reply === "string" ? obj.reply : "",
+      needs_review: readNeedsReview(obj),
+      contributions: splitContributions(agents, rawData),
+      agents,
+      path: readPath(obj),
+      verification: readVerification(obj),
+      plan: parsePlan(rawData),
+      estate: readEstate(obj),
+      will_status: readWillStatus(obj),
+      family_graph: (obj.family_graph as ChatResponse["family_graph"]) ?? null,
+      primary_agent:
+        (obj.agent as ChatResponse["primary_agent"]) ??
+        (agents[agents.length - 1] ?? null),
+    };
+  }
+
+  // agents 가 없는 아주 옛 백엔드: 단일 AgentOutput 을 1-contribution 으로 감싼다.
   if (typeof obj.agent === "string" && typeof obj.reply === "string") {
     const single = obj as unknown as AgentOutput;
     return {
       reply: single.reply,
       needs_review: readNeedsReview(obj),
       contributions: [single],
+      agents: [single.agent],
+      path: readPath(obj),
+      verification: readVerification(obj),
       plan: parsePlan(asRecord(single.data)),
       estate: readEstate(obj),
       will_status: readWillStatus(obj),

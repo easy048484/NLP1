@@ -121,6 +121,7 @@
   --chat-measure: 42em; /* 대화 말풍선 가독 줄길이 상한 */
   --shell-max: 1440px;
   --context-panel-w: 340px;
+  --schedule-panel-w: 320px;
 }
 
 /* 다크 — 시스템 설정(명시적 선택 없을 때) */

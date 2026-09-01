@@ -156,7 +156,7 @@ def node_compose(state: GraphState) -> GraphState:
             messages=[{"role": "user", "content": user_turn}],
         )
     except LLMUnavailable as exc:
-        logger.debug("compose LLM 사용 불가, 결정론적 렌더러 사용: %s", exc)
+        logger.warning("compose LLM 사용 불가, 결정론적 렌더러 사용: %s", exc)
         return {**updates, "reply": fallback}
     except Exception:  # pragma: no cover - 네트워크/SDK 예외
         logger.exception("compose 실패, 결정론적 렌더러 사용")
@@ -199,6 +199,13 @@ def node_finalize(state: GraphState) -> GraphState:
 
     if state.get("asked_slot"):
         data["asked_slot"] = state["asked_slot"]
+
+    # 안내를 마친 뒤 되물을 슬롯은 답변 본문이 아니라 별도 질문 블록으로 내보낸다.
+    # (사망일처럼 안내 자체를 막는 blocking 질문은 그대로 reply 로 둔다.)
+    if plan is not None and plan.follow_up and prompts.blocking_question(plan) is None:
+        follow_up_q = prompts.follow_up_prompt(plan.follow_up)
+        if follow_up_q is not None:
+            data["pending_questions"] = [follow_up_q]
 
     if _PRE_PLANNING.search(state.get("user_message", "")) and heir.death_date is None:
         # 상속이 아직 개시되지 않은 경우의 역전환 (연동 지점 5번)

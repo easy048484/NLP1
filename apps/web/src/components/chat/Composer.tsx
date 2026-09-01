@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useApp } from "../../lib/appState";
-import { VoiceInput } from "../ui";
+import { Button, Dialog, VoiceInput } from "../ui";
 
 /**
  * 보조 입력. 주 사용 흐름은 상단 기능 타일 + 답변 속 선택 버튼이고,
@@ -16,6 +16,7 @@ export function Composer() {
     null,
   );
   const [imgError, setImgError] = useState<string | null>(null);
+  const [showUploadNotice, setShowUploadNotice] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const pickImage = (file: File) => {
@@ -79,7 +80,7 @@ export function Composer() {
         <button
           type="button"
           className="composer-attach"
-          onClick={() => fileRef.current?.click()}
+          onClick={() => setShowUploadNotice(true)}
           disabled={loading}
           aria-label="사진 첨부 (유언장·안심상속 조회결과)"
           title="유언장·안심상속 조회결과 사진 올리기"
@@ -109,6 +110,44 @@ export function Composer() {
           보내기
         </button>
       </div>
+
+      {showUploadNotice && (
+        <Dialog
+          title="업로드 전 확인해 주세요"
+          onClose={() => setShowUploadNotice(false)}
+          footer={
+            <>
+              <Button variant="outline" onClick={() => setShowUploadNotice(false)}>
+                취소
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowUploadNotice(false);
+                  fileRef.current?.click();
+                }}
+              >
+                확인
+              </Button>
+            </>
+          }
+        >
+          <p>
+            유언장 사진은 내용 판독을 위해 외부 AI 서비스로 전송됩니다.
+            <br />
+            사진은 판독 후 저장하지 않습니다.
+          </p>
+          <p>
+            아래는 유언 요건 확인에 필요하지 않으니 가능하면 가려주세요.
+            <br />
+            · 주민등록번호 · 전화번호 · 계좌번호
+          </p>
+          <p>
+            단, 아래는 요건 확인에 반드시 필요하니 가리지 말아주세요.
+            <br />
+            · 성명 · 주소 · 작성 날짜
+          </p>
+        </Dialog>
+      )}
     </div>
   );
 }

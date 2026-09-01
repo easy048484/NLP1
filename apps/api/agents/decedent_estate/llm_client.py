@@ -52,7 +52,7 @@ import anthropic
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "claude-haiku-4-5-20251001"
+_MODEL = os.getenv("CLAUDE_EXTRACT_MODEL", "claude-haiku-4-5-20251001")
 _TIMEOUT_SECONDS = 8.0
 _NAME_MAX_TOKENS = 64
 _RECORDING_MAX_TOKENS = 300

@@ -2,72 +2,119 @@ import type { ReactElement } from "react";
 import { useApp } from "../../lib/appState";
 import {
   parsePendingQuestions,
-  parsePlan,
   parseShares,
+  parseShareWarnings,
   parseSignals,
   parseTaxResult,
 } from "../../lib/agentData";
-import type { AgentOutput, AgentPlan } from "../../types";
+import { Markdown } from "../../lib/markdown";
+import { formatWonExact } from "../../lib/format";
+import type { AgentOutput } from "../../types";
 import {
   AmountDisplay,
   ChoiceGroup,
   ResultCard,
   SignalRow,
   TaxBreakdown,
-  Timeline,
 } from "../ui";
 
 /**
  * 한 기여(contribution)의 agent + data 를 알맞은 근거 카드로 렌더한다.
  * 숫자·판정은 항상 여기(카드)에 고정하고, 본문 마크다운엔 서술만 남긴다.
+ *
+ * mode="results"  — 안내·근거 카드만 (후속 질문 제외)
+ * mode="questions" — 후속 질문(선택지)만
+ * 절차 타임라인(plan)은 우측 SchedulePanel 로 분리했으므로 여기서 렌더하지 않는다.
  */
 export function AgentCards({
   contribution,
-  topLevelPlan,
+  mode = "results",
 }: {
   contribution: AgentOutput;
-  topLevelPlan?: AgentPlan | null;
+  mode?: "results" | "questions";
 }) {
-  const { planChecks, togglePlanCheck, send } = useApp();
+  const { send } = useApp();
   const data = contribution.data ?? {};
 
-  const plan = topLevelPlan ?? parsePlan(data);
-  const signals = parseSignals(data);
-  const pending = parsePendingQuestions(data);
-  const tax = parseTaxResult(data);
-  const shares = parseShares(data);
+  const signals = parseSignals(data, contribution.agent);
+  const pending = parsePendingQuestions(data, contribution.agent);
+  const tax = parseTaxResult(data, contribution.agent);
+  const shares = parseShares(data, contribution.agent);
+  const shareWarnings = parseShareWarnings(data, contribution.agent);
 
   const cards: ReactElement[] = [];
 
-  if (contribution.agent === "heir_navigator" && plan) {
-    cards.push(
-      <ResultCard key="plan" title="나의 할 일">
-        <Timeline plan={plan} checked={planChecks} onToggle={togglePlanCheck} />
-      </ResultCard>,
-    );
+  if (mode === "questions") {
+    if (pending) {
+      pending.forEach((q, i) => {
+        cards.push(
+          <div key={`pending-${i}`} className="followup-q">
+            <div className="pending-q">
+              <Markdown>{q.question}</Markdown>
+            </div>
+            <ChoiceGroup
+              ariaLabel={q.question}
+              options={q.options}
+              onSelect={(value) => {
+                const chosen = q.options.find((o) => o.value === value);
+                // 선택지는 텍스트가 아니라 구조화 답변으로 보낸다 — 백엔드 에이전트가
+                // context[field] 로 읽는다 (예: decedent_estate 의 will_type).
+                void send(
+                  chosen?.label ?? value,
+                  q.field ? { context: { [q.field]: value } } : undefined,
+                );
+              }}
+            />
+          </div>,
+        );
+      });
+    }
+    if (cards.length === 0) return null;
+    return <div className="agent-cards">{cards}</div>;
   }
 
   if (shares) {
     cards.push(
-      <ResultCard key="shares" title="법정상속분 · 유류분">
-        <table className="share-table">
-          <thead>
-            <tr>
-              <th>상속인</th>
-              <th>법정상속분</th>
-              {shares.some((s) => s.forced) && <th>유류분</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {shares.map((s) => (
-              <tr key={s.heir}>
-                <td>{s.heir}</td>
-                <td>{s.statutory}</td>
-                {shares.some((x) => x.forced) && <td>{s.forced ?? "—"}</td>}
+      <ResultCard
+        key="shares"
+        title="법정상속분 · 유류분"
+        meta="참고용 1차 시뮬레이션입니다. 단순 부족액은 실제 청구 가능 여부나 최종 반환금액을 뜻하지 않으며 전문가 검토가 필요합니다."
+      >
+        <div style={{ overflowX: "auto" }}>
+          <table className="share-table">
+            <thead>
+              <tr>
+                <th>상속인</th>
+                <th>법정상속분</th>
+                {shares.some((s) => s.forced) && <th>기본 유류분 예상액</th>}
+                <th>예정 취득액</th>
+                <th>단순 부족액</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {shares.map((s, i) => (
+                <tr key={`${s.heir}-${i}`}>
+                  <td>{s.heir}</td>
+                  <td>{s.statutory}</td>
+                  {shares.some((x) => x.forced) && <td>{s.forced ?? "—"}</td>}
+                  <td>
+                    {s.planned_acquisition == null
+                      ? "미확인"
+                      : formatWonExact(s.planned_acquisition)}
+                  </td>
+                  <td>
+                    {s.simple_gap == null ? "비교 전" : formatWonExact(s.simple_gap)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {shareWarnings.length > 0 && (
+          <ul>
+            {shareWarnings.map((warning, i) => <li key={i}>{warning}</li>)}
+          </ul>
+        )}
       </ResultCard>,
     );
   }
@@ -101,29 +148,6 @@ export function AgentCards({
         )}
       </ResultCard>,
     );
-  }
-
-  if (pending) {
-    pending.forEach((q, i) => {
-      cards.push(
-        <ResultCard key={`pending-${i}`} title="직접 확인해 주세요">
-          <p className="pending-q">{q.question}</p>
-          <ChoiceGroup
-            ariaLabel={q.question}
-            options={q.options}
-            onSelect={(value) => {
-              const chosen = q.options.find((o) => o.value === value);
-              // 선택지는 텍스트가 아니라 구조화 답변으로 보낸다 — 백엔드 에이전트가
-              // context[field] 로 읽는다 (예: decedent_estate 의 will_type).
-              void send(
-                chosen?.label ?? value,
-                q.field ? { context: { [q.field]: value } } : undefined,
-              );
-            }}
-          />
-        </ResultCard>,
-      );
-    });
   }
 
   if (cards.length === 0) return null;
