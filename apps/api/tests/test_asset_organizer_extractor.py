@@ -191,6 +191,117 @@ def test_vague_amount_expression_without_recognizable_type_requires_clarificatio
     assert result.assets == []
 
 
+# --------------------------------------------------- 4-2) 천 단위 콤마 (P0-3)
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("3,200만원", 32_000_000),
+        ("1,020,000원", 1_020_000),
+        ("5,000만원", 50_000_000),
+        # 콤마 없는 기존 표현도 여전히 정상 동작해야 한다(회귀 방지).
+        ("3200만원", 32_000_000),
+        ("5000만원", 50_000_000),
+    ],
+)
+def test_thousands_comma_parsed_as_single_number(text, expected):
+    """실측 버그: "3,200만원"을 콤마 뒤 "200만원"(2,000,000원)으로만 읽고
+    앞자리 "3,"를 통째로 날려버렸다 — 콤마가 천 단위 구분자일 뿐 세그먼트
+    구분자가 아니라는 걸 반영해 하나의 숫자로 합쳐 읽어야 한다."""
+    assert extractor._parse_amount(text) == expected
+
+
+def test_thousands_comma_amount_flows_through_full_extraction():
+    result = extractor.extract_financial_slots("예금 3,200만원 있어요")
+
+    assert result.status == "ok"
+    assert result.assets[0].type == "예금"
+    assert result.assets[0].value == 32_000_000
+
+
+# ---------------------------------------- 4-3) 천/백 혼합·공백 변형 (Round 15)
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("3,200만원", 32_000_000),
+        ("3,200만 원", 32_000_000),
+        ("3200만원", 32_000_000),
+        ("3천200만원", 32_000_000),
+        ("3천200만", 32_000_000),
+        ("3천 200만원", 32_000_000),
+        ("3천 200만 원", 32_000_000),
+        ("3천2백만원", 32_000_000),
+        ("3천2백만 원", 32_000_000),
+        # 이 둘은 위 항목들과 의미가 다른 별개 금액(320만원이 아니라
+        # 3,200,000원/32,000,000원 그 자체) — 콤마가 순수 원단위 표기에서도
+        # 안 잘리는지 확인하는 대조군.
+        ("3,200,000원", 3_200_000),
+        ("32,000,000원", 32_000_000),
+    ],
+)
+def test_demo_amount_expressions_parsed_consistently(text, expected):
+    """데모에서 실제로 쓰이는 "3,200만원" 의미의 모든 표현(천/백 혼합 단위,
+    공백 유무)이 같은 값으로 파싱되는지 확인하는 회귀 테스트(Round 15)."""
+    assert extractor._parse_amount(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("예금 3천200만원 있어요", 32_000_000),
+        ("예금 3천 200만 원 있어요", 32_000_000),
+        ("예금 3천2백만원 있어요", 32_000_000),
+    ],
+)
+def test_demo_amount_expressions_flow_through_full_extraction(text, expected):
+    """parser 단위 테스트뿐 아니라 실제 agent 입력 경로(extract_financial_slots)
+    까지 통과시켜 최종 저장 금액이 맞는지 확인(Round 15)."""
+    result = extractor.extract_financial_slots(text)
+
+    assert result.status == "ok"
+    assert result.assets[0].type == "예금"
+    assert result.assets[0].value == expected
+
+
+# ------------------------------------------- 4-4) 부정 표현 오탐 (Round 15 B5)
+
+
+@pytest.mark.parametrize(
+    "text,expected_kind,type_key,type_value",
+    [
+        ("예금은 없어요", "asset_absent", "asset_type", "예금"),
+        ("예금 없어요", "asset_absent", "asset_type", "예금"),
+    ],
+)
+def test_negated_asset_segment_marked_absent_not_missing_value(
+    text, expected_kind, type_key, type_value
+):
+    """실측 재현된 버그(Round 15): "예금은 없어요"가 "예금 유형은 확인됐지만
+    금액을 모른다"(asset_value)로 잘못 분류돼 방금 없다고 답한 예금의 금액을
+    재질문했다. 부정 표현이 같이 있으면 asset_absent로 구분해야 한다."""
+    result = extractor.extract_financial_slots(text)
+
+    assert result.assets == []
+    assert len(result.missing) == 1
+    assert result.missing[0]["kind"] == expected_kind
+    assert result.missing[0][type_key] == type_value
+
+
+@pytest.mark.parametrize("text", ["대출은 없어요", "대출 없어요"])
+def test_negated_liability_segment_marked_absent_not_missing_value(text):
+    """extract_liabilities의 같은 클래스 버그 — "대출은 없어요"가 대출 존재를
+    확정하고 금액만 되묻던 걸(liability_value) liability_absent로 구분."""
+    liabilities, missing = extractor.extract_liabilities(text)
+
+    assert liabilities == []
+    assert len(missing) == 1
+    assert missing[0]["kind"] == "liability_absent"
+    assert missing[0]["liability_type"] == "대출"
+
+
 # ------------------------------------------------------------- 5) 이미지 판독
 
 
@@ -508,3 +619,137 @@ def test_llm_fallback_income_type_outside_whitelist_is_kept_as_gita_not_dropped(
     assert result.incomes[0].type == "기타"
     assert result.incomes[0].monthly == 500_000
     assert result.incomes[0].start_age == 65
+
+
+# ------------------------------------------- 6) 사후 모드: 다기관 조회 결과 해석
+
+
+def test_disclosures_split_confirmed_and_unknown_amount_by_institution(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """기획서 패턴 그대로: 기관마다 공개 수준이 다르다 — 예금은 금액까지,
+    투자상품(증권)은 계좌만(잔고 유무만) 확인되는 식. 기관명 자체는
+    결과에 안 담긴다(수집 최소화 원칙, extract_from_image()와 동일)."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "disclosures": [
+                    {"type": "예금", "confidence": "confirmed", "value": 50_000_000},
+                    {"type": "주식", "confidence": "unknown_amount", "value": None},
+                ]
+            }
+        ),
+    )
+
+    items = extractor.extract_disclosures(
+        "OO은행은 예금 5천만원까지 나왔고 OO증권은 계좌만 확인됐어요"
+    )
+
+    assert items is not None
+    assert len(items) == 2
+    confirmed = next(i for i in items if i.confidence == "confirmed")
+    assert confirmed.asset_type == "예금"
+    assert confirmed.value == 50_000_000
+    unknown = next(i for i in items if i.confidence == "unknown_amount")
+    assert unknown.asset_type == "주식"
+    assert unknown.value is None
+
+    # DisclosureItem에는 institution 필드 자체가 없다 — dataclass 필드
+    # 목록으로 직접 확인(우연히 통과하는 게 아니라 구조적으로 없다는 것).
+    from dataclasses import fields
+
+    field_names = {f.name for f in fields(extractor.DisclosureItem)}
+    assert "institution" not in field_names
+    assert field_names == {"asset_type", "confidence", "value"}
+
+
+def test_disclosures_confirmed_without_valid_value_downgrades_to_unknown_amount(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """모델이 지시를 무시하고 confirmed인데 값을 안 채우거나 이상한 값을
+    보내면, 금액을 지어내지 않고 안전한 쪽(unknown_amount)으로 강등한다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "disclosures": [
+                    {"type": "부동산", "confidence": "confirmed", "value": None},
+                ]
+            }
+        ),
+    )
+
+    items = extractor.extract_disclosures("부동산은 금액까지 나왔어요")
+
+    assert items[0].confidence == "unknown_amount"
+    assert items[0].value is None
+
+
+def test_disclosures_ambiguous_confidence_falls_back_to_unknown_amount(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """confidence 값 자체가 화이트리스트 밖("unclear" 등)이면 애매한 쪽으로
+    본다 — 안전한 기본값(unknown_amount)으로 떨어진다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "disclosures": [
+                    {"type": "보험", "confidence": "maybe", "value": 10_000_000},
+                ]
+            }
+        ),
+    )
+
+    items = extractor.extract_disclosures("보험은 가입 여부만 확인됐어요")
+
+    assert items[0].confidence == "unknown_amount"
+    assert items[0].value is None
+
+
+def test_disclosures_type_outside_whitelist_kept_as_gita_not_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """자산 추출과 동일한 PII 방어 원칙 — 화이트리스트 밖 유형(오염
+    가능성 있는 원문)은 드롭하지 않고 "기타"로 보존한다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "disclosures": [
+                    {
+                        "type": "국민은행 예금(계좌 110-123-456789)",
+                        "confidence": "confirmed",
+                        "value": 10_000_000,
+                    },
+                ]
+            }
+        ),
+    )
+
+    items = extractor.extract_disclosures("어떤 조회 결과 문장")
+
+    assert items[0].asset_type == "기타"
+    assert not any("계좌" in str(v) for v in items[0].__dict__.values())
+
+
+def test_disclosures_returns_none_without_api_key(monkeypatch: pytest.MonkeyPatch):
+    """LLM을 쓸 수 없으면 None을 돌려준다 — 호출부(agent.py)가 이 신호를
+    보고 기존 일반 추출 경로로 폴백한다(조용히 빈 결과로 확정하지 않음)."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    assert extractor.extract_disclosures("아무 문장") is None
+
+
+def test_disclosures_returns_none_on_llm_failure(monkeypatch: pytest.MonkeyPatch):
+    _install_fake_llm(monkeypatch, exc=TimeoutError("network timeout"))
+
+    assert extractor.extract_disclosures("아무 문장") is None
+
+
+def test_disclosures_prompt_instructs_excluding_institution_names():
+    """수집 최소화 원칙이 프롬프트에 실제로 박혀 있는지 — 나중에 문구가
+    실수로 빠지는 걸 막는 회귀 잠금."""
+    prompt = extractor._build_disclosure_system_prompt()
+    assert "은행" in prompt and "결과에 포함하지 마라" in prompt

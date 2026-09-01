@@ -19,14 +19,25 @@ from pydantic import BaseModel, Field
 AssetType = Literal["예금", "주식", "펀드", "부동산", "자동차", "퇴직연금", "기타"]
 IncomeType = Literal["국민연금", "개인연금", "기타"]
 LiabilityType = str
+#: 3단계 금액 신뢰도. "미확인"(아직 언급 자체가 안 됨)은 이 타입에 없다 —
+#: Asset 레코드 자체가 아직 존재하지 않는 상태라 별도 값이 필요 없다
+#: (checked_categories/pending_categories로 이미 추적됨, agent.py 참고).
+AssetConfidence = Literal["confirmed", "unknown_amount"]
 
 
 class Asset(BaseModel):
     """스톡 자산. 부동산은 liquid를 명시하지 않으면 어댑터가 False로 처리
-    (이 값 자체는 retirement_planner의 engine.py가 씀 — extra로 그대로 넘어감)."""
+    (이 값 자체는 retirement_planner의 engine.py가 씀 — extra로 그대로 넘어감).
+
+    confidence가 "unknown_amount"면 value는 항상 0(구조적 자리표시자일 뿐,
+    실제 금액이 아님) — 순자산 계산에서 반드시 confidence로 걸러내고 써야
+    한다(agent.py의 _format_summary/_to_shared_profile 참고). 그냥 value를
+    더하면 "확인 안 됨"과 "확인했더니 0원"이 섞여 순자산이 실제보다 적어
+    보이는 왜곡이 생긴다 — tax_calculator 때 "미확인은 0원이 아니다" 원칙과
+    동일."""
 
     type: AssetType
-    value: int = Field(ge=0, description="평가액 (원)")
+    value: int = Field(ge=0, description="평가액 (원). confidence 설명 참고")
     liquid: bool | None = Field(
         default=None,
         description="None이면 유형별 기본값 적용 (부동산·자동차·퇴직연금=False, 그 외=True)",
@@ -34,6 +45,16 @@ class Asset(BaseModel):
     return_rate: float | None = Field(
         default=None,
         description="사용자가 직접 입력한 연 명목수익률. 서비스가 기본값을 제시하지 않음",
+    )
+    confidence: AssetConfidence = Field(
+        default="confirmed",
+        description=(
+            "confirmed=금액까지 확인됨(기존 동작과 동일 기본값). "
+            "unknown_amount=존재는 확인됐지만 금액은 모름 — 사용자가 '몰라요'로"
+            " 답했거나(생전 모드) 조회 기관이 존재만 확인해준 경우(사후 모드)."
+            " 한 번 이 상태가 되면 영구적으로 취급하고 다시 캐묻지 않는다"
+            "(부채/퇴직연금 후속질문의 '한 번만 묻고 종결' 원칙과 동일)."
+        ),
     )
 
 
