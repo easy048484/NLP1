@@ -10,6 +10,6 @@ export { Gauge } from "./Gauge";
 export { ChoiceGroup, YesNo, Field, type ChoiceOption } from "./Choice";
 export { AgentPill } from "./AgentPill";
 export { AgentAvatar } from "./AgentAvatar";
-export { NeedsReviewBadge, Disclaimer, GoldRule, Eyebrow } from "./Badges";
+export { NeedsReviewBadge, ConcatNoticeBadge, Disclaimer, GoldRule, Eyebrow } from "./Badges";
 export { Dialog } from "./Dialog";
 export { VoiceInput } from "./VoiceInput";

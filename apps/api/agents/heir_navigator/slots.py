@@ -207,7 +207,7 @@ def llm_based(message: str, *, today: date | None = None) -> SlotUpdate | None:
             tool=_TOOL,
         )
     except LLMUnavailable as exc:
-        logger.debug("슬롯 추출 LLM 사용 불가, 규칙 기반만 사용: %s", exc)
+        logger.warning("슬롯 추출 LLM 사용 불가, 규칙 기반만 사용: %s", exc)
         return None
     except Exception:  # pragma: no cover - 네트워크/SDK 예외
         logger.exception("슬롯 추출 실패, 규칙 기반만 사용")

@@ -156,7 +156,7 @@ def node_compose(state: GraphState) -> GraphState:
             messages=[{"role": "user", "content": user_turn}],
         )
     except LLMUnavailable as exc:
-        logger.debug("compose LLM 사용 불가, 결정론적 렌더러 사용: %s", exc)
+        logger.warning("compose LLM 사용 불가, 결정론적 렌더러 사용: %s", exc)
         return {**updates, "reply": fallback}
     except Exception:  # pragma: no cover - 네트워크/SDK 예외
         logger.exception("compose 실패, 결정론적 렌더러 사용")

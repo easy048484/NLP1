@@ -31,7 +31,6 @@ execute_plan
 from __future__ import annotations
 
 import logging
-import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
@@ -45,6 +44,7 @@ from schemas import (
 )
 
 from . import registry
+from .llm_policy import llm_enabled, llm_required
 from .handoff import build_agent_context
 
 logger = logging.getLogger(__name__)
@@ -74,13 +74,7 @@ class Plan:
 # ------------------------------------------------------------------ classify
 
 
-def _llm_enabled() -> bool:
-    flag = os.getenv("ORCHESTRATOR_USE_LLM", "auto").strip().lower()
-    if flag in {"0", "false", "no", "off"}:
-        return False
-    if flag in {"1", "true", "yes", "on"}:
-        return True
-    return bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
+# _llm_enabled 는 llm_policy 로 이동 (compose.py 와 중복 제거)
 
 
 _CLASSIFY_TOOL_NAME = "select_agents"
@@ -113,7 +107,7 @@ def _llm_select(
     user_message: str, candidates: list[AgentName]
 ) -> Optional[list[AgentName]]:
     """후보 중 필요한 에이전트를 LLM 이 고릅니다. 실패하면 None (호출부가 폴백)."""
-    if not _llm_enabled():
+    if not llm_enabled():
         return None
     try:
         from llm import claude
@@ -144,6 +138,8 @@ def _llm_select(
             effort="low",
         )
     except Exception:  # noqa: BLE001 — LLMUnavailable 포함, 어떤 실패든 폴백
+        if llm_required():
+            raise
         logger.warning("라우팅 LLM 분류 실패 — 키워드 후보 전부로 폴백", exc_info=True)
         return None
 

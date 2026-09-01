@@ -18,13 +18,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from typing import Optional
 
 from schemas import AgentOutput, VerificationResult
 
 from . import registry
+from .llm_policy import llm_enabled, llm_required
 
 logger = logging.getLogger(__name__)
 
@@ -98,13 +98,7 @@ def fallback_concat(agent_outputs: list[AgentOutput]) -> str:
     return "\n\n".join(sections)
 
 
-def _llm_enabled() -> bool:
-    flag = os.getenv("ORCHESTRATOR_USE_LLM", "auto").strip().lower()
-    if flag in {"0", "false", "no", "off"}:
-        return False
-    if flag in {"1", "true", "yes", "on"}:
-        return True
-    return bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
+# _llm_enabled 는 llm_policy 로 이동 (planner.py 와 중복 제거)
 
 
 _SYNTH_SYSTEM = """당신은 가족 자산·상속 상담 서비스의 편집자입니다. 여러 전문 에이전트가
@@ -122,7 +116,7 @@ def llm_synthesize(
     agent_outputs: list[AgentOutput], user_message: str
 ) -> Optional[str]:
     """LLM 합성 초안. 못 쓰는 환경이거나 실패하면 None."""
-    if not _llm_enabled():
+    if not llm_enabled():
         return None
     try:
         from llm import claude
@@ -144,6 +138,8 @@ def llm_synthesize(
             effort="low",
         )
     except Exception:  # noqa: BLE001
+        if llm_required():
+            raise
         logger.warning("합성 LLM 호출 실패 — 이어붙이기로 폴백", exc_info=True)
         return None
 
