@@ -5,7 +5,11 @@
 
   1. LLM 이 각 에이전트 답변을 사용자 메시지 흐름에 맞게 한 편으로 다듬는다 (draft).
   2. verify_numbers() 가 draft 에 등장하는 금액·퍼센트·날짜를 정규식으로 뽑아 원본
-     agent_outputs(reply + data) 안에 그대로 존재하는지 문자열로 대조한다 — 코드 규칙.
+     agent_outputs(reply + data) 와 대조한다 — 코드 규칙. 1차는 문자열 포함 검사,
+     실패 시 2차로 값 수준 비교(semantic): "3억 5천만원" ↔ "350,000,000원",
+     "2026-02-28" ↔ "2026년 2월 28일" 처럼 표기만 다른 경우를 오탐에서 구제한다.
+     양쪽 다 명확히 파싱될 때만 값으로 인정하고, 파싱이 안 되면 mismatch 로
+     남긴다(fail-closed) — 미탐(틀린 숫자 통과)보다 오탐(멀쩡한 합성문 폐기)이 낫다.
   3. 하나라도 원문에 없으면 draft 를 버리고 각 에이전트 reply 를 그대로 이어붙인다
      (fallback_concat) + verification.ok=False 로 "⚠️ 확인필요" 배지를 띄우게 한다.
 
@@ -19,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 from schemas import AgentOutput, VerificationResult
@@ -29,7 +34,14 @@ from .llm_policy import llm_enabled, llm_required
 logger = logging.getLogger(__name__)
 
 # 금액: 1,234,567원 / 3억 5천만원 / 5000만원 / 12.5억 / 1,000 (쉼표 숫자)
-_RE_AMOUNT = re.compile(r"\d[\d,]*(?:\.\d+)?\s*(?:억|천만|백만|만|천)?\s*원?")
+# "3억 5천만원" 같은 복합 표기는 한 토큰으로 잡는다. 단위 없는 끝자리 수는 바로 뒤에
+# "원"이 붙을 때만 붙인다("1억 2345원") — 무관한 숫자("1억 2026년…")를 삼키지 않도록.
+_RE_AMOUNT = re.compile(
+    r"\d[\d,]*(?:\.\d+)?\s*(?:억|천만|백만|만|천)"
+    r"(?:\s*\d[\d,]*(?:\.\d+)?\s*(?:억|천만|백만|만|천))*"
+    r"(?:\s*\d[\d,]*(?:\.\d+)?\s*원|\s*원)?"
+    r"|\d[\d,]*(?:\.\d+)?\s*원?"
+)
 # 퍼센트
 _RE_PERCENT = re.compile(r"\d+(?:\.\d+)?\s*%")
 # 날짜: 2026-08-28 / 2026.08.28 / 2026년 8월 28일 / 8월 28일
@@ -42,42 +54,163 @@ def _normalize(text: str) -> str:
     return re.sub(r"[\s,]", "", text)
 
 
-def extract_facts(text: str) -> list[str]:
-    """검증 대상이 되는 토큰(금액·퍼센트·날짜)을 정규화해서 뽑습니다.
+def _extract_typed(text: str) -> list[tuple[str, str]]:
+    """(종류, 정규화된 토큰) 쌍으로 검증 대상 팩트를 뽑습니다.
 
     금액 정규식은 '3개월' 의 '3' 같은 것도 잡으므로, 단위(원/억/만…)나 쉼표·소수점이
     있거나 4자리 이상인 숫자만 금액으로 봅니다. 나머지 짧은 정수는 검증하지 않습니다
     (자녀 수, 순위 등은 원문 대조의 의미가 약합니다).
     """
-    facts: list[str] = []
+    facts: list[tuple[str, str]] = []
     for m in _RE_DATE.finditer(text):
-        facts.append(_normalize(m.group()))
+        facts.append(("date", _normalize(m.group())))
     for m in _RE_PERCENT.finditer(text):
-        facts.append(_normalize(m.group()))
+        facts.append(("percent", _normalize(m.group())))
     for m in _RE_AMOUNT.finditer(text):
         raw = m.group()
+        if text[m.end() :].lstrip().startswith("%"):
+            continue  # 퍼센트의 숫자 부분 — percent 팩트로 이미 검증된다
         digits = re.sub(r"\D", "", raw)
         has_unit = bool(re.search(r"억|천만|백만|만|천|원", raw))
         if not has_unit and "," not in raw and "." not in raw and len(digits) < 4:
             continue
-        facts.append(_normalize(raw))
+        facts.append(("amount", _normalize(raw)))
     return facts
 
 
-def _source_text(agent_outputs: list[AgentOutput]) -> str:
+def extract_facts(text: str) -> list[str]:
+    """검증 대상이 되는 토큰(금액·퍼센트·날짜)을 정규화해서 뽑습니다."""
+    return [fact for _, fact in _extract_typed(text)]
+
+
+_UNIT_FACTORS = {
+    "억": Decimal(10**8),
+    "천만": Decimal(10**7),
+    "백만": Decimal(10**6),
+    "만": Decimal(10**4),
+    "천": Decimal(10**3),
+}
+_RE_AMOUNT_CHUNK = re.compile(r"(\d+(?:\.\d+)?)(억|천만|백만|만|천)?")
+
+
+def _parse_amount(fact: str) -> Optional[Decimal]:
+    """정규화된 금액 토큰을 원 단위 값으로. 애매하면 None (fail-closed).
+
+    "3억5천만원" → 350000000, "1,234,000원"(정규화 후 "1234000원") → 1234000.
+    단위 없는 묶음은 마지막 자리(원 단위)에만 허용합니다.
+    """
+    text = fact[:-1] if fact.endswith("원") else fact
+    total = Decimal(0)
+    pos = 0
+    while pos < len(text):
+        m = _RE_AMOUNT_CHUNK.match(text, pos)
+        if not m or m.end() == pos:
+            return None
+        try:
+            number = Decimal(m.group(1))
+        except InvalidOperation:
+            return None
+        unit = m.group(2)
+        if unit is None and m.end() != len(text):
+            return None
+        total += number * (_UNIT_FACTORS[unit] if unit else Decimal(1))
+        pos = m.end()
+    return total
+
+
+def _parse_percent(fact: str) -> Optional[Decimal]:
+    try:
+        return Decimal(fact.rstrip("%"))
+    except InvalidOperation:
+        return None
+
+
+_RE_DATE_ISO = re.compile(r"(\d{4})[-./](\d{1,2})[-./](\d{1,2})")
+_RE_DATE_KO = re.compile(r"(\d{4})년(\d{1,2})월(\d{1,2})일")
+_RE_DATE_MD = re.compile(r"(\d{1,2})월(\d{1,2})일")
+
+
+def _parse_date(fact: str) -> Optional[tuple[Optional[int], int, int]]:
+    """정규화된 날짜 토큰을 (연, 월, 일)로. 연도 없는 표기는 연=None."""
+    for pattern in (_RE_DATE_ISO, _RE_DATE_KO):
+        m = pattern.fullmatch(fact)
+        if m:
+            return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    m = _RE_DATE_MD.fullmatch(fact)
+    if m:
+        return (None, int(m.group(1)), int(m.group(2)))
+    return None
+
+
+def _parse_fact(kind: str, fact: str):
+    if kind == "amount":
+        return _parse_amount(fact)
+    if kind == "percent":
+        return _parse_percent(fact)
+    return _parse_date(fact)
+
+
+def _source_parts(agent_outputs: list[AgentOutput]) -> list[str]:
     parts = [o.reply for o in agent_outputs]
     for o in agent_outputs:
         try:
             parts.append(json.dumps(o.data, ensure_ascii=False, default=str))
         except TypeError:
             parts.append(str(o.data))
-    return _normalize("\n".join(parts))
+    return parts
+
+
+def _source_values(parts: list[str]) -> dict[str, set]:
+    """원본에서 파싱 가능한 팩트를 값 집합으로 모읍니다 (2차 대조용)."""
+    values: dict[str, set] = {
+        "amount": set(),
+        "percent": set(),
+        "date": set(),
+        "month_day": set(),
+    }
+    for part in parts:
+        for kind, fact in _extract_typed(part):
+            parsed = _parse_fact(kind, fact)
+            if parsed is None:
+                continue
+            if kind == "date":
+                year, month, day = parsed
+                if year is not None:
+                    values["date"].add(parsed)
+                values["month_day"].add((month, day))
+            else:
+                values[kind].add(parsed)
+    return values
+
+
+def _matches_by_value(kind: str, fact: str, source_values: dict[str, set]) -> bool:
+    parsed = _parse_fact(kind, fact)
+    if parsed is None:
+        return False
+    if kind != "date":
+        return parsed in source_values[kind]
+    year, month, day = parsed
+    if year is None:
+        # draft 가 연도를 생략한 건 정보 누락일 뿐 조작이 아니다
+        return (month, day) in source_values["month_day"]
+    # draft 가 붙인 연도는 원본에 연도까지 있는 날짜와만 맞아야 한다
+    return parsed in source_values["date"]
 
 
 def verify_numbers(draft: str, agent_outputs: list[AgentOutput]) -> VerificationResult:
-    """draft 의 금액·퍼센트·날짜가 전부 원본에 있으면 ok."""
-    source = _source_text(agent_outputs)
-    mismatches = [fact for fact in extract_facts(draft) if fact not in source]
+    """draft 의 금액·퍼센트·날짜가 전부 원본에 있으면 ok.
+
+    1차: 정규화 문자열 포함 검사. 2차: 표기만 다른 경우를 값 비교로 구제
+    ("3억 5천만원" ↔ "350,000,000원"). 어느 쪽으로도 확인 안 되면 mismatch.
+    """
+    parts = _source_parts(agent_outputs)
+    source = _normalize("\n".join(parts))
+    source_values = _source_values(parts)
+    mismatches = [
+        fact
+        for kind, fact in _extract_typed(draft)
+        if fact not in source and not _matches_by_value(kind, fact, source_values)
+    ]
     # 중복 제거(순서 유지)
     seen: set[str] = set()
     unique = [m for m in mismatches if not (m in seen or seen.add(m))]
