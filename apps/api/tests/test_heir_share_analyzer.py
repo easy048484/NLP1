@@ -184,6 +184,68 @@ def test_agent_collects_values_over_multiple_turns() -> None:
     assert "100,000,000원" in output.reply
 
 
+def test_agent_accepts_compound_and_comma_money_expressions() -> None:
+    output = run(
+        AgentInput(
+            session_id="share-money-regression",
+            user_message="유류분을 확인하고 싶어요",
+            family_graph=SPOUSE_AND_TWO_CHILDREN,
+        )
+    )
+    output = run(
+        AgentInput(
+            session_id="share-money-regression",
+            user_message="생전",
+            family_graph=SPOUSE_AND_TWO_CHILDREN,
+            context=output.data,
+        )
+    )
+    output = run(
+        AgentInput(
+            session_id="share-money-regression",
+            user_message="3억5천",
+            family_graph=SPOUSE_AND_TWO_CHILDREN,
+            context=output.data,
+        )
+    )
+
+    state = output.data["heir_share_analyzer"]
+    assert state["values"]["estate_value"] == 350_000_000
+    assert state["asked_slot"] == "debts"
+
+
+def test_planned_acquisitions_preserve_thousands_separator_commas() -> None:
+    payload = AgentInput(
+        session_id="share-planned-comma",
+        user_message="계산해주세요",
+        family_graph=SPOUSE_AND_TWO_CHILDREN,
+        context={
+            "share_input": {
+                "stage": "pre_death",
+                "estate_value": 64_000_000,
+                "debts": 0,
+                "complexity_flags": [],
+            }
+        },
+    )
+    output = run(payload)
+    assert output.data["heir_share_analyzer"]["asked_slot"] == ("planned_acquisitions")
+
+    output = run(
+        AgentInput(
+            session_id="share-planned-comma",
+            user_message="배우자=3,200만원, 자녀1=3,200만원",
+            family_graph=SPOUSE_AND_TWO_CHILDREN,
+            context=output.data,
+        )
+    )
+    state = output.data["heir_share_analyzer"]
+    assert state["values"]["planned_acquisitions"] == {
+        "배우자": 32_000_000,
+        "자녀1": 32_000_000,
+    }
+
+
 def test_post_death_chat_asks_for_opening_date() -> None:
     first = run(
         AgentInput(

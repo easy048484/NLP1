@@ -3,10 +3,12 @@ import { useApp } from "../../lib/appState";
 import {
   parsePendingQuestions,
   parseShares,
+  parseShareWarnings,
   parseSignals,
   parseTaxResult,
 } from "../../lib/agentData";
 import { Markdown } from "../../lib/markdown";
+import { formatWonExact } from "../../lib/format";
 import type { AgentOutput } from "../../types";
 import {
   AmountDisplay,
@@ -34,10 +36,11 @@ export function AgentCards({
   const { send } = useApp();
   const data = contribution.data ?? {};
 
-  const signals = parseSignals(data);
-  const pending = parsePendingQuestions(data);
-  const tax = parseTaxResult(data);
-  const shares = parseShares(data);
+  const signals = parseSignals(data, contribution.agent);
+  const pending = parsePendingQuestions(data, contribution.agent);
+  const tax = parseTaxResult(data, contribution.agent);
+  const shares = parseShares(data, contribution.agent);
+  const shareWarnings = parseShareWarnings(data, contribution.agent);
 
   const cards: ReactElement[] = [];
 
@@ -72,25 +75,46 @@ export function AgentCards({
 
   if (shares) {
     cards.push(
-      <ResultCard key="shares" title="법정상속분 · 유류분">
-        <table className="share-table">
-          <thead>
-            <tr>
-              <th>상속인</th>
-              <th>법정상속분</th>
-              {shares.some((s) => s.forced) && <th>유류분</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {shares.map((s) => (
-              <tr key={s.heir}>
-                <td>{s.heir}</td>
-                <td>{s.statutory}</td>
-                {shares.some((x) => x.forced) && <td>{s.forced ?? "—"}</td>}
+      <ResultCard
+        key="shares"
+        title="법정상속분 · 유류분"
+        meta="참고용 1차 시뮬레이션입니다. 단순 부족액은 실제 청구 가능 여부나 최종 반환금액을 뜻하지 않으며 전문가 검토가 필요합니다."
+      >
+        <div style={{ overflowX: "auto" }}>
+          <table className="share-table">
+            <thead>
+              <tr>
+                <th>상속인</th>
+                <th>법정상속분</th>
+                {shares.some((s) => s.forced) && <th>기본 유류분 예상액</th>}
+                <th>예정 취득액</th>
+                <th>단순 부족액</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {shares.map((s, i) => (
+                <tr key={`${s.heir}-${i}`}>
+                  <td>{s.heir}</td>
+                  <td>{s.statutory}</td>
+                  {shares.some((x) => x.forced) && <td>{s.forced ?? "—"}</td>}
+                  <td>
+                    {s.planned_acquisition == null
+                      ? "미확인"
+                      : formatWonExact(s.planned_acquisition)}
+                  </td>
+                  <td>
+                    {s.simple_gap == null ? "비교 전" : formatWonExact(s.simple_gap)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {shareWarnings.length > 0 && (
+          <ul>
+            {shareWarnings.map((warning, i) => <li key={i}>{warning}</li>)}
+          </ul>
+        )}
       </ResultCard>,
     );
   }

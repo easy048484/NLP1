@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import re
 from copy import deepcopy
-from decimal import Decimal
 from typing import Any
 
 from pydantic import ValidationError
 
 from family_graph.heirs import classify_heirs
 from schemas import AgentInput, AgentName, AgentOutput
+
+from agents._money import parse_money as _parse_shared_money
 
 from .calculator import calculate_inheritance_tax
 from .models import InheritanceTaxInput
@@ -299,6 +300,13 @@ def _is_unknown(message: str) -> bool:
     )
 
 
+def _parse_money(message: str) -> int | None:
+    """공용 금액 파서를 쓰되 상속세의 미확정 답변을 0원으로 확정하지 않는다."""
+    if _is_unknown(message):
+        return None
+    return _parse_shared_money(message)
+
+
 def _strict_confirmation(message: str) -> bool | None:
     normalized = message.strip().replace(" ", "").rstrip(".!")
     if normalized in {"네", "예", "응", "맞아", "맞아요", "확인", "확인했어요"}:
@@ -391,109 +399,6 @@ def _parse_count(message: str) -> int | None:
         return None
 
     return int(match.group())
-
-
-def _parse_small_korean_amount(text: str) -> Decimal | None:
-    """만보다 작은 구간의 천·백·십 단위를 계산한다."""
-
-    if not text:
-        return Decimal("1")
-
-    if re.fullmatch(r"\d+(?:\.\d+)?", text):
-        return Decimal(text)
-
-    small_units = {
-        "천": Decimal("1000"),
-        "백": Decimal("100"),
-        "십": Decimal("10"),
-    }
-
-    total = Decimal("0")
-    position = 0
-
-    for match in re.finditer(r"(\d+(?:\.\d+)?)?(천|백|십)", text):
-        if match.start() != position:
-            return None
-
-        number = Decimal(match.group(1) or "1")
-        total += number * small_units[match.group(2)]
-        position = match.end()
-
-    tail = text[position:]
-
-    if tail:
-        if re.fullmatch(r"\d+(?:\.\d+)?", tail) is None:
-            return None
-
-        total += Decimal(tail)
-
-    return total
-
-
-def _parse_money(message: str) -> int | None:
-    """'10억', '9천5백만원', '300000000원'을 원 단위 정수로 변환한다."""
-
-    normalized = message.strip().replace(",", "").replace(" ", "")
-
-    if _is_unknown(message):
-        return None
-
-    if normalized in {"없음", "없어요", "없습니다", "없다", "없어", "해당없음"}:
-        return 0
-
-    if re.fullmatch(r"0+원?", normalized):
-        return 0
-
-    amount_text = normalized.removesuffix("원")
-
-    if re.fullmatch(r"\d+", amount_text):
-        return int(amount_text)
-
-    if re.fullmatch(r"[0-9.조억만천백십]+", amount_text) is None:
-        return None
-
-    big_units = {
-        "조": 1_000_000_000_000,
-        "억": 100_000_000,
-        "만": 10_000,
-    }
-
-    total = Decimal("0")
-    position = 0
-    previous_multiplier: int | None = None
-
-    for match in re.finditer(r"[조억만]", amount_text):
-        multiplier = big_units[match.group()]
-
-        # 큰 단위는 조 → 억 → 만 순서로만 입력할 수 있다.
-        if previous_multiplier is not None and multiplier >= previous_multiplier:
-            return None
-
-        section = amount_text[position : match.start()]
-
-        if not section and position != 0:
-            return None
-
-        section_value = _parse_small_korean_amount(section)
-
-        if section_value is None:
-            return None
-
-        total += section_value * multiplier
-        position = match.end()
-        previous_multiplier = multiplier
-
-    tail = amount_text[position:]
-
-    if tail:
-        tail_value = _parse_small_korean_amount(tail)
-
-        if tail_value is None:
-            return None
-
-        total += tail_value
-
-    return int(total)
 
 
 def _apply_previous_answer(message: str, state: dict[str, Any]) -> bool:

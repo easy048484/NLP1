@@ -1,3 +1,1 @@
-from llm.client import chat
-
-__all__ = ["chat"]
+"""Claude API 호출 모듈. llm.claude 의 complete()/extract() 를 사용하세요."""
