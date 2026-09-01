@@ -1,8 +1,8 @@
 """공유 컨텍스트 정비 회귀 테스트.
 
 - family_graph.heirs.classify_heirs: 상속인 분류 1벌 통합
-- tax_calculator / heir_share_analyzer: 세션 공유 상속재산(financial_profile)을
-  읽어 재질문하지 않는다
+- tax_calculator: 공유 상속재산을 후보로 제시하고 사용자 확인 후 계산에 반영한다
+- heir_share_analyzer: 세션 공유 상속재산을 읽어 재질문하지 않는다
 - decedent_estate: compact WillStatus 를 산출한다
 - planner.classify: axis(생전/사후)로 키워드 없는 발화를 라우팅한다
 - orchestrator: will_status 가 decedent_estate → tax_calculator 로 흐른다
@@ -69,7 +69,7 @@ def test_classify_heirs_no_data():
 # -------------------------------------------- tax_calculator reads estate
 
 
-def test_tax_calculator_prefills_from_shared_estate():
+def test_tax_calculator_confirms_candidates_from_shared_estate():
     from agents.tax_calculator.agent import STATE_KEY, run
 
     payload = AgentInput(
@@ -79,6 +79,7 @@ def test_tax_calculator_prefills_from_shared_estate():
         financial_profile=FinancialProfile(
             real_estate_value=800_000_000,
             financial_assets=200_000_000,
+            other_assets=0,
             total_debts=100_000_000,
         ),
         context={
@@ -93,13 +94,39 @@ def test_tax_calculator_prefills_from_shared_estate():
         },
     )
     output = run(payload)
-    values = output.data[STATE_KEY]["values"]
-    # asset_organizer 가 넘긴 값이 그대로 슬롯에 들어가 재질문되지 않는다
-    assert values["original_inherited_property"] == 1_000_000_000
-    assert values["financial_assets"] == 200_000_000
-    assert values["debts"] == 100_000_000
-    # 재산 관련 질문이 아니라 다음 단계(배우자 실제 상속액 등)로 넘어갔다
-    assert output.data[STATE_KEY]["asked_slot"] != "original_inherited_property"
+    state = output.data[STATE_KEY]
+    assert state["asked_slot"] == "profile_scope_confirmed"
+    assert state["profile_candidates"]["original_inherited_property"] == 1_000_000_000
+    assert state["profile_candidates"]["debts"] == 100_000_000
+    for field in ("original_inherited_property", "financial_assets", "debts"):
+        assert field not in state["values"]
+        assert field not in state["confirmed_fields"]
+
+    # 이미 정리한 합계를 재입력하지 않고 범위 확인 → 후보 금액 확인으로 재사용한다.
+    def confirm(previous):
+        return run(
+            payload.model_copy(
+                update={
+                    "user_message": "네",
+                    "context": {STATE_KEY: previous.data[STATE_KEY]},
+                }
+            )
+        )
+
+    suggested = confirm(output)
+    assert suggested.data[STATE_KEY]["asked_slot"] == "original_inherited_property"
+    assert "1,000,000,000원" in suggested.reply
+    assert "original_inherited_property" not in suggested.data[STATE_KEY]["values"]
+
+    confirmed = confirm(suggested).data[STATE_KEY]
+    assert confirmed["values"]["original_inherited_property"] == 1_000_000_000
+    assert (
+        confirmed["profile_sources"]["original_inherited_property"]
+        == "profile_confirmed"
+    )
+    # 일반 금융자산과 공제대상 금융재산은 구분하며, 채무도 별도로 확인한다.
+    assert "financial_assets" not in confirmed["values"]
+    assert "debts" not in confirmed["values"]
 
 
 def test_tax_calculator_user_confirmed_value_wins_over_estate():

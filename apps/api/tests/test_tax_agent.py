@@ -47,6 +47,7 @@ def test_tax_agent_uses_family_graph_and_calculates() -> None:
             "values": {
                 "decedent_is_resident": True,
                 "original_inherited_property": 1_000_000_000,
+                "deemed_inherited_property": 0,
                 "debts": 0,
                 "financial_assets": 0,
                 "financial_debts": 0,
@@ -109,6 +110,7 @@ def _run_with_family_graph(session_id: str, heirs: list[dict]) -> AgentOutput:
             "values": {
                 "decedent_is_resident": True,
                 "original_inherited_property": 1_000_000_000,
+                "deemed_inherited_property": 0,
                 "debts": 0,
                 "financial_assets": 0,
                 "financial_debts": 0,
@@ -289,6 +291,9 @@ def test_childless_couple_sole_heir_calculates_successfully() -> None:
             "자녀는 없어요.",
             "네, 배우자가 단독으로 상속받아요.",
             "10억원",
+            "0원",  # 사망보험금 없음
+            "0원",  # 신탁재산 없음
+            "0원",  # 퇴직급여 없음
             "0원",
             "0원",
             "0원",
@@ -333,6 +338,7 @@ def test_validation_error_uses_friendly_reply_and_keeps_raw_error_for_dev() -> N
                     "spouse_exists": False,
                     "children_count": 0,
                     "original_inherited_property": 100_000_000,
+                    "deemed_inherited_property": 0,
                     "debts": 0,
                     "financial_assets": 200_000_000,
                     "financial_debts": 0,
