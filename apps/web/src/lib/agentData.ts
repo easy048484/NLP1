@@ -7,8 +7,10 @@ import type {
   PendingQuestion,
   RequirementSignal,
   SignalGrade,
-  TaxResult,
 } from "../types";
+
+export { parseTaxResult, parseShares, parseShareWarnings } from "./taxShareData";
+export type { ShareRow } from "./taxShareData";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -29,7 +31,6 @@ function asString(v: unknown): string | undefined {
 function asNumber(v: unknown): number | undefined {
   return typeof v === "number" && !Number.isNaN(v) ? v : undefined;
 }
-
 /** data 안 어디든(네임스페이스 키 포함) 특정 키를 찾는다. */
 function deepFind(data: Record<string, unknown>, key: string): unknown {
   if (key in data) return data[key];
@@ -206,57 +207,6 @@ export function hasPendingQuestions(data: Record<string, unknown>, agentKey?: st
   return (parsePendingQuestions(data, agentKey) ?? []).length > 0;
 }
 
-export function parseTaxResult(
-  data: Record<string, unknown>,
-  agentKey?: string,
-): TaxResult | null {
-  const raw = deepFindScoped(data, agentKey, "last_result", "tax_result", "result");
-  const rec = asRecord(raw);
-  if (!rec) return null;
-
-  // rows: [{label, amount}] 또는 {label: amount} 맵
-  let rows: { label: string; amount: number }[] = [];
-  const rowsRaw = rec.rows ?? rec.breakdown ?? rec.items;
-  if (Array.isArray(rowsRaw)) {
-    rows = rowsRaw
-      .map((r) => {
-        const rr = asRecord(r);
-        const label = asString(rr?.label);
-        const amount = asNumber(rr?.amount ?? rr?.value);
-        return label && amount != null ? { label, amount } : null;
-      })
-      .filter((r): r is { label: string; amount: number } => !!r);
-  } else {
-    const map = asRecord(rowsRaw);
-    if (map) {
-      rows = Object.entries(map)
-        .map(([label, v]) => {
-          const amount = asNumber(v);
-          return amount != null ? { label, amount } : null;
-        })
-        .filter((r): r is { label: string; amount: number } => !!r);
-    }
-  }
-  if (rows.length === 0) return null;
-
-  const statusRaw = asString(rec.status) ?? "calculated";
-  return {
-    status:
-      statusRaw === "collecting" ||
-      statusRaw === "unsupported" ||
-      statusRaw === "needs_review"
-        ? statusRaw
-        : "calculated",
-    rows,
-    final_amount:
-      asNumber(rec.final_amount ?? rec.final ?? rec.total) ?? rows[rows.length - 1]?.amount ?? null,
-    filing_due: asString(rec.filing_due ?? rec.due_date) ?? null,
-    notes: asArray(rec.notes)
-      .map((n) => asString(n))
-      .filter((n): n is string => !!n),
-  };
-}
-
 export function parsePlan(data: Record<string, unknown>): AgentPlan | null {
   const raw = deepFind(data, "plan");
   const rec = asRecord(raw);
@@ -300,29 +250,4 @@ export function parsePlan(data: Record<string, unknown>): AgentPlan | null {
         : null),
     calendar_ics: asString(rec.calendar_ics ?? deepFind(data, "calendar_ics")) ?? null,
   };
-}
-
-/** heir_share_analyzer: 분배표 [{heir, statutory_share, forced_share?}] */
-export interface ShareRow {
-  heir: string;
-  statutory: string;
-  forced?: string | null;
-}
-export function parseShares(data: Record<string, unknown>, agentKey?: string): ShareRow[] | null {
-  const raw = deepFindScoped(data, agentKey, "shares", "distribution");
-  const list = asArray(raw);
-  if (list.length === 0) return null;
-  const rows: ShareRow[] = [];
-  for (const r of list) {
-    const rr = asRecord(r);
-    if (!rr) continue;
-    const heir = asString(rr.heir ?? rr.name ?? rr.relation);
-    if (!heir) continue;
-    rows.push({
-      heir,
-      statutory: asString(rr.statutory_share ?? rr.statutory ?? rr.share) ?? "—",
-      forced: asString(rr.forced_share ?? rr.forced) ?? null,
-    });
-  }
-  return rows.length ? rows : null;
 }
