@@ -42,46 +42,13 @@ function readVerification(obj: Record<string, unknown>): VerificationResult | nu
 }
 
 /**
- * 백엔드 node_compose(orchestrator/router.py)는 이번 턴 에이전트들의 data 를
- * 최상위에 평면 병합한다(`merged_data.update(o.data)`). 규약을 따르는 에이전트는
- * 자기 몫을 `data[<agent>]` 네임스페이스에도 함께 넣지만, 전환기라 아래 레거시
- * 평면 키도 같이 나온다. 화면(agentData.parse*)이 다른 에이전트 데이터를 주워
- * 담지 않도록, 에이전트별로 "자기 것"인 평면 키만 골라 슬라이스에 합쳐준다.
- */
-const LEGACY_FLAT_KEYS: Partial<Record<AgentName, readonly string[]>> = {
-  decedent_estate: [
-    "will_type",
-    "requirements",
-    "guide",
-    "warnings",
-    "review",
-    "pending_questions",
-  ],
-  heir_navigator: [
-    "plan",
-    "calendar_ics",
-    "asked_slot",
-    "handoff_reason",
-    "pending_questions",
-  ],
-};
-
-/**
- * `response.agents` 를 순회해 에이전트별 contribution 을 만든다.
- * - `data` 는 `rawData[agent]`(네임스페이스 슬라이스)를 기본으로 하고,
- *   그 위에 이 에이전트가 쓰는 레거시 평면 키만 덧씌운다(네임스페이스 값 우선).
- * - `reply` 는 빈 문자열 — 합성 답변은 ChatResponse.reply(최상위)에만 있고,
- *   카드 렌더(AgentCards)는 `contribution.data` 만 본다.
+ * `contributions[]` 없는 구버전 백엔드 폴백: `response.agents` 를 순회해
+ * `data[<agent>]` 네임스페이스 슬라이스만으로 contribution 을 만든다.
  *
- * ⚠️ pending_questions / handoff_reason 처럼 decedent_estate 와 heir_navigator 가
- *   같은 평면 키를 쓰면, 백엔드 평면 병합(merged_data.update) 때문에 마지막
- *   에이전트 값만 남고 나머지는 사라진다. 어느 에이전트 것이었는지 복원할 수
- *   없어서, 네임스페이스 슬라이스에 그 키가 없는 에이전트에는 살아남은 평면
- *   값을 그대로 채워 넣는다(= 두 에이전트가 같은 후속질문을 보게 될 수 있음).
- *   최소한 화면이 안 깨지게 하는 임시 처리이며, 후속 질문이 엉뚱한 에이전트
- *   카드에 붙을 수 있다.
- *   TODO(정민 확인 필요): node_compose 가 data 를 에이전트별 네임스페이스로만
- *   내려주도록 고치면 LEGACY_FLAT_KEYS 병합과 이 복사 로직을 통째로 제거.
+ * 현재 백엔드는 ChatResponse.contributions 로 에이전트별 원본 출력을 직접
+ * 내려주므로 이 함수는 타지 않는다. 평면 병합 키를 소유자별로 재분배하던
+ * LEGACY_FLAT_KEYS 방어(겹치는 pending_questions 가 두 에이전트에 복사되던
+ * 임시 처리)는 contributions 도입으로 제거했다.
  */
 function splitContributions(
   agents: AgentName[],
@@ -92,13 +59,7 @@ function splitContributions(
   for (const agent of agents) {
     if (seen.has(agent)) continue;
     seen.add(agent);
-
-    const slice = asRecord(rawData[agent]);
-    const data: Record<string, unknown> = { ...slice };
-    for (const key of LEGACY_FLAT_KEYS[agent] ?? []) {
-      if (key in rawData && !(key in data)) data[key] = rawData[key];
-    }
-    out.push({ agent, reply: "", data });
+    out.push({ agent, reply: "", data: { ...asRecord(rawData[agent]) } });
   }
   return out;
 }

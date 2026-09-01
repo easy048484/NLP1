@@ -103,62 +103,56 @@ describe("normalizeChatResponse — 현재 백엔드 (agents[] + 평면 data)", 
   });
 });
 
-describe("normalizeChatResponse — LEGACY_FLAT_KEYS 병합", () => {
-  it("네임스페이스에 없는 레거시 평면 키(will_type 등)는 decedent_estate 슬라이스로 끌어온다", () => {
+describe("normalizeChatResponse — contributions[] 계약", () => {
+  it("백엔드가 contributions 를 주면 그대로 쓰고 평면 data 는 무시한다", () => {
     const r = normalizeChatResponse(
       currentBackendResponse({
-        agents: ["decedent_estate"],
-        data: {
-          // 네임스페이스는 비어 있고, 평면으로만 온 경우
-          will_type: "handwritten",
-          requirements: { date: { id: "date", grade: "GREEN" } },
-        },
+        agents: ["decedent_estate", "heir_navigator"],
+        data: { pending_questions: [{ question: "평면 병합 잔재", field: "x" }] },
+        contributions: [
+          {
+            agent: "decedent_estate",
+            reply: "유언장 검토 결과",
+            data: { pending_questions: [{ question: "유언장 질문", field: "a" }] },
+          },
+          {
+            agent: "heir_navigator",
+            reply: "절차 안내",
+            data: { pending_questions: [{ question: "절차 질문", field: "b" }] },
+          },
+        ],
       }),
     );
-    const c = r!.contributions[0];
-    expect(c.data.will_type).toBe("handwritten");
-    expect(c.data.requirements).toBeDefined();
+    const [de, hn] = r!.contributions;
+    // 겹치는 키(pending_questions)가 소유자별로 보존된다 — 평면 병합 덮어쓰기 해소
+    expect(de.data.pending_questions).toEqual([
+      { question: "유언장 질문", field: "a" },
+    ]);
+    expect(hn.data.pending_questions).toEqual([
+      { question: "절차 질문", field: "b" },
+    ]);
   });
 
-  it("네임스페이스 값이 평면 값을 이긴다", () => {
+  it("contributions 가 없는 구버전 응답은 네임스페이스 슬라이스만으로 쪼갠다(평면 키는 안 끌어옴)", () => {
     const r = normalizeChatResponse(
       currentBackendResponse({
         agents: ["decedent_estate"],
         data: {
-          will_type: "flat-값",
+          will_type: "평면-잔재",
           decedent_estate: { will_type: "namespace-값" },
         },
       }),
     );
-    expect(r!.contributions[0].data.will_type).toBe("namespace-값");
-  });
-
-  it("허용 목록에 없는 평면 키는 슬라이스로 끌어오지 않는다", () => {
-    const r = normalizeChatResponse(
+    const c = r!.contributions[0];
+    expect(c.data.will_type).toBe("namespace-값");
+    // LEGACY_FLAT_KEYS 제거: 네임스페이스 밖 평면 키는 더 이상 슬라이스에 섞지 않는다
+    const r2 = normalizeChatResponse(
       currentBackendResponse({
         agents: ["decedent_estate"],
-        data: { some_random_key: "무시돼야 함", decedent_estate: {} },
+        data: { will_type: "평면-값", decedent_estate: {} },
       }),
     );
-    expect(r!.contributions[0].data.some_random_key).toBeUndefined();
-  });
-
-  it("pending_questions 가 평면으로만 오면(병합 버그) 그 키를 쓰는 두 에이전트가 같은 값을 본다", () => {
-    // ⚠️ 알려진 한계 — node_compose 평면 병합으로 원 소유자를 복원할 수 없어
-    //    decedent_estate·heir_navigator 둘 다에 살아남은 평면 값을 채운다.
-    const r = normalizeChatResponse(
-      currentBackendResponse({
-        agents: ["decedent_estate", "heir_navigator"],
-        data: {
-          pending_questions: [{ question: "공용 질문", field: "x" }],
-          decedent_estate: {},
-          heir_navigator: {},
-        },
-      }),
-    );
-    const [de, hn] = r!.contributions;
-    expect(de.data.pending_questions).toEqual([{ question: "공용 질문", field: "x" }]);
-    expect(hn.data.pending_questions).toEqual([{ question: "공용 질문", field: "x" }]);
+    expect(r2!.contributions[0].data.will_type).toBeUndefined();
   });
 });
 

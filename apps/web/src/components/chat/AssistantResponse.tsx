@@ -2,7 +2,7 @@ import { agentMeta } from "../../lib/agents";
 import { Markdown } from "../../lib/markdown";
 import type { ChatResponse } from "../../types";
 import { hasPendingQuestions } from "../../lib/agentData";
-import { AgentAvatar, NeedsReviewBadge } from "../ui";
+import { AgentAvatar, ConcatNoticeBadge, NeedsReviewBadge } from "../ui";
 import { AgentCards } from "./AgentCards";
 
 /**
@@ -37,6 +37,9 @@ export function AssistantResponse({ response }: { response: ChatResponse }) {
       )}
 
       {response.needs_review && <NeedsReviewBadge />}
+      {!response.needs_review && response.verification?.mode === "concat" && (
+        <ConcatNoticeBadge />
+      )}
 
       {response.reply && (
         <div className="assistant-bubble">

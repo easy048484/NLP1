@@ -38,7 +38,7 @@ from .models import Asset, AssetType, IncomeStream, InsuranceTag, Liability
 #: 정규식 키워드 사전의 키를 좁혀두기 위한 로컬 타입일 뿐이다.
 _LiabilityLabel = Literal["대출", "카드론", "전세자금대출", "임대보증금반환채무"]
 
-_MODEL = "claude-haiku-4-5-20251001"
+_MODEL = os.getenv("CLAUDE_EXTRACT_MODEL", "claude-haiku-4-5-20251001")
 _TIMEOUT_SECONDS = 8.0
 _MAX_TOKENS = 400
 

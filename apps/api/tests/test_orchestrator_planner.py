@@ -373,6 +373,87 @@ def test_verify_numbers_ignores_small_counts():
     assert compose_mod.verify_numbers("3개월 안에 2명이 신고합니다.", _outputs()).ok
 
 
+# ---------------------------------------- verify: 값 수준(semantic) 대조
+
+
+def _notation_outputs():
+    return [
+        AgentOutput(
+            agent=AgentName.TAX_CALCULATOR,
+            reply="상속재산은 3억 5천만원으로 평가되며 세율은 20%입니다.",
+        ),
+        AgentOutput(
+            agent=AgentName.HEIR_NAVIGATOR,
+            reply="협의분할 서류를 준비하세요.",
+            data={"deadline": "2026-02-28"},
+        ),
+    ]
+
+
+def test_verify_accepts_amount_notation_change():
+    # 값은 같고 표기만 바뀐 금액은 오탐이 아니다
+    draft = "상속재산 평가액은 350,000,000원입니다."
+    result = compose_mod.verify_numbers(draft, _notation_outputs())
+    assert result.ok, result.mismatches
+
+
+def test_verify_accepts_decimal_unit_notation():
+    draft = "상속재산 평가액은 3.5억 원입니다."
+    result = compose_mod.verify_numbers(draft, _notation_outputs())
+    assert result.ok, result.mismatches
+
+
+def test_verify_accepts_date_format_change():
+    # data 필드의 ISO 날짜 ↔ 한국어 날짜 표기
+    draft = "신고 기한은 2026년 2월 28일입니다."
+    result = compose_mod.verify_numbers(draft, _notation_outputs())
+    assert result.ok, result.mismatches
+
+
+def test_verify_accepts_year_omitted_date():
+    draft = "신고 기한은 2월 28일입니다."
+    assert compose_mod.verify_numbers(draft, _notation_outputs()).ok
+
+
+def test_verify_rejects_invented_year():
+    # 원본에 연도가 없는데 draft 가 연도를 붙이면 mismatch
+    outputs = [
+        AgentOutput(agent=AgentName.HEIR_NAVIGATOR, reply="기일은 2월 28일입니다."),
+        AgentOutput(agent=AgentName.TAX_CALCULATOR, reply="세율은 20%입니다."),
+    ]
+    result = compose_mod.verify_numbers("기일은 2027년 2월 28일입니다.", outputs)
+    assert not result.ok
+    assert "2027년2월28일" in result.mismatches
+
+
+def test_verify_rejects_altered_amount_across_notation():
+    # 표기 변환처럼 보여도 값이 다르면 잡는다
+    draft = "상속재산 평가액은 360,000,000원입니다."
+    result = compose_mod.verify_numbers(draft, _notation_outputs())
+    assert not result.ok
+    assert result.mismatches == ["360,000,000원".replace(",", "")]
+
+
+def test_verify_accepts_percent_decimal_notation():
+    draft = "세율은 20.0%입니다."
+    assert compose_mod.verify_numbers(draft, _notation_outputs()).ok
+
+
+def test_extract_compound_amount_as_single_token():
+    assert compose_mod.extract_facts("평가액 3억 5천만원") == ["3억5천만원"]
+    # 단위 없는 뒷숫자는 "원"이 붙을 때만 금액에 포함된다
+    assert compose_mod.extract_facts("1억 2026년") == ["1억", "2026"]
+
+
+def test_parse_amount_values():
+    assert compose_mod._parse_amount("3억5천만원") == 350_000_000
+    assert compose_mod._parse_amount("12.5억") == 1_250_000_000
+    assert compose_mod._parse_amount("1234000원") == 1_234_000
+    assert compose_mod._parse_amount("1억2345원") == 100_002_345
+    # 단위 없는 묶음이 중간에 오면 해석 불가 → None (fail-closed)
+    assert compose_mod._parse_amount("3원5억") is None
+
+
 def test_compose_falls_back_to_concat_when_llm_alters_numbers(monkeypatch):
     monkeypatch.setattr(
         compose_mod,
@@ -412,3 +493,48 @@ def test_full_pipeline_response_carries_verification(monkeypatch):
     assert output.verification is not None
     assert output.verification.mode == "concat"  # LLM 없음 → 이어붙이기
     assert output.verification.ok
+
+
+# ---------------------------------------- ChatResponse.contributions 계약
+
+
+def test_contributions_preserve_overlapping_keys(monkeypatch):
+    """겹치는 평면 키(pending_questions)가 에이전트별로 보존되는지.
+
+    최상위 data 는 평면 병합(update)이라 나중 에이전트 값이 덮어쓰지만,
+    contributions[] 에는 각 에이전트의 원본 data 가 그대로 남아야 한다 —
+    프론트 카드 렌더가 이것만 보고 LEGACY_FLAT_KEYS 방어를 제거할 수 있는
+    근거다.
+    """
+    de_q = [{"question": "유언장 날짜를 확인해주세요", "field": "date"}]
+    hn_q = [{"question": "사망일이 언제인가요", "field": "death_date"}]
+    _patch(
+        monkeypatch,
+        _fake(AgentName.DECEDENT_ESTATE, data={"pending_questions": de_q}),
+        _fake(AgentName.HEIR_NAVIGATOR, data={"pending_questions": hn_q}),
+    )
+    response = router.route(
+        AgentInput(
+            session_id="contrib-1",
+            user_message="아버지가 돌아가셨는데 유언장이 있어요",
+        )
+    )
+    assert [c.agent for c in response.contributions] == [o for o in response.agents]
+    by_agent = {c.agent: c for c in response.contributions}
+    assert by_agent[AgentName.DECEDENT_ESTATE].data["pending_questions"] == de_q
+    assert by_agent[AgentName.HEIR_NAVIGATOR].data["pending_questions"] == hn_q
+    # 최상위 평면 병합은 여전히 마지막 값 — 전환기 레거시임을 문서화
+    assert response.data["pending_questions"] in (de_q, hn_q)
+
+
+def test_contributions_single_agent(monkeypatch):
+    _patch(
+        monkeypatch,
+        _fake(AgentName.TAX_CALCULATOR, data={"last_result": {"final_amount": 1}}),
+    )
+    response = router.route(
+        AgentInput(session_id="contrib-2", user_message="상속세 계산해줘")
+    )
+    assert len(response.contributions) == 1
+    assert response.contributions[0].agent == AgentName.TAX_CALCULATOR
+    assert response.contributions[0].reply.startswith("[fake:tax_calculator]")

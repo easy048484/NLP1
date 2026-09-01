@@ -33,6 +33,7 @@ API에 전달하고, 반환하는 즉시 그 데이터를 들고 있지 않는�
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Optional
 
 from .llm_client import (
@@ -44,7 +45,7 @@ from .llm_client import (
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "claude-haiku-4-5-20251001"
+_MODEL = os.getenv("CLAUDE_EXTRACT_MODEL", "claude-haiku-4-5-20251001")
 _MAX_TOKENS = 500
 _TIMEOUT_SECONDS = 20.0
 

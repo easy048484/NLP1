@@ -14,6 +14,23 @@ export function NeedsReviewBadge() {
   );
 }
 
+
+/**
+ * compose 가 LLM 합성 없이 각 에이전트 원문을 이어붙였을 때(verification.mode
+ * === "concat"). 숫자는 원문 그대로라 안전하지만, 한 편의 답변으로 다듬어지지
+ * 않았음을 알린다 — LLM 미사용 환경(키 없음/플래그 off)이 조용히 지나가지 않게.
+ */
+export function ConcatNoticeBadge() {
+  return (
+    <div className="needs-review" role="note">
+      <span aria-hidden="true" className="needs-review-icon">
+        ⚡
+      </span>
+      <span>간이 응답 — 에이전트별 답변을 합성 없이 그대로 나열했습니다.</span>
+    </div>
+  );
+}
+
 /** 법률·세무 자문이 아님을 알리는 고지. 전역 하단 고정 + 카드 인라인 두 변형. */
 export function Disclaimer({
   children,
