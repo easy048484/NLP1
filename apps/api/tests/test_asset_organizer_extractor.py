@@ -220,6 +220,88 @@ def test_thousands_comma_amount_flows_through_full_extraction():
     assert result.assets[0].value == 32_000_000
 
 
+# ---------------------------------------- 4-3) 천/백 혼합·공백 변형 (Round 15)
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("3,200만원", 32_000_000),
+        ("3,200만 원", 32_000_000),
+        ("3200만원", 32_000_000),
+        ("3천200만원", 32_000_000),
+        ("3천200만", 32_000_000),
+        ("3천 200만원", 32_000_000),
+        ("3천 200만 원", 32_000_000),
+        ("3천2백만원", 32_000_000),
+        ("3천2백만 원", 32_000_000),
+        # 이 둘은 위 항목들과 의미가 다른 별개 금액(320만원이 아니라
+        # 3,200,000원/32,000,000원 그 자체) — 콤마가 순수 원단위 표기에서도
+        # 안 잘리는지 확인하는 대조군.
+        ("3,200,000원", 3_200_000),
+        ("32,000,000원", 32_000_000),
+    ],
+)
+def test_demo_amount_expressions_parsed_consistently(text, expected):
+    """데모에서 실제로 쓰이는 "3,200만원" 의미의 모든 표현(천/백 혼합 단위,
+    공백 유무)이 같은 값으로 파싱되는지 확인하는 회귀 테스트(Round 15)."""
+    assert extractor._parse_amount(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("예금 3천200만원 있어요", 32_000_000),
+        ("예금 3천 200만 원 있어요", 32_000_000),
+        ("예금 3천2백만원 있어요", 32_000_000),
+    ],
+)
+def test_demo_amount_expressions_flow_through_full_extraction(text, expected):
+    """parser 단위 테스트뿐 아니라 실제 agent 입력 경로(extract_financial_slots)
+    까지 통과시켜 최종 저장 금액이 맞는지 확인(Round 15)."""
+    result = extractor.extract_financial_slots(text)
+
+    assert result.status == "ok"
+    assert result.assets[0].type == "예금"
+    assert result.assets[0].value == expected
+
+
+# ------------------------------------------- 4-4) 부정 표현 오탐 (Round 15 B5)
+
+
+@pytest.mark.parametrize(
+    "text,expected_kind,type_key,type_value",
+    [
+        ("예금은 없어요", "asset_absent", "asset_type", "예금"),
+        ("예금 없어요", "asset_absent", "asset_type", "예금"),
+    ],
+)
+def test_negated_asset_segment_marked_absent_not_missing_value(
+    text, expected_kind, type_key, type_value
+):
+    """실측 재현된 버그(Round 15): "예금은 없어요"가 "예금 유형은 확인됐지만
+    금액을 모른다"(asset_value)로 잘못 분류돼 방금 없다고 답한 예금의 금액을
+    재질문했다. 부정 표현이 같이 있으면 asset_absent로 구분해야 한다."""
+    result = extractor.extract_financial_slots(text)
+
+    assert result.assets == []
+    assert len(result.missing) == 1
+    assert result.missing[0]["kind"] == expected_kind
+    assert result.missing[0][type_key] == type_value
+
+
+@pytest.mark.parametrize("text", ["대출은 없어요", "대출 없어요"])
+def test_negated_liability_segment_marked_absent_not_missing_value(text):
+    """extract_liabilities의 같은 클래스 버그 — "대출은 없어요"가 대출 존재를
+    확정하고 금액만 되묻던 걸(liability_value) liability_absent로 구분."""
+    liabilities, missing = extractor.extract_liabilities(text)
+
+    assert liabilities == []
+    assert len(missing) == 1
+    assert missing[0]["kind"] == "liability_absent"
+    assert missing[0]["liability_type"] == "대출"
+
+
 # ------------------------------------------------------------- 5) 이미지 판독
 
 

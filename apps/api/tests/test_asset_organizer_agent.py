@@ -146,6 +146,45 @@ def test_negative_answer_mixed_with_new_item_only_resolves_mentioned_item(
     assert "펀드" in output2.reply
 
 
+def test_negated_liability_mention_completes_category_without_asking_amount():
+    """실측 재현된 버그(Round 15): "대출은 없어요"가 "대출 존재는 확정, 금액만
+    모름"으로 잘못 처리돼 방금 없다고 답한 대출의 금액을 되묻고 있었다.
+    부정 표현과 유형 키워드가 같은 세그먼트에 있으면 그 유형은 확인
+    완료(없음)로 처리하고 금액을 재질문하지 않아야 한다."""
+    state = agent.run(
+        AgentInput(session_id="neg-liab", user_message="예금 3천만원 있어요")
+    ).data[STATE_KEY]
+
+    output = agent.run(_continue("neg-liab", "대출은 없어요", state))
+    state2 = output.data[STATE_KEY]
+
+    assert "부채" in state2["checked_categories"]
+    assert state2["liabilities"] == []
+    assert state2["pending_amounts"] == []
+    assert "얼마" not in output.reply
+
+
+def test_negated_asset_mention_completes_category_without_asking_amount():
+    """자산 쪽도 같은 클래스의 버그 — "예금은 없어요"가 "예금은 있는데 금액을
+    모른다"로 잘못 처리되면 안 된다. (대출 5천만원 있어요로 시작해 이후
+    자연스럽게 부채 정밀 모드 후속질문으로 넘어가는 것은 정상 흐름이라
+    "얼마"라는 단어 자체를 금지하지 않고, 예금이 pending_amounts로 안 남는지만
+    확인한다.)"""
+    state = agent.run(
+        AgentInput(session_id="neg-asset", user_message="대출 5천만원 있어요")
+    ).data[STATE_KEY]
+
+    output = agent.run(_continue("neg-asset", "예금은 없어요", state))
+    state2 = output.data[STATE_KEY]
+
+    assert "예금" in state2["checked_categories"]
+    assert not any(a["type"] == "예금" for a in state2["assets"])
+    assert not any(
+        item.get("asset_type") == "예금" for item in state2["pending_amounts"]
+    )
+    assert "예금" not in output.reply
+
+
 def test_liability_without_amount_asks_then_resolves_via_bare_number():
     output1 = agent.run(AgentInput(session_id="i6", user_message="대출이 좀 있어요"))
 

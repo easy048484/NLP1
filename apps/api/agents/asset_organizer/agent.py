@@ -382,12 +382,20 @@ def _merge_extraction(
         if kind == "asset_value":
             _mark_checked(state, item["asset_type"])
             _add_pending_amount(state, item)
+        elif kind == "asset_absent":
+            # "예금은 없어요" — 그 유형은 확인 완료(없음)이지 금액 재질문
+            # 대상이 아니다(extractor.py의 _SEGMENT_NEGATION_RE 참고).
+            _mark_checked(state, item["asset_type"])
         elif kind in ("unrecognized_segment", "unclear"):
             has_unresolved_kind = True
 
     for item in liability_missing:
         _mark_checked(state, _LIABILITY_CATEGORY)
-        _add_pending_amount(state, item)
+        if item.get("kind") != "liability_absent":
+            # "대출은 없어요"(liability_absent)는 부채 카테고리 확인
+            # 완료이지 금액 재질문 대상이 아니다 — asset_absent와 동일한
+            # 이유(extractor.py의 _SEGMENT_NEGATION_RE 참고).
+            _add_pending_amount(state, item)
 
     # ⚠️ 실측으로 발견된 오탐 지점: 자산 추출(_regex_extract)과 부채 추출
     # (extract_liabilities)은 같은 문장을 각자 독립적으로 세그먼트 분석한다

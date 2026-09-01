@@ -129,6 +129,13 @@ def _parse_amount(text: str) -> Optional[int]:
     return int(total)
 
 
+#: agent.py의 _NEGATIVE_ANSWER_RE와 같은 패턴(로컬 복제 — extractor.py가
+#: agent.py를 import하면 순환참조가 생겨 의도적으로 분리했다). 유형 키워드가
+#: 매칭된 세그먼트에 부정 표현이 같이 있으면("대출은 없어요") "그 유형은
+#: 있는데 금액을 모른다"가 아니라 "그 유형 자체가 없다"는 뜻이다 — 실측
+#: 재현된 버그: 이 구분이 없어서 "대출은 없어요"가 대출 존재를 확정하고
+#: 금액만 되묻는 상태로 잘못 처리됐다(Round 15).
+_SEGMENT_NEGATION_RE = re.compile(r"없|아니")
 _ASSET_KEYWORDS: dict[AssetType, tuple[str, ...]] = {
     "예금": ("예금", "적금", "저금"),
     "주식": ("주식",),
@@ -186,6 +193,19 @@ def _regex_extract(text: str) -> tuple[ExtractionResult, list[str]]:
 
         amount = _parse_amount(segment)
         if amount is None:
+            if _SEGMENT_NEGATION_RE.search(segment):
+                # "예금은 없어요" — 유형은 있는데 금액을 모르는 게 아니라
+                # 그 유형 자체가 없다는 확정 답변이다. missing(금액 재질문
+                # 대상)으로 보내면 방금 "없다"고 답한 유형의 금액을 되묻는
+                # 모순이 생긴다 — absent로 표시해 카테고리만 확인 처리한다.
+                missing.append(
+                    {
+                        "kind": "asset_absent",
+                        "asset_type": asset_type,
+                        "segment": segment,
+                    }
+                )
+                continue
             # 유형은 확인됐지만 금액이 없다. Asset.value는 engine.simulate()의
             # 잔액 계산에 직접 쓰이므로, InsuranceTag와 달리 값을 지어내면
             # 시뮬레이션 결과가 조용히 틀려진다 — 그래서 Asset을 만들지 않고
@@ -255,6 +275,17 @@ def extract_liabilities(text: str) -> tuple[list[Liability], list[dict[str, Any]
 
         amount = _parse_amount(segment)
         if amount is None:
+            if _SEGMENT_NEGATION_RE.search(segment):
+                # _regex_extract의 asset_absent와 같은 이유 — "대출은
+                # 없어요"는 대출 존재 확정이 아니라 부재 확정이다.
+                missing.append(
+                    {
+                        "kind": "liability_absent",
+                        "liability_type": liability_type,
+                        "segment": segment,
+                    }
+                )
+                continue
             missing.append(
                 {
                     "kind": "liability_value",

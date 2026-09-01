@@ -12,6 +12,8 @@ agents.retirement_planner.agent.run() 테스트.
 
 from __future__ import annotations
 
+import pytest
+
 from agents.retirement_planner import agent
 from schemas import AgentInput, AgentName, FinancialProfile
 
@@ -72,6 +74,26 @@ def test_thousands_comma_parsed_as_single_number():
     assert agent._parse_amount("5,000만원") == 50_000_000
     assert agent._parse_amount("3200만원") == 32_000_000
     assert agent._parse_amount("5000만원") == 50_000_000
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("3천200만원", 32_000_000),
+        ("3천200만", 32_000_000),
+        ("3천 200만원", 32_000_000),
+        ("3천 200만 원", 32_000_000),
+        ("3천2백만원", 32_000_000),
+        ("3천2백만 원", 32_000_000),
+        ("3,200,000원", 3_200_000),
+        ("32,000,000원", 32_000_000),
+    ],
+)
+def test_demo_amount_expressions_parsed_consistently(text, expected):
+    """asset_organizer/extractor.py의 같은 회귀 테스트(Round 15)의 로컬
+    복제본 — 두 에이전트의 금액 파서 복제본이 같은 데모 표현을 같은 값으로
+    처리하는지 확인."""
+    assert agent._parse_amount(text) == expected
 
 
 def test_thousands_comma_monthly_expense_flows_through_conversation():
