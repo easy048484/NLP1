@@ -493,3 +493,48 @@ def test_full_pipeline_response_carries_verification(monkeypatch):
     assert output.verification is not None
     assert output.verification.mode == "concat"  # LLM 없음 → 이어붙이기
     assert output.verification.ok
+
+
+# ---------------------------------------- ChatResponse.contributions 계약
+
+
+def test_contributions_preserve_overlapping_keys(monkeypatch):
+    """겹치는 평면 키(pending_questions)가 에이전트별로 보존되는지.
+
+    최상위 data 는 평면 병합(update)이라 나중 에이전트 값이 덮어쓰지만,
+    contributions[] 에는 각 에이전트의 원본 data 가 그대로 남아야 한다 —
+    프론트 카드 렌더가 이것만 보고 LEGACY_FLAT_KEYS 방어를 제거할 수 있는
+    근거다.
+    """
+    de_q = [{"question": "유언장 날짜를 확인해주세요", "field": "date"}]
+    hn_q = [{"question": "사망일이 언제인가요", "field": "death_date"}]
+    _patch(
+        monkeypatch,
+        _fake(AgentName.DECEDENT_ESTATE, data={"pending_questions": de_q}),
+        _fake(AgentName.HEIR_NAVIGATOR, data={"pending_questions": hn_q}),
+    )
+    response = router.route(
+        AgentInput(
+            session_id="contrib-1",
+            user_message="아버지가 돌아가셨는데 유언장이 있어요",
+        )
+    )
+    assert [c.agent for c in response.contributions] == [o for o in response.agents]
+    by_agent = {c.agent: c for c in response.contributions}
+    assert by_agent[AgentName.DECEDENT_ESTATE].data["pending_questions"] == de_q
+    assert by_agent[AgentName.HEIR_NAVIGATOR].data["pending_questions"] == hn_q
+    # 최상위 평면 병합은 여전히 마지막 값 — 전환기 레거시임을 문서화
+    assert response.data["pending_questions"] in (de_q, hn_q)
+
+
+def test_contributions_single_agent(monkeypatch):
+    _patch(
+        monkeypatch,
+        _fake(AgentName.TAX_CALCULATOR, data={"last_result": {"final_amount": 1}}),
+    )
+    response = router.route(
+        AgentInput(session_id="contrib-2", user_message="상속세 계산해줘")
+    )
+    assert len(response.contributions) == 1
+    assert response.contributions[0].agent == AgentName.TAX_CALCULATOR
+    assert response.contributions[0].reply.startswith("[fake:tax_calculator]")

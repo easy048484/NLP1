@@ -236,5 +236,14 @@ class ChatResponse(AgentOutput):
     agents: list[AgentName] = Field(
         default_factory=list, description="이번 턴에 실제로 실행된 에이전트(실행 순서)"
     )
+    contributions: list[AgentOutput] = Field(
+        default_factory=list,
+        description=(
+            "에이전트별 원본 출력(실행 순서). 프론트는 카드 렌더에 이것만 쓰면 "
+            "된다 — 최상위 data 평면 병합은 겹치는 키(pending_questions 등)가 "
+            "나중 값으로 덮이는 전환기 레거시라, 구버전 클라이언트 호환용으로만 "
+            "유지된다."
+        ),
+    )
     path: str = Field(default="standard", description="fast | standard | full")
     verification: Optional[VerificationResult] = None
