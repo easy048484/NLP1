@@ -33,6 +33,7 @@ import {
   readScoped,
   writeScoped,
 } from "./scopedStorage";
+import { fetchLatestSession } from "./sessions";
 
 /** 대화 한 턴. assistant 턴은 정규화된 합성 응답 전체를 들고 있다. */
 export interface Turn {
@@ -90,6 +91,8 @@ interface AppStateValue {
 
   sessionId: string;
   resetChat: () => void;
+  /** 재로그인 직후 서버에 남아 있던 지난 대화를 이어붙인다. */
+  restoreLastSession: () => Promise<boolean>;
 
   familyGraphId: string | null;
   setFamilyGraphId: (id: string | null) => void;
@@ -140,6 +143,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
   axisRef.current = axis;
   const fgRef = useRef(familyGraphId);
   fgRef.current = familyGraphId;
+
+  /**
+   * 서버에 남아 있는 내 마지막 대화를 이어받는다.
+   *
+   * 로그아웃하면 session_id 를 버리므로, 다시 로그인했을 때 이걸 호출하지
+   * 않으면 서버가 30일 보관한 대화를 영영 못 찾습니다. 지난 대화는 텍스트로만
+   * 복원됩니다 — 에이전트 카드·계획표 같은 구조화된 응답은 저장하지 않으므로,
+   * 다시 실행한 결과가 아니라 지나간 기록으로 보여줍니다.
+   *
+   * 이어볼 대화가 없거나 조회에 실패하면 false. 그 경우 지금 세션 그대로
+   * 새 대화를 시작하면 됩니다 — 이어보기 실패가 로그인을 막을 이유는 없습니다.
+   */
+  const restoreLastSession = useCallback(async () => {
+    const latest = await fetchLatestSession();
+    if (!latest) return false;
+
+    setSessionId(latest.session_id);
+    writeScoped(SESSION_ID_KEY, latest.session_id);
+    if (latest.family_graph_id) setFamilyGraphIdState(latest.family_graph_id);
+
+    setTurns(
+      latest.history.map((turn, i) => ({
+        id: `restored-${i}`,
+        role: turn.role,
+        text: turn.content,
+      })),
+    );
+    return true;
+  }, []);
 
   const setAuth = useCallback((a: StoredAuth) => {
     // 비로그인으로 쓰던 값(session_id, family_graph_id, 인테이크 진행 상태)을
@@ -279,6 +311,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       logout,
       sessionId,
       resetChat,
+      restoreLastSession,
       familyGraphId,
       setFamilyGraphId,
       axis,
@@ -300,6 +333,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       logout,
       sessionId,
       resetChat,
+      restoreLastSession,
       familyGraphId,
       setFamilyGraphId,
       axis,

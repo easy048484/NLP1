@@ -20,6 +20,7 @@ from family_graph import repository as family_graph_repository
 from family_graph import router as family_graph_router
 from orchestrator import llm_policy, route
 from orchestrator.router import current_session_store
+from orchestrator.session_api import router as sessions_router
 from orchestrator.session_store import PostgresSessionStore, session_ttl_seconds
 from schemas import AgentInput, ChatResponse
 
@@ -112,6 +113,7 @@ if os.getenv("DATABASE_URL"):
 
 app.include_router(auth_router)
 app.include_router(family_graph_router)
+app.include_router(sessions_router)
 
 
 # 데모·운영 환경(ORCHESTRATOR_USE_LLM=required)에서는 키 누락을 기동 시점에

@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from threading import Lock
 from typing import Any, Optional
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from db.base import mask_sensitive_id, session_scope
@@ -272,6 +272,17 @@ class SessionStore:
         """만료된 세션을 실제로 지우고 지운 개수를 돌려줍니다."""
         return 0
 
+    def latest_for_user(self, user_id: str) -> Optional[tuple[str, SessionState]]:
+        """이 사용자의 가장 최근 세션 (session_id, 상태). 없으면 None.
+
+        로그아웃하면 클라이언트가 session_id 를 버립니다. 서버에는 30일 동안
+        그 세션이 그대로 남아 있는데 아무도 그걸 가리키지 않으니, 다시
+        로그인해도 대화가 처음부터 시작됐습니다. 재로그인 시 "내 마지막 세션이
+        무엇이었는지"를 돌려받기 위한 조회입니다
+        (family_graph 의 get_latest_for_user 와 같은 역할).
+        """
+        raise NotImplementedError
+
 
 class InMemorySessionStore(SessionStore):
     def __init__(self) -> None:
@@ -308,6 +319,17 @@ class InMemorySessionStore(SessionStore):
             for sid in expired:
                 del self._sessions[sid]
             return len(expired)
+
+    def latest_for_user(self, user_id: str) -> Optional[tuple[str, SessionState]]:
+        with self._lock:
+            owned = [
+                (sid, st)
+                for sid, st in self._sessions.items()
+                if st.user_id == user_id and not self._is_expired(st)
+            ]
+        if not owned:
+            return None
+        return max(owned, key=lambda item: item[1].updated_at)
 
     @staticmethod
     def _is_expired(state: SessionState) -> bool:
@@ -406,6 +428,34 @@ class PostgresSessionStore(SessionStore):
                 continue
         assert last_error is not None
         raise last_error
+
+    def latest_for_user(self, user_id: str) -> Optional[tuple[str, SessionState]]:
+        with session_scope() as db:
+            row = (
+                db.execute(
+                    select(ChatSession)
+                    .where(
+                        ChatSession.user_id == user_id,
+                        ChatSession.expires_at >= datetime.now(timezone.utc),
+                    )
+                    .order_by(ChatSession.updated_at.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            if row is None:
+                return None
+            return row.session_id, SessionState.from_json_context(
+                row.per_agent_context or {},
+                pending_handoff=(
+                    AgentName(row.pending_handoff) if row.pending_handoff else None
+                ),
+                last_agent=(AgentName(row.last_agent) if row.last_agent else None),
+                user_id=row.user_id,
+                family_graph_id=row.family_graph_id,
+                updated_at=row.updated_at.timestamp(),
+            )
 
     def purge_expired(self) -> int:
         """만료된 세션 행을 실제로 삭제합니다.

@@ -88,7 +88,13 @@ function MessageRow({
 
   return (
     <div className="msg-row msg-assistant" ref={rowRef}>
-      {turn.response && <AssistantResponse response={turn.response} />}
+      {turn.response ? (
+        <AssistantResponse response={turn.response} />
+      ) : (
+        // 재로그인 후 복원된 지난 대화. 구조화된 응답(에이전트 카드·계획표)은
+        // 저장하지 않으므로 텍스트만 있고, 그래서 말풍선으로만 보여준다.
+        turn.text && <div className="bubble bubble-assistant">{turn.text}</div>
+      )}
       {devMode && turn.debug && <DevPanel debug={turn.debug} />}
     </div>
   );
