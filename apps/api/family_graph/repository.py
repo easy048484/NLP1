@@ -16,7 +16,7 @@ from typing import Any, Optional
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from db.base import DatabaseNotConfigured, mask_sensitive_id, session_scope
@@ -79,6 +79,30 @@ def claim_family_graph(
     touch_family_graph(db, family_graph_id)
     db.flush()
     return graph
+
+
+def purge_anonymous_graphs(db: Session, *, older_than: datetime) -> int:
+    """소유자 없는(비로그인) 가족관계 그래프 중 오래 안 쓰인 것을 지웁니다.
+
+    비로그인 사용자가 입력한 가족정보는 "대화창을 떠나면 남지 않는다"가
+    원칙입니다. 그런데 프론트가 family_graph_id를 localStorage에 들고 있고
+    이 행에는 만료 개념이 없어서, 지금까지는 익명으로 입력한 가족관계가
+    서버에 영구히 남아 있었습니다. id만 알면 누구나 조회할 수 있는 데이터라
+    (user_can_access — user_id가 NULL이면 접근 허용) 더 오래 둘 이유가 없습니다.
+
+    소유자가 있는 그래프는 건드리지 않습니다. 그쪽 장기 미사용 파기(예: 1년)는
+    docs/개발_배포_파이프라인_계획.md 10절의 별도 항목입니다.
+
+    family_members는 FK의 ON DELETE CASCADE로 함께 지워지고, 이 그래프를
+    가리키던 sessions.family_graph_id는 SET NULL로 비워집니다.
+    """
+    result = db.execute(
+        delete(FamilyGraph).where(
+            FamilyGraph.user_id.is_(None),
+            FamilyGraph.last_accessed_at < older_than,
+        )
+    )
+    return int(result.rowcount or 0)
 
 
 def touch_family_graph(db: Session, family_graph_id: str) -> None:

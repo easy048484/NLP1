@@ -26,6 +26,13 @@ import {
   getFamilyGraphId,
   setFamilyGraphId as persistFamilyGraphId,
 } from "./familyGraphStorage";
+import {
+  SESSION_ID_KEY,
+  clearAllScopedKeys,
+  promoteScopedKeys,
+  readScoped,
+  writeScoped,
+} from "./scopedStorage";
 
 /** 대화 한 턴. assistant 턴은 정규화된 합성 응답 전체를 들고 있다. */
 export interface Turn {
@@ -52,6 +59,28 @@ export interface Turn {
 function createSessionId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
   return `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+/**
+ * 새 session_id를 만들어 저장까지 합니다.
+ *
+ * 예전에는 session_id를 어디에도 저장하지 않아서(useState(createSessionId)),
+ * 새로고침 한 번에 서버 세션과의 연결이 끊기고 대화가 처음부터 시작됐습니다.
+ * 로그인해도 마찬가지였습니다 — 서버가 30일 보관해도 클라이언트가 그 세션의
+ * 이름을 잊어버리니 이어갈 방법이 없었습니다.
+ *
+ * 저장 위치는 로그인 여부에 따라 갈립니다(scopedStorage): 비로그인이면 탭을
+ * 닫을 때 사라지고, 로그인이면 다음 방문까지 남습니다.
+ */
+function startNewSession(): string {
+  const id = createSessionId();
+  writeScoped(SESSION_ID_KEY, id);
+  return id;
+}
+
+/** 저장된 session_id가 있으면 이어쓰고, 없으면 새로 시작합니다. */
+function resumeOrStartSession(): string {
+  return readScoped(SESSION_ID_KEY) ?? startNewSession();
 }
 
 interface AppStateValue {
@@ -94,7 +123,7 @@ const Ctx = createContext<AppStateValue | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [auth, setAuthState] = useState<StoredAuth | null>(getStoredAuth);
-  const [sessionId, setSessionId] = useState(createSessionId);
+  const [sessionId, setSessionId] = useState(resumeOrStartSession);
   const [familyGraphId, setFamilyGraphIdState] = useState<string | null>(getFamilyGraphId);
   const [axis, setAxisState] = useState<ConsultAxis | null>(getAxis);
 
@@ -112,14 +141,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const fgRef = useRef(familyGraphId);
   fgRef.current = familyGraphId;
 
-  const setAuth = useCallback((a: StoredAuth) => setAuthState(a), []);
+  const setAuth = useCallback((a: StoredAuth) => {
+    // 비로그인으로 쓰던 값(session_id, family_graph_id, 인테이크 진행 상태)을
+    // 계정 저장소로 옮깁니다. 하던 상담을 그대로 이어가면서, 다음 방문에도
+    // 남게 하려면 이 승격이 필요합니다. 서버 쪽 세션은 다음 요청에서
+    // 자동으로 계정에 붙습니다(orchestrator/router.node_load_session).
+    promoteScopedKeys();
+    setAuthState(a);
+  }, []);
 
   const logout = useCallback(() => {
+    // clearStoredAuth 를 먼저 — 그래야 이후 저장이 비로그인 저장소로 갑니다.
     clearStoredAuth();
     clearFamilyGraphId();
     clearIntakeProgress();
     clearIntakeAnswers();
     clearAxis();
+    // 위 개별 정리가 놓친 키까지 양쪽 저장소에서 한 번 더 훑어 지웁니다.
+    clearAllScopedKeys();
     setAuthState(null);
     setFamilyGraphIdState(null);
     setAxisState(null);
@@ -129,11 +168,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setWillStatus(null);
     setFamilyGraph(null);
     setPlanChecks({});
-    setSessionId(createSessionId());
+    setSessionId(startNewSession());
   }, []);
 
   const resetChat = useCallback(() => {
-    setSessionId(createSessionId());
+    setSessionId(startNewSession());
     setTurns([]);
     setPlan(null);
     setEstate(null);
