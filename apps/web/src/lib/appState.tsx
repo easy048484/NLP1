@@ -162,6 +162,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSessionId(latest.session_id);
     writeScoped(SESSION_ID_KEY, latest.session_id);
     if (latest.family_graph_id) setFamilyGraphIdState(latest.family_graph_id);
+    // '준비 현황' 패널. 서버에 남아 있던 재산·유언장 요약을 로그인 직후부터
+    // 보여준다 — 이게 없으면 메시지를 한 번 보내야 패널이 채워진다.
+    setEstate(latest.estate);
+    setWillStatus(latest.will_status);
 
     setTurns(
       latest.history.map((turn, i) => ({

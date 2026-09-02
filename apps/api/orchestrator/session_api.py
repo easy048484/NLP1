@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from auth import User, get_current_user
+from schemas import FinancialProfile, WillStatus
 
 from .router import current_session_store
 
@@ -51,6 +52,16 @@ class LatestSessionOut(BaseModel):
     family_graph_id: Optional[str] = Field(
         default=None, description="이 세션이 보고 있던 가족관계 그래프."
     )
+    financial_profile: Optional[FinancialProfile] = Field(
+        default=None,
+        description=(
+            "세션 공유 상속재산. 화면의 '준비 현황' 패널을 로그인 직후부터 채우는 "
+            "용도입니다 — 이게 없으면 메시지를 한 번 보내야 패널이 채워집니다."
+        ),
+    )
+    will_status: Optional[WillStatus] = Field(
+        default=None, description="세션 공유 유언장 판정 요약. 위와 같은 용도."
+    )
     history: list[ConversationTurn] = Field(
         default_factory=list,
         description=(
@@ -71,8 +82,16 @@ def read_my_latest_session(
         raise _NOT_FOUND
 
     session_id, state = found
+    profile = state.financial_profile
+    has_profile = bool(profile.model_dump(exclude_none=True, exclude={"extra"}))
     return LatestSessionOut(
         session_id=session_id,
         family_graph_id=state.family_graph_id,
+        financial_profile=profile if has_profile else None,
+        will_status=(
+            state.will_status
+            if state.will_status is not None and state.will_status.checked
+            else None
+        ),
         history=[ConversationTurn(**turn) for turn in state.history],
     )

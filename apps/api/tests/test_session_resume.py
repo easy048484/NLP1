@@ -19,7 +19,7 @@ from auth.router import router as auth_router
 from orchestrator import router as orchestrator_router
 from orchestrator.session_api import router as sessions_router
 from orchestrator.session_store import InMemorySessionStore, SessionState
-from schemas import AgentName
+from schemas import AgentName, FinancialProfile, WillStatus
 
 ALICE = "alice-user-id"
 BOB = "bob-user-id"
@@ -127,6 +127,60 @@ def test_endpoint_returns_session_id_and_past_conversation(with_db, monkeypatch)
         {"role": "user", "content": "어제 부모님이 돌아가셨어요"},
         {"role": "assistant", "content": "사망신고부터 하셔야 합니다."},
     ]
+
+
+def test_endpoint_returns_shared_schemas_for_the_status_panel(with_db, monkeypatch):
+    """재산·유언장 요약은 '준비 현황' 패널을 로그인 직후부터 채우는 데 쓴다.
+
+    이게 없으면 서버에는 값이 있는데도 메시지를 한 번 보내야 패널이 채워진다.
+    """
+    store = InMemorySessionStore()
+    monkeypatch.setattr(orchestrator_router, "default_store", store)
+    client = _client()
+    token = _register(client, "panel@example.com")
+    user_id = client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {token}"}
+    ).json()["id"]
+
+    state = SessionState(user_id=user_id)
+    state.financial_profile = FinancialProfile(
+        real_estate_value=1_000_000_000, financial_assets=300_000_000
+    )
+    state.will_status = WillStatus(checked=True, no_will=True)
+    store.save("S1", state)
+
+    body = client.get(
+        "/sessions/mine", headers={"Authorization": f"Bearer {token}"}
+    ).json()
+
+    assert body["financial_profile"]["real_estate_value"] == 1_000_000_000
+    assert body["financial_profile"]["financial_assets"] == 300_000_000
+    assert body["will_status"] == {
+        "checked": True,
+        "will_type": None,
+        "no_will": True,
+        "overall_grade": None,
+        "has_effect": None,
+    }
+
+
+def test_endpoint_omits_shared_schemas_when_empty(with_db, monkeypatch):
+    """아무것도 채워지지 않은 세션은 null — 프론트가 빈 패널을 그리지 않게."""
+    store = InMemorySessionStore()
+    monkeypatch.setattr(orchestrator_router, "default_store", store)
+    client = _client()
+    token = _register(client, "empty@example.com")
+    user_id = client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {token}"}
+    ).json()["id"]
+    store.save("S1", SessionState(user_id=user_id))
+
+    body = client.get(
+        "/sessions/mine", headers={"Authorization": f"Bearer {token}"}
+    ).json()
+
+    assert body["financial_profile"] is None
+    assert body["will_status"] is None
 
 
 def test_endpoint_does_not_leak_another_users_session(with_db, monkeypatch):

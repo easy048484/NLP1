@@ -7,7 +7,8 @@
  * 유실되는 비대칭이 있었습니다. 이 모듈이 그 비대칭을 없앱니다.
  */
 
-import { API_BASE_URL } from "./api";
+import type { EstateSummary, WillStatus } from "../types";
+import { API_BASE_URL, readEstate, readWillStatus } from "./api";
 import { authHeader } from "./auth";
 
 export interface ConversationTurn {
@@ -18,6 +19,9 @@ export interface ConversationTurn {
 export interface LatestSession {
   session_id: string;
   family_graph_id: string | null;
+  /** '준비 현황' 패널용. 서버에 남아 있던 재산 요약 — 없으면 null. */
+  estate: EstateSummary | null;
+  will_status: WillStatus | null;
   history: ConversationTurn[];
 }
 
@@ -34,19 +38,21 @@ export async function fetchLatestSession(): Promise<LatestSession | null> {
     });
     if (!res.ok) return null;
 
-    const json = (await res.json()) as Partial<LatestSession>;
+    const json = (await res.json()) as Record<string, unknown>;
     if (typeof json?.session_id !== "string" || !json.session_id) return null;
 
-    const history = Array.isArray(json.history) ? json.history : [];
+    const history = Array.isArray(json.history) ? (json.history as unknown[]) : [];
     return {
       session_id: json.session_id,
       family_graph_id: typeof json.family_graph_id === "string" ? json.family_graph_id : null,
-      history: history.filter(
-        (turn): turn is ConversationTurn =>
-          !!turn &&
-          (turn.role === "user" || turn.role === "assistant") &&
-          typeof turn.content === "string",
-      ),
+      // ChatResponse 와 같은 파서를 쓴다 — 응답 모양이 어긋나면 한 곳만 고치면 된다.
+      estate: readEstate(json),
+      will_status: readWillStatus(json),
+      history: history.filter((turn): turn is ConversationTurn => {
+        if (!turn || typeof turn !== "object") return false;
+        const t = turn as Record<string, unknown>;
+        return (t.role === "user" || t.role === "assistant") && typeof t.content === "string";
+      }),
     };
   } catch {
     return null;
