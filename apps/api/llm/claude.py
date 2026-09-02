@@ -68,11 +68,34 @@ def complete(
     ).strip()
 
 
+def normalize_messages(messages: list[Message]) -> list[Message]:
+    """Messages API가 받아들이는 형태로 다듬습니다.
+
+    - 첫 메시지는 반드시 user 여야 합니다. 이력을 상한에 맞춰 앞에서부터 자르면
+      assistant 로 시작할 수 있어서, 앞쪽 assistant 를 떼어냅니다.
+    - 같은 role 이 연달아 오면 하나로 합칩니다 (빈 답변으로 assistant 한 줄이
+      빠졌을 때 user 가 두 번 연속으로 남는 경우 대비).
+    """
+    normalized: list[Message] = []
+    for message in messages:
+        if not normalized and message.get("role") != "user":
+            continue
+        if normalized and normalized[-1]["role"] == message.get("role"):
+            joined = normalized[-1]["content"] + "\n" + message.get("content", "")
+            normalized[-1] = {"role": normalized[-1]["role"], "content": joined}
+            continue
+        normalized.append(
+            {"role": message["role"], "content": message.get("content", "")}
+        )
+    return normalized
+
+
 def extract(
     *,
     system: str,
-    user_text: str,
     tool: dict[str, Any],
+    user_text: str | None = None,
+    messages: list[Message] | None = None,
     max_tokens: int = 8000,
     effort: str = "low",
 ) -> dict[str, Any]:
@@ -80,7 +103,21 @@ def extract(
 
     tool은 {"name", "description", "input_schema"} 형태여야 하고,
     반환값은 그 스키마에 따른 dict입니다. 검증은 호출부(pydantic) 책임입니다.
+
+    messages 로 대화 이력 전체를 넘기면 그걸 쓰고, user_text 하나만 넘기면
+    단일 턴으로 처리합니다. 이력이 필요한 이유는 슬롯 추출 때문입니다 —
+    "돌아가신 날짜가 언제인가요?" 다음의 "어제"는 앞 문맥 없이는 해석할 수
+    없습니다. user_text 만 받던 기존 호출부(orchestrator/planner.py)는 그대로
+    동작합니다.
     """
+    if messages is None:
+        if user_text is None:
+            raise ValueError("user_text 또는 messages 중 하나는 있어야 합니다.")
+        messages = [{"role": "user", "content": user_text}]
+    payload_messages = normalize_messages(messages)
+    if not payload_messages:
+        raise LLMUnavailable("추출에 쓸 user 메시지가 없습니다.")
+
     response = _client().messages.create(
         model=_model(),
         max_tokens=max_tokens,
@@ -88,7 +125,7 @@ def extract(
         tools=[tool],
         tool_choice={"type": "tool", "name": tool["name"]},
         output_config={"effort": effort},
-        messages=[{"role": "user", "content": user_text}],
+        messages=payload_messages,
     )
     if response.stop_reason == "refusal":
         raise LLMUnavailable("모델이 응답을 거절했습니다.")

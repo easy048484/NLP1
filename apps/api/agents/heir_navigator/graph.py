@@ -58,6 +58,9 @@ class GraphState(TypedDict, total=False):
     session_id: str
     today: date
     use_llm: bool
+    #: 세션 대화 원문 (마지막 원소가 이번 턴 user_message). 슬롯 추출기에만
+    #: 넘어갑니다 - 기한·서류는 여전히 planner.py 가 계산합니다.
+    history: list[dict[str, str]]
 
     heir: HeirState
     guard_hit: Optional[guardrails.GuardrailHit]
@@ -93,12 +96,15 @@ def node_boundary(state: GraphState) -> GraphState:
 
 
 def node_extract(state: GraphState) -> GraphState:
+    heir = state["heir"]
     update = slots.extract_slots(
         state.get("user_message", ""),
         today=state["today"],
         use_llm=state.get("use_llm", True),
+        history=state.get("history"),
+        confirmed=heir.confirmed_values(),
     )
-    return {"heir": state["heir"].merge(update)}
+    return {"heir": heir.merge(update)}
 
 
 def node_resolve(state: GraphState) -> GraphState:

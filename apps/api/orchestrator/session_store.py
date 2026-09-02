@@ -37,6 +37,46 @@ logger = logging.getLogger(__name__)
 #: 용도라 값은 임의 기준이며, DB로 옮길 때 보관 정책에 맞춰 재조정합니다.
 _SESSION_TTL_SECONDS = 60 * 60 * 2  # 2시간
 
+#: 세션에 보관하는 대화 이력 상한. 이력은 추출 LLM에 매 턴 통째로 실려 나가고
+#: sessions.per_agent_context JSON 안에 함께 저장되므로, 상한이 없으면 대화가
+#: 길어질수록 DB row와 토큰 비용이 선형으로 늘어납니다. 세 겹으로 막습니다.
+#:   - 메시지 개수 (user/assistant 각각 1개로 셈)
+#:   - 메시지 하나의 길이 (role 별로 다름 — 아래 참고)
+#:   - 이력 전체 길이 (오래된 것부터 버림)
+_HISTORY_MAX_MESSAGES = 24
+_HISTORY_MAX_CHARS_TOTAL = 12000
+
+#: 사용자 발화 상한. 긴 붙여넣기 한 번이 예산을 다 먹지 않도록 앞에서 자릅니다
+#: (사용자가 하려는 말은 보통 앞에 있습니다).
+_HISTORY_MAX_CHARS_USER = 2000
+
+#: 에이전트 답변 상한. 절차 안내는 2000자를 예사로 넘는데, 이력을 읽는 쪽은
+#: 지금 슬롯 추출기 하나뿐이고 거기서 필요한 건 "직전에 무엇을 물었는가"입니다.
+#: 그 질문은 항상 답변 **끝**에 붙으므로, 앞에서 자르면 정작 필요한 문장이
+#: 날아갑니다. 그래서 assistant 만 뒤에서부터 남깁니다.
+_HISTORY_MAX_CHARS_ASSISTANT = 800
+
+#: 잘라냈다는 표시. 모델이 "앞이 잘린 글"임을 알 수 있게 붙입니다.
+_TRUNCATION_MARK = "…"
+
+#: 이력에 들어갈 수 있는 role.
+_HISTORY_ROLES = ("user", "assistant")
+
+
+def _trim_history(history: list[dict[str, str]]) -> list[dict[str, str]]:
+    """상한을 넘으면 오래된 메시지부터 버립니다.
+
+    자르는 방향이 "앞에서부터"인 이유: 슬롯 추출에서 중요한 건 최근 문맥이고,
+    확정된 값은 이미 에이전트 상태(HeirState 등)에 남아 있어서 오래된 원문이
+    사라져도 잃는 게 없습니다.
+    """
+    trimmed = history[-_HISTORY_MAX_MESSAGES:]
+    while (
+        trimmed and sum(len(m["content"]) for m in trimmed) > _HISTORY_MAX_CHARS_TOTAL
+    ):
+        trimmed.pop(0)
+    return trimmed
+
 
 @dataclass
 class SessionState:
@@ -69,10 +109,39 @@ class SessionState:
     pending_handoff: Optional[AgentName] = None
     last_agent: Optional[AgentName] = None
     family_graph_id: Optional[str] = None
+    #: 이 세션의 대화 원문. [{"role": "user"|"assistant", "content": str}, ...]
+    #: 시간순이고, 상한(_HISTORY_MAX_*)을 넘으면 오래된 것부터 버립니다.
+    #:
+    #: 왜 필요한가: 슬롯 추출기가 이전에는 "이번 턴 발화 한 줄"만 받았습니다.
+    #: 그래서 시스템이 "돌아가신 날짜가 언제인가요?"라고 묻고 사용자가 "어제"라고
+    #: 답하면, 추출기 입장에서는 그 "어제"가 무엇의 날짜인지 알 근거가 없어
+    #: null을 돌려주고 같은 질문을 반복했습니다. 이력을 함께 넘겨야 풀립니다.
+    #:
+    #: financial_profile / will_status 와 같은 이유로 컬럼을 새로 만들지 않고
+    #: per_agent_context JSON 의 "_shared" 아래에 함께 저장합니다.
+    history: list[dict[str, str]] = field(default_factory=list)
     updated_at: float = field(default_factory=time.time)
 
     def context_for(self, agent: AgentName) -> dict[str, Any]:
         return dict(self.per_agent_context.get(agent.value, {}))
+
+    def append_history(self, role: str, content: str) -> None:
+        """대화 한 줄을 이력에 덧붙입니다. 빈 내용은 넣지 않습니다.
+
+        자르는 방향이 role 마다 다릅니다 (_HISTORY_MAX_CHARS_* 주석 참고) —
+        사용자 발화는 앞을, 에이전트 답변은 뒤를 남깁니다.
+        """
+        if role not in _HISTORY_ROLES:
+            raise ValueError(f"알 수 없는 role: {role!r}")
+        text = (content or "").strip()
+        if not text:
+            return
+        if role == "assistant":
+            if len(text) > _HISTORY_MAX_CHARS_ASSISTANT:
+                text = _TRUNCATION_MARK + text[-_HISTORY_MAX_CHARS_ASSISTANT:]
+        elif len(text) > _HISTORY_MAX_CHARS_USER:
+            text = text[:_HISTORY_MAX_CHARS_USER] + _TRUNCATION_MARK
+        self.history = _trim_history([*self.history, {"role": role, "content": text}])
 
     def remember(
         self,
@@ -104,6 +173,9 @@ class SessionState:
             if will_status:
                 shared["will_status"] = will_status
 
+        if self.history:
+            shared["history"] = self.history
+
         if shared:
             data[self.SHARED_KEY] = shared
         return data
@@ -127,10 +199,21 @@ class SessionState:
             except Exception:  # noqa: BLE001
                 logger.warning("세션의 will_status 가 손상돼 비웁니다.")
 
+        history: list[dict[str, str]] = []
+        for item in shared.get("history") or []:
+            # 저장된 값이 깨져 있어도 대화 전체를 날리지 않고 그 줄만 버립니다.
+            if (
+                isinstance(item, dict)
+                and item.get("role") in _HISTORY_ROLES
+                and isinstance(item.get("content"), str)
+            ):
+                history.append({"role": item["role"], "content": item["content"]})
+
         return cls(
             per_agent_context=raw,
             financial_profile=profile,
             will_status=will_status,
+            history=_trim_history(history),
             **kwargs,
         )
 

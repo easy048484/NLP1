@@ -60,6 +60,7 @@ def run(payload: AgentInput) -> AgentOutput:
         "session_id": payload.session_id,
         "today": _today(payload),
         "use_llm": _use_llm(),
+        "history": list(payload.history or []),
         "heir": state,
         "data": {},
     }

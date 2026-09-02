@@ -9,6 +9,13 @@
 
 LLM이 실패하거나 키가 없으면 1번 결과만 씁니다. 조용히 규칙 기반으로
 내려가되, 지어낸 값을 채우지는 않습니다.
+
+2번에는 이번 턴 발화만이 아니라 **세션의 대화 이력 전체**를 넘깁니다. 한 줄만
+보면 "돌아가신 날짜가 언제인가요?" -> "어제" 같은 답을 해석할 수 없어서, 같은
+질문을 무한히 반복하게 됩니다. 이력을 보면 그 "어제"가 사망일임이 드러납니다.
+
+이력을 보게 되면서 생기는 부작용(이미 확정된 값이 매 턴 재추출되어 덮어써짐)은
+HeirState.confirmed 가 막습니다 - state.py 의 CONFIRMABLE_SLOTS 주석 참고.
 """
 
 from __future__ import annotations
@@ -21,7 +28,7 @@ from typing import Any
 from llm.claude import LLMUnavailable, extract
 
 from .procedure import StepId
-from .state import SlotUpdate
+from .state import CONFIRMABLE_SLOTS, SlotUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +182,15 @@ _TOOL: dict[str, Any] = {
                 ],
                 "description": "공동상속인 간 분할협의 진행 상태. 언급이 없으면 null.",
             },
+            "corrections": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(CONFIRMABLE_SLOTS)},
+                "description": (
+                    "마지막 user 메시지에서 사용자가 앞서 말한 값을 명시적으로 "
+                    "바로잡은 슬롯 이름만. 같은 값을 다시 말한 것은 정정이 아니다. "
+                    "정정이 없으면 빈 배열."
+                ),
+            },
         },
         "required": [
             "death_date",
@@ -183,6 +199,7 @@ _TOOL: dict[str, Any] = {
             "has_debt",
             "will_exists",
             "agreement",
+            "corrections",
         ],
         "additionalProperties": False,
     },
@@ -190,20 +207,57 @@ _TOOL: dict[str, Any] = {
 
 _EXTRACT_SYSTEM = """당신은 한국 상속 절차 상담 대화에서 정보를 추출하는 도구입니다. 답변을 생성하지 말고 record_heir_slots 도구만 호출하세요.
 
+입력은 지금까지의 대화 전체입니다. 마지막 user 메시지가 이번 턴의 발화입니다.
+
 규칙:
-- 발화에 근거가 없는 값은 절대 채우지 않습니다. 확실하지 않으면 null입니다.
-- 날짜는 오늘 날짜({today})를 기준으로 상대 표현("작년", "지난달", "3개월 전")을 해석합니다. 일자까지 특정할 수 없으면 null입니다.
+- 근거는 **대화 전체**에서 찾습니다. 직전 assistant 메시지가 특정 항목을 물었고 사용자가 짧게 답했다면, 그 답은 그 항목에 대한 답입니다. 예: assistant가 "돌아가신 날짜가 언제인가요?"라고 물은 뒤 사용자가 "어제"라고만 답했다면 death_date는 어제입니다.
+- 그래도 대화 어디에도 근거가 없는 값은 절대 채우지 않습니다. 확실하지 않으면 null입니다. 추측하지 않습니다.
+- 날짜는 오늘 날짜({today})를 기준으로 상대 표현("어제", "그저께", "지난달", "3개월 전")을 해석합니다. 일자까지 특정할 수 없으면 null입니다.
+- 같은 항목을 여러 번 말했으면 가장 나중 값을 씁니다.
+- corrections에는 마지막 user 메시지에서 **앞서 말한 값을 뒤집은** 슬롯만 넣습니다("아니요 그게 아니라", "잘못 말했어요", "다시 말씀드리면"). 같은 값을 반복하거나 처음 말한 것은 정정이 아닙니다.
 - "~하려고 한다", "~할 예정"은 완료가 아닙니다. completed_steps에 넣지 마세요.
-- 사용자가 질문만 했다면 모든 값이 null/빈 배열인 것이 정상입니다."""
+- 사용자가 질문만 했다면 모든 값이 null/빈 배열인 것이 정상입니다.
+{confirmed_block}"""
 
 
-def llm_based(message: str, *, today: date | None = None) -> SlotUpdate | None:
-    """Claude로 슬롯 추출. 키가 없거나 실패하면 None."""
+def _confirmed_block(confirmed: dict[str, Any] | None) -> str:
+    """이미 확정된 값을 프롬프트에 붙입니다 (정정 판별용).
+
+    확정값을 덮어쓰지 않는 것은 HeirState.merge 가 코드로 보장합니다. 여기에
+    싣는 목적은 다릅니다 - 모델이 "이번 발화가 기존 값을 뒤집는 말인지"를
+    판단하려면 기존 값이 무엇인지 알아야 하기 때문입니다.
+    """
+    if not confirmed:
+        return ""
+    lines = "\n".join(f"- {slot}: {value}" for slot, value in sorted(confirmed.items()))
+    return (
+        "\n이미 확정된 값 (사용자가 뒤집는 말을 했을 때만 corrections에 넣으세요):\n"
+        + lines
+    )
+
+
+def llm_based(
+    message: str,
+    *,
+    today: date | None = None,
+    history: list[dict[str, str]] | None = None,
+    confirmed: dict[str, Any] | None = None,
+) -> SlotUpdate | None:
+    """Claude로 슬롯 추출. 키가 없거나 실패하면 None.
+
+    history가 있으면 대화 전체를 넘깁니다 (마지막 원소가 이번 턴 발화여야
+    합니다). 없으면 예전처럼 발화 한 줄만 넘깁니다 - 에이전트를 단독으로
+    호출하는 테스트가 그 경로를 씁니다.
+    """
     today = today or date.today()
+    messages = list(history) if history else [{"role": "user", "content": message}]
     try:
         raw = extract(
-            system=_EXTRACT_SYSTEM.format(today=today.isoformat()),
-            user_text=message,
+            system=_EXTRACT_SYSTEM.format(
+                today=today.isoformat(),
+                confirmed_block=_confirmed_block(confirmed),
+            ),
+            messages=messages,
             tool=_TOOL,
         )
     except LLMUnavailable as exc:
@@ -231,14 +285,30 @@ def _merge_updates(primary: SlotUpdate, secondary: SlotUpdate | None) -> SlotUpd
     data["completed_steps"] = sorted(
         {*(primary.completed_steps or []), *(secondary.completed_steps or [])}
     )
+    # 정정 신호는 LLM 만 낼 수 있습니다 (규칙 기반은 "뒤집었다"를 판별하지 못함).
+    data["corrections"] = sorted(
+        {*(primary.corrections or []), *(secondary.corrections or [])}
+    )
     return SlotUpdate.model_validate(data)
 
 
 def extract_slots(
-    message: str, *, today: date | None = None, use_llm: bool = True
+    message: str,
+    *,
+    today: date | None = None,
+    use_llm: bool = True,
+    history: list[dict[str, str]] | None = None,
+    confirmed: dict[str, Any] | None = None,
 ) -> SlotUpdate:
-    """한 턴의 발화에서 슬롯을 뽑습니다."""
+    """이번 턴의 발화에서 슬롯을 뽑습니다.
+
+    규칙 기반은 이번 발화만 봅니다 (명시적인 날짜·완료 표현은 한 줄로 판별
+    가능하고, 이력까지 훑으면 예전 턴의 표현을 이번 턴 값으로 오인합니다).
+    LLM 은 이력 전체를 봅니다.
+    """
     rules = rule_based(message)
     if not use_llm:
         return rules
-    return _merge_updates(rules, llm_based(message, today=today))
+    return _merge_updates(
+        rules, llm_based(message, today=today, history=history, confirmed=confirmed)
+    )

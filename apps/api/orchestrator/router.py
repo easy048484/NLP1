@@ -98,7 +98,12 @@ class GraphState(TypedDict, total=False):
 
 def node_load_session(state: GraphState) -> GraphState:
     payload = state["payload"]
-    return {"session": default_store.load(payload.session_id)}
+    session = default_store.load(payload.session_id)
+    # 이번 턴 발화를 먼저 이력에 넣습니다. 이렇게 해야 에이전트가 받는 history의
+    # 마지막 원소가 항상 이번 user_message가 되고, 슬롯 추출기가 "직전 질문 →
+    # 이번 답변"을 한 덩어리로 볼 수 있습니다.
+    session.append_history("user", payload.user_message)
+    return {"session": session}
 
 
 def node_classify(state: GraphState) -> GraphState:
@@ -148,6 +153,7 @@ def node_execute_plan(state: GraphState) -> GraphState:
         will_status=state.get("will_status"),
         stored_context_for=session.context_for,
         runners=_AGENT_RUNNERS,
+        history=session.history,
     )
     return {"execution": execution}
 
@@ -212,6 +218,10 @@ def node_persist_session(state: GraphState) -> GraphState:
     )
     session.financial_profile = state["execution"].financial_profile
     session.will_status = state["execution"].will_status
+    # 합성까지 끝난 최종 답변만 이력에 남깁니다 (에이전트별 원문이 아니라
+    # 사용자가 실제로 본 문장). 다음 턴 추출기가 "무엇을 물어봤는지"를 정확히
+    # 같은 문장으로 보게 하려면 이쪽이 맞습니다.
+    session.append_history("assistant", state["output"].reply)
     default_store.save(payload.session_id, session)
     return {"session": session}
 
