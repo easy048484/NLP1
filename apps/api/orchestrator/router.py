@@ -82,8 +82,21 @@ def configure_session_store(store: SessionStore) -> None:
     default_store = store
 
 
+def current_session_store() -> SessionStore:
+    """지금 쓰이고 있는 세션 저장소.
+
+    default_store 는 configure_session_store 로 갈아끼워지는 모듈 전역이라,
+    바깥에서 `from ... import default_store` 로 가져가면 교체 이전 값을 붙들게
+    됩니다. 만료 정리 배치처럼 앱 밖에서 저장소를 만져야 하는 쪽은 이 함수를
+    쓰세요.
+    """
+    return default_store
+
+
 class GraphState(TypedDict, total=False):
     payload: AgentInput
+    #: 요청자의 사용자 id. 비로그인이면 None.
+    user_id: Optional[str]
     session: SessionState
     plan: Plan
     family_graph: Optional[dict]
@@ -98,7 +111,21 @@ class GraphState(TypedDict, total=False):
 
 def node_load_session(state: GraphState) -> GraphState:
     payload = state["payload"]
-    return {"session": default_store.load(payload.session_id)}
+    user_id = state.get("user_id")
+    session = default_store.load(payload.session_id, user_id=user_id)
+
+    # 비로그인으로 시작한 대화를 로그인한 채로 이어가면 그 자리에서 계정에
+    # 붙입니다(claim). 다음 저장에서 보관 기간이 2시간 → 30일로 늘고,
+    # 가족정보·재산정보·대화 이력이 다음 방문까지 남습니다. 반대로 로그아웃
+    # 상태로 이어가도 소유자를 지우지는 않습니다 — 한 번 사용자 것이 된
+    # 데이터를 토큰 없는 요청이 익명화해 버리면 안 되기 때문입니다.
+    if session.user_id is None and user_id is not None:
+        session.user_id = user_id
+    # 이번 턴 발화를 먼저 이력에 넣습니다. 이렇게 해야 에이전트가 받는 history의
+    # 마지막 원소가 항상 이번 user_message가 되고, 슬롯 추출기가 "직전 질문 →
+    # 이번 답변"을 한 덩어리로 볼 수 있습니다.
+    session.append_history("user", payload.user_message)
+    return {"session": session}
 
 
 def node_classify(state: GraphState) -> GraphState:
@@ -148,6 +175,7 @@ def node_execute_plan(state: GraphState) -> GraphState:
         will_status=state.get("will_status"),
         stored_context_for=session.context_for,
         runners=_AGENT_RUNNERS,
+        history=session.history,
     )
     return {"execution": execution}
 
@@ -212,6 +240,10 @@ def node_persist_session(state: GraphState) -> GraphState:
     )
     session.financial_profile = state["execution"].financial_profile
     session.will_status = state["execution"].will_status
+    # 합성까지 끝난 최종 답변만 이력에 남깁니다 (에이전트별 원문이 아니라
+    # 사용자가 실제로 본 문장). 다음 턴 추출기가 "무엇을 물어봤는지"를 정확히
+    # 같은 문장으로 보게 하려면 이쪽이 맞습니다.
+    session.append_history("assistant", state["output"].reply)
     default_store.save(payload.session_id, session)
     return {"session": session}
 
@@ -250,6 +282,11 @@ def _compiled():
     return _COMPILED
 
 
-def route(payload: AgentInput) -> ChatResponse:
-    result = _compiled().invoke({"payload": payload})
+def route(payload: AgentInput, *, user_id: Optional[str] = None) -> ChatResponse:
+    """한 턴을 처리합니다.
+
+    user_id 는 요청을 보낸 사람입니다(비로그인이면 None). 남의 세션을 이어받지
+    못하게 막고, 비로그인으로 시작한 세션을 계정에 붙이는 데 씁니다.
+    """
+    result = _compiled().invoke({"payload": payload, "user_id": user_id})
     return result["output"]

@@ -23,6 +23,18 @@ class ChatSession(Base):
     __tablename__ = "sessions"
 
     session_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    #: 이 세션을 소유한 사용자(auth.models.User). NULL이면 비로그인 세션입니다.
+    #:
+    #: 이 컬럼 하나로 보관 정책이 갈립니다 — NULL이면 짧은 TTL(2시간)을 걸고
+    #: 정리 배치가 실제로 지우고, 값이 있으면 30일 보관해서 다음 방문에
+    #: 가족정보·재산정보·대화 이력을 그대로 이어씁니다. family_graphs.user_id와
+    #: 같은 규칙입니다 (family_graph/repository.user_can_access).
+    user_id: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     family_graph_id: Mapped[Optional[str]] = mapped_column(
         String(32), ForeignKey("family_graphs.id", ondelete="SET NULL"), nullable=True
     )
@@ -41,5 +53,5 @@ class ChatSession(Base):
     #: 나중에 만료 세션 삭제 배치를 붙일 때도 이 컬럼으로 바로 걸러낼 수
     #: 있습니다.
     expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utcnow
+        DateTime(timezone=True), default=_utcnow, index=True
     )

@@ -14,7 +14,7 @@ import { Button, GoldRule, Wordmark } from "../components/ui";
  */
 export function AuthScreen({ mode }: { mode: "login" | "signup" }) {
   const navigate = useNavigate();
-  const { setAuth, familyGraphId, axis } = useApp();
+  const { setAuth, restoreLastSession, familyGraphId, axis } = useApp();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -44,6 +44,12 @@ export function AuthScreen({ mode }: { mode: "login" | "signup" }) {
     // 익명으로 만든 그래프를 계정에 연결하고, 이미 저장된 내 그래프가 있으면 인테이크 생략
     if (familyGraphId) await claimFamilyGraph(familyGraphId);
     const mine = await getMyFamilyGraph();
+
+    // 로그아웃했다 돌아온 경우 서버에 남아 있는 지난 대화를 이어받는다.
+    // 이걸 안 하면 가족관계는 되찾아지는데 대화 맥락(사망일·확정된 슬롯)만
+    // 유실된다 — 서버는 30일 보관하는데 클라이언트가 session_id 를 잊어서다.
+    await restoreLastSession();
+
     setSubmitting(false);
 
     if (mine.ok && mine.data && mine.data.members.length > 0) {

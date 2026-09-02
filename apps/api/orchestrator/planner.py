@@ -290,6 +290,7 @@ def execute_plan(
     stored_context_for: Callable[[AgentName], dict[str, Any]],
     runners: dict[AgentName, Callable[[AgentInput], AgentOutput]],
     will_status: Optional[WillStatus] = None,
+    history: Optional[list[dict[str, str]]] = None,
 ) -> ExecutionResult:
     """층 단위로 병렬 실행하고, 앞 층 결과를 다음 층 context 에 주입합니다.
 
@@ -323,6 +324,7 @@ def execute_plan(
                 family_graph_id=payload.family_graph_id,
                 financial_profile=profile,
                 will_status=will,
+                history=list(history or []),
                 context=context,
                 # 이미지는 세션에 저장되지 않는다 — extract_state_to_persist가
                 # output.data[agent.value]만 영속화하고, payload(이번 요청)는

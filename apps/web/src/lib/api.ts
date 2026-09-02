@@ -65,7 +65,7 @@ function splitContributions(
 }
 
 /** 백엔드 flat FinancialProfile → 패널용 재산 요약. 값이 하나도 없으면 null. */
-function readEstate(obj: Record<string, unknown>): EstateSummary | null {
+export function readEstate(obj: Record<string, unknown>): EstateSummary | null {
   const fp = asRecord(obj.financial_profile);
   const re = asNum(fp.real_estate_value);
   const fa = asNum(fp.financial_assets);
@@ -78,7 +78,7 @@ function readEstate(obj: Record<string, unknown>): EstateSummary | null {
 }
 
 /** 백엔드 WillStatus. checked 가 없으면(구버전/미점검) null. */
-function readWillStatus(obj: Record<string, unknown>): WillStatus | null {
+export function readWillStatus(obj: Record<string, unknown>): WillStatus | null {
   const w = asRecord(obj.will_status);
   if (typeof w.checked !== "boolean") return null;
   const grade = w.overall_grade;

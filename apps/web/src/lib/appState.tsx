@@ -26,6 +26,14 @@ import {
   getFamilyGraphId,
   setFamilyGraphId as persistFamilyGraphId,
 } from "./familyGraphStorage";
+import {
+  SESSION_ID_KEY,
+  clearAllScopedKeys,
+  promoteScopedKeys,
+  readScoped,
+  writeScoped,
+} from "./scopedStorage";
+import { fetchLatestSession } from "./sessions";
 
 /** 대화 한 턴. assistant 턴은 정규화된 합성 응답 전체를 들고 있다. */
 export interface Turn {
@@ -54,6 +62,28 @@ function createSessionId(): string {
   return `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+/**
+ * 새 session_id를 만들어 저장까지 합니다.
+ *
+ * 예전에는 session_id를 어디에도 저장하지 않아서(useState(createSessionId)),
+ * 새로고침 한 번에 서버 세션과의 연결이 끊기고 대화가 처음부터 시작됐습니다.
+ * 로그인해도 마찬가지였습니다 — 서버가 30일 보관해도 클라이언트가 그 세션의
+ * 이름을 잊어버리니 이어갈 방법이 없었습니다.
+ *
+ * 저장 위치는 로그인 여부에 따라 갈립니다(scopedStorage): 비로그인이면 탭을
+ * 닫을 때 사라지고, 로그인이면 다음 방문까지 남습니다.
+ */
+function startNewSession(): string {
+  const id = createSessionId();
+  writeScoped(SESSION_ID_KEY, id);
+  return id;
+}
+
+/** 저장된 session_id가 있으면 이어쓰고, 없으면 새로 시작합니다. */
+function resumeOrStartSession(): string {
+  return readScoped(SESSION_ID_KEY) ?? startNewSession();
+}
+
 interface AppStateValue {
   auth: StoredAuth | null;
   setAuth: (a: StoredAuth) => void;
@@ -61,6 +91,8 @@ interface AppStateValue {
 
   sessionId: string;
   resetChat: () => void;
+  /** 재로그인 직후 서버에 남아 있던 지난 대화를 이어붙인다. */
+  restoreLastSession: () => Promise<boolean>;
 
   familyGraphId: string | null;
   setFamilyGraphId: (id: string | null) => void;
@@ -94,7 +126,7 @@ const Ctx = createContext<AppStateValue | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [auth, setAuthState] = useState<StoredAuth | null>(getStoredAuth);
-  const [sessionId, setSessionId] = useState(createSessionId);
+  const [sessionId, setSessionId] = useState(resumeOrStartSession);
   const [familyGraphId, setFamilyGraphIdState] = useState<string | null>(getFamilyGraphId);
   const [axis, setAxisState] = useState<ConsultAxis | null>(getAxis);
 
@@ -112,14 +144,57 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const fgRef = useRef(familyGraphId);
   fgRef.current = familyGraphId;
 
-  const setAuth = useCallback((a: StoredAuth) => setAuthState(a), []);
+  /**
+   * 서버에 남아 있는 내 마지막 대화를 이어받는다.
+   *
+   * 로그아웃하면 session_id 를 버리므로, 다시 로그인했을 때 이걸 호출하지
+   * 않으면 서버가 30일 보관한 대화를 영영 못 찾습니다. 지난 대화는 텍스트로만
+   * 복원됩니다 — 에이전트 카드·계획표 같은 구조화된 응답은 저장하지 않으므로,
+   * 다시 실행한 결과가 아니라 지나간 기록으로 보여줍니다.
+   *
+   * 이어볼 대화가 없거나 조회에 실패하면 false. 그 경우 지금 세션 그대로
+   * 새 대화를 시작하면 됩니다 — 이어보기 실패가 로그인을 막을 이유는 없습니다.
+   */
+  const restoreLastSession = useCallback(async () => {
+    const latest = await fetchLatestSession();
+    if (!latest) return false;
+
+    setSessionId(latest.session_id);
+    writeScoped(SESSION_ID_KEY, latest.session_id);
+    if (latest.family_graph_id) setFamilyGraphIdState(latest.family_graph_id);
+    // '준비 현황' 패널. 서버에 남아 있던 재산·유언장 요약을 로그인 직후부터
+    // 보여준다 — 이게 없으면 메시지를 한 번 보내야 패널이 채워진다.
+    setEstate(latest.estate);
+    setWillStatus(latest.will_status);
+
+    setTurns(
+      latest.history.map((turn, i) => ({
+        id: `restored-${i}`,
+        role: turn.role,
+        text: turn.content,
+      })),
+    );
+    return true;
+  }, []);
+
+  const setAuth = useCallback((a: StoredAuth) => {
+    // 비로그인으로 쓰던 값(session_id, family_graph_id, 인테이크 진행 상태)을
+    // 계정 저장소로 옮깁니다. 하던 상담을 그대로 이어가면서, 다음 방문에도
+    // 남게 하려면 이 승격이 필요합니다. 서버 쪽 세션은 다음 요청에서
+    // 자동으로 계정에 붙습니다(orchestrator/router.node_load_session).
+    promoteScopedKeys();
+    setAuthState(a);
+  }, []);
 
   const logout = useCallback(() => {
+    // clearStoredAuth 를 먼저 — 그래야 이후 저장이 비로그인 저장소로 갑니다.
     clearStoredAuth();
     clearFamilyGraphId();
     clearIntakeProgress();
     clearIntakeAnswers();
     clearAxis();
+    // 위 개별 정리가 놓친 키까지 양쪽 저장소에서 한 번 더 훑어 지웁니다.
+    clearAllScopedKeys();
     setAuthState(null);
     setFamilyGraphIdState(null);
     setAxisState(null);
@@ -129,11 +204,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setWillStatus(null);
     setFamilyGraph(null);
     setPlanChecks({});
-    setSessionId(createSessionId());
+    setSessionId(startNewSession());
   }, []);
 
   const resetChat = useCallback(() => {
-    setSessionId(createSessionId());
+    setSessionId(startNewSession());
     setTurns([]);
     setPlan(null);
     setEstate(null);
@@ -240,6 +315,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       logout,
       sessionId,
       resetChat,
+      restoreLastSession,
       familyGraphId,
       setFamilyGraphId,
       axis,
@@ -261,6 +337,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       logout,
       sessionId,
       resetChat,
+      restoreLastSession,
       familyGraphId,
       setFamilyGraphId,
       axis,
