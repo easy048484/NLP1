@@ -99,6 +99,8 @@ interface AppStateValue {
 
   axis: ConsultAxis | null;
   setAxis: (a: ConsultAxis) => void;
+  /** 상담 중간에 축(생전/사후)을 바꾼다 — 이전 축의 대화·시산 결과를 비운다. */
+  switchAxis: (a: ConsultAxis) => void;
 
   turns: Turn[];
   loading: boolean;
@@ -228,6 +230,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     persistAxis(a);
   }, []);
 
+  /**
+   * 생전/사후 축을 상담 중간에 전환한다. 가족관계(familyGraph)는 축과 무관하게
+   * 유지하되, 이전 축의 맥락으로 쌓인 대화·재산·유언장 요약은 resetChat()과
+   * 똑같이 비운다 — 안 그러면 "내 자산" 데이터가 "고인 자산" 화면에 섞여 보인다.
+   */
+  const switchAxis = useCallback(
+    (a: ConsultAxis) => {
+      resetChat();
+      setAxis(a);
+    },
+    [resetChat, setAxis],
+  );
+
   const togglePlanCheck = useCallback((id: string) => {
     setPlanChecks((prev) => ({ ...prev, [id]: !prev[id] }));
   }, []);
@@ -320,6 +335,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setFamilyGraphId,
       axis,
       setAxis,
+      switchAxis,
       turns,
       loading,
       send,
@@ -342,6 +358,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setFamilyGraphId,
       axis,
       setAxis,
+      switchAxis,
       turns,
       loading,
       send,

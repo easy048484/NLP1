@@ -32,7 +32,7 @@ export function ServicePage() {
         eyebrow="서비스 소개"
         title="흩어진 상속 준비를 한 곳에서"
         photo="/photos/kr-father-riverside.jpg"
-        lead="EZNEXT는 생전 준비와 사후 절차를 잇는 대화형 안내 서비스입니다. 제도와 기한은 복잡하지만, 지금 해야 할 일은 하나씩입니다."
+        lead="EZ-NEXT는 생전 준비와 사후 절차를 잇는 대화형 안내 서비스입니다. 제도와 기한은 복잡하지만, 지금 해야 할 일은 하나씩입니다."
       />
 
       <section className="site-section">

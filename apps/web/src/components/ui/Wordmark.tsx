@@ -1,4 +1,4 @@
-/** EZNEXT 워드마크. size로 로그인 hero / 헤더 두 용도를 커버. */
+/** EZ-NEXT 워드마크. size로 로그인 hero / 헤더 두 용도를 커버. */
 export function Wordmark({
   size = "md",
   showTagline = false,
@@ -30,7 +30,7 @@ export function Wordmark({
         </svg>
       </span>
       <span className="wordmark-text">
-        EZNEXT<span className="sr-only"> — 이지넥스트</span>
+        EZ-NEXT<span className="sr-only"> — 이지넥스트</span>
       </span>
       {showTagline && (
         <span className="wordmark-tagline">가족의 다음을 쉽게 설계하다</span>
