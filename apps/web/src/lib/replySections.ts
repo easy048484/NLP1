@@ -15,7 +15,24 @@ export interface ReplySection {
 export interface ParsedReplySections {
   intro: string | null;
   sections: ReplySection[];
+  /** 면책 고지 등 — 작은 글씨로 항상 노출 (평문 렌더 — ** 마커는 미리 걷어냄) */
   footer: string | null;
+  /** 면책 고지 맨 앞에 "**...?**"로 붙어 오는 후속 질문만 따로 뽑아낸 것 —
+   * 있으면 카드 바로 아래에 별도 후속질문 블록으로 보여준다. */
+  footerQuestion: string | null;
+}
+
+/** 면책 고지 문단 맨 앞에 붙는 "**질문...?**" 문장만 후속질문으로 뽑아낸다.
+ * 물음표로 끝나는 볼드 문장만 질문으로 취급 — 그 외의 볼드 문장(예:
+ * "**위 정보는 검증 전입니다.**")은 그냥 고지 본문의 일부로 남긴다. */
+const LEADING_BOLD_QUESTION = /^\*\*([^*]+?\?)\*\*\s*/;
+
+function splitFooterQuestion(footer: string): { question: string | null; text: string | null } {
+  const m = footer.match(LEADING_BOLD_QUESTION);
+  if (!m) return { question: null, text: stripInlineMarkup(footer) || null };
+  const question = stripInlineMarkup(m[1].trim());
+  const text = stripInlineMarkup(footer.slice(m[0].length).trim());
+  return { question, text: text || null };
 }
 
 /** 섹션 사이 구분선("---")을 앞뒤에서 잘라낸다 — 각 섹션 본문은 다음
@@ -60,14 +77,17 @@ export function parseReplySections(text: string): ParsedReplySections | null {
   });
 
   let footer: string | null = null;
+  let footerQuestion: string | null = null;
   const last = sections[sections.length - 1];
   const footerMatch = last.body.match(/\n-{3,}\n+([\s\S]+)$/);
   if (footerMatch && footerMatch.index !== undefined) {
     last.body = last.body.slice(0, footerMatch.index).trim();
-    footer = footerMatch[1].trim();
+    const split = splitFooterQuestion(footerMatch[1].trim());
+    footerQuestion = split.question;
+    footer = split.text;
   }
 
-  return { intro, sections, footer };
+  return { intro, sections, footer, footerQuestion };
 }
 
 export interface ConfirmChecklistItem {
