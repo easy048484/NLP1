@@ -34,9 +34,17 @@ const STEPS = [
   { n: "04", title: "할 일·일정 정리", body: "지금 해야 할 일과 기한을 체크리스트와 캘린더로 받습니다." },
 ];
 
-/** 상담 시작 = 새 탭. 현재 페이지(홈)를 유지한 채 상담을 별도 탭에서 진행한다. */
+/**
+ * 상담 시작 = 새 탭. 현재 페이지(홈)를 유지한 채 상담을 별도 탭에서 진행한다.
+ *
+ * noopener/noreferrer를 일부러 안 붙인다 — 같은 오리진 내부 이동이라 그
+ * 둘이 막는 "새 탭이 opener를 조작" 위험이 없고, 대신 opener 관계가 있어야
+ * 비로그인 세션(scopedStorage, session_id·axis 등 sessionStorage 기반)이
+ * 새 탭에 복제된다. noopener를 붙이면 이 복제가 끊겨 새 탭이 완전히 새
+ * 세션으로 시작한다(실측 재현됨).
+ */
 function openConsult() {
-  window.open("/onboarding/role", "_blank", "noopener,noreferrer");
+  window.open("/onboarding/role", "_blank");
 }
 
 export function HomePage() {
