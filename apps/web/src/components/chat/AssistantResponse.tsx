@@ -2,8 +2,34 @@ import { agentMeta } from "../../lib/agents";
 import { Markdown } from "../../lib/markdown";
 import type { ChatResponse } from "../../types";
 import { hasPendingQuestions } from "../../lib/agentData";
+import { parseConfirmChecklist, parseReplySections } from "../../lib/replySections";
 import { AgentAvatar, ConcatNoticeBadge, NeedsReviewBadge } from "../ui";
 import { AgentCards } from "./AgentCards";
+import { ConfirmChecklistCard } from "./ConfirmChecklistCard";
+import { ReplyCarousel } from "./ReplyCarousel";
+
+/**
+ * 답변 본문을 어떻게 보여줄지 고른다 — 셋 다 순수 텍스트 휴리스틱(백엔드
+ * 계약 변경 없음)이라 패턴이 안 맞으면 항상 기존 마크다운 그대로 폴백한다.
+ * 우선순위: 확인 질문 체크리스트 > 섹션 캐러셀 > 원문.
+ */
+function renderReply(reply: string) {
+  const checklist = parseConfirmChecklist(reply);
+  if (checklist) return <ConfirmChecklistCard data={checklist} />;
+
+  const sections = parseReplySections(reply);
+  if (sections) {
+    return (
+      <ReplyCarousel
+        intro={sections.intro}
+        sections={sections.sections}
+        footer={sections.footer}
+      />
+    );
+  }
+
+  return <Markdown>{reply}</Markdown>;
+}
 
 /**
  * 합성(compose) 응답 한 건.
@@ -42,9 +68,7 @@ export function AssistantResponse({ response }: { response: ChatResponse }) {
       )}
 
       {response.reply && (
-        <div className="assistant-bubble">
-          <Markdown>{response.reply}</Markdown>
-        </div>
+        <div className="assistant-bubble">{renderReply(response.reply)}</div>
       )}
 
       {response.contributions.map((c, i) => (
