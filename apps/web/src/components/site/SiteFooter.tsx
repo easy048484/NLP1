@@ -17,7 +17,9 @@ export function SiteFooter() {
             <Link to="/service">서비스 소개</Link>
             <Link to="/guide">상속 절차 안내</Link>
             <Link to="/faq">자주 묻는 질문</Link>
-            <Link to="/onboarding/role" target="_blank" rel="noopener noreferrer">
+            {/* noopener 없음 — 같은 오리진 내부 이동이라 opener 관계를 유지해야
+                비로그인 세션(sessionStorage 기반)이 새 탭에 복제된다. */}
+            <Link to="/onboarding/role" target="_blank">
               상담 시작
             </Link>
           </div>

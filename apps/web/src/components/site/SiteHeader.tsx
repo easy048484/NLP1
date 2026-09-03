@@ -3,9 +3,13 @@ import { Link, NavLink, useLocation } from "react-router-dom";
 import { useApp } from "../../lib/appState";
 import { Wordmark } from "../ui";
 
-/** 상담 시작 = 새 탭. 현재 페이지를 유지한 채 상담을 별도 탭에서 진행한다. */
+/**
+ * 상담 시작 = 새 탭. noopener를 안 붙이는 이유는 HomePage.tsx의 openConsult
+ * 주석 참고 — 비로그인 세션(sessionStorage 기반) 복제를 위해 opener 관계를
+ * 유지해야 한다.
+ */
 function openConsult() {
-  window.open("/onboarding/role", "_blank", "noopener,noreferrer");
+  window.open("/onboarding/role", "_blank");
 }
 
 const NAV = [
