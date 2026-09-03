@@ -82,6 +82,7 @@ button {
 a {
   color: var(--agent-heir);
   text-underline-offset: 3px;
+  text-decoration: none;
 }
 
 ul,

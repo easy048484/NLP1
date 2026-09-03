@@ -218,7 +218,13 @@ export async function sendChatMessage(
   const request: AgentInput = {
     session_id: sessionId,
     user_message: userMessage,
-    context: opts?.context ?? {},
+    context: {
+      // asset_organizer 등은 axis(pre_need/post_death)가 아니라 context.mode를
+      // 읽는다 — 값 자체는 axis와 동일한 문자열이라 그대로 전달한다. 호출부가
+      // context에 명시적으로 넣은 키가 있으면 그쪽이 우선한다.
+      ...(opts?.axis ? { mode: opts.axis } : {}),
+      ...opts?.context,
+    },
     ...(opts?.familyGraphId ? { family_graph_id: opts.familyGraphId } : {}),
     ...(opts?.axis ? { axis: opts.axis } : {}),
     ...(opts?.image

@@ -1,12 +1,16 @@
 import { useEffect } from "react";
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import { SiteFooter } from "./SiteFooter";
 import { SiteHeader } from "./SiteHeader";
+
+/** 상담 시작 = 새 탭. 현재 페이지를 유지한 채 상담을 별도 탭에서 진행한다. */
+function openConsult() {
+  window.open("/onboarding/role", "_blank", "noopener,noreferrer");
+}
 
 /** 마케팅/안내 사이트 셸: 상단 내비 + 본문 + 푸터 + 상시 상담 시작 버튼. */
 export function SiteLayout() {
   const { pathname } = useLocation();
-  const navigate = useNavigate();
 
   useEffect(() => {
     window.scrollTo({ top: 0 });
@@ -26,7 +30,7 @@ export function SiteLayout() {
       <button
         type="button"
         className="floating-cta"
-        onClick={() => navigate("/onboarding/role")}
+        onClick={openConsult}
       >
         상담 시작
       </button>
