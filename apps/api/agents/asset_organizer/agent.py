@@ -597,7 +597,11 @@ def _format_summary(state: dict[str, Any]) -> str:
             f"- {a['type']}: {_format_krw(a['value'])}" for a in confirmed_assets
         )
         lines.extend(f"- {a['type']}: 금액 확인 안 됨" for a in unknown_amount_assets)
-        lines.append(f"자산 합계: {_format_krw(total_assets)}")
+        # 앞의 마지막 불릿과 빈 줄 없이 붙으면 마크다운이 이 줄을 직전 항목의
+        # 연속 문단으로 보고 한 줄에 이어 붙여 렌더링한다("- 주식: 금액 확인
+        # 안 됨 자산 합계: ..."처럼 시각적으로 뭉쳐짐, 실측 확인) — 목록 종료를
+        # 명확히 하려고 앞에 빈 줄을 넣는다(위 "\n[자산]"과 같은 관례).
+        lines.append(f"\n자산 합계: {_format_krw(total_assets)}")
         if unknown_amount_assets:
             lines.append(
                 f"({len(unknown_amount_assets)}개 항목은 금액이 확인되지 않아 "
@@ -614,7 +618,7 @@ def _format_summary(state: dict[str, Any]) -> str:
             f"- {liability['type']}: {_format_krw(liability['remaining_balance'])}"
             for liability in liabilities
         )
-        lines.append(f"부채 합계: {_format_krw(total_liabilities)}")
+        lines.append(f"\n부채 합계: {_format_krw(total_liabilities)}")
     else:
         lines.append("\n[부채] 없음")
 
