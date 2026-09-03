@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from threading import Lock
 from typing import Any, Optional
 
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from db.base import mask_sensitive_id, session_scope
@@ -32,10 +33,64 @@ from .models import ChatSession
 
 logger = logging.getLogger(__name__)
 
-#: 세션을 이 시간(초) 동안 아무 요청도 없으면 만료된 것으로 보고 다음 조회 때
-#: 새로 시작합니다. 인메모리 단계에서 "방치된 세션이 무한정 쌓이는 것"만 막는
-#: 용도라 값은 임의 기준이며, DB로 옮길 때 보관 정책에 맞춰 재조정합니다.
-_SESSION_TTL_SECONDS = 60 * 60 * 2  # 2시간
+#: 세션 보관 기간. 로그인 여부로 갈립니다 (docs/개발_배포_파이프라인_계획.md
+#: 10절 "개인정보 보관 기간·삭제 정책").
+#:
+#: 비로그인은 "대화창을 떠나면 남지 않는다"가 목표입니다. 다만 브라우저를 그냥
+#: 닫으면 서버가 알 방법이 없어서 즉시 삭제는 보장할 수 없고, 이 TTL이 실질
+#: 상한 역할을 합니다. 만료된 행은 purge_expired_sessions()가 실제로 지웁니다
+#: (예전에는 조회할 때 무시만 하고 행은 영구히 남았습니다).
+#:
+#: 로그인은 반대로 "다음 방문에 이어서 쓴다"가 목표입니다. 상속 절차는 몇 주~몇
+#: 달 이어지므로 30일을 둡니다.
+_ANONYMOUS_TTL_SECONDS = 60 * 60 * 2  # 2시간
+_AUTHENTICATED_TTL_SECONDS = 60 * 60 * 24 * 30  # 30일
+
+
+def session_ttl_seconds(user_id: Optional[str]) -> int:
+    """이 세션을 얼마나 보관할지. 소유자 유무 하나로 정합니다."""
+    return _AUTHENTICATED_TTL_SECONDS if user_id else _ANONYMOUS_TTL_SECONDS
+
+
+#: 세션에 보관하는 대화 이력 상한. 이력은 추출 LLM에 매 턴 통째로 실려 나가고
+#: sessions.per_agent_context JSON 안에 함께 저장되므로, 상한이 없으면 대화가
+#: 길어질수록 DB row와 토큰 비용이 선형으로 늘어납니다. 세 겹으로 막습니다.
+#:   - 메시지 개수 (user/assistant 각각 1개로 셈)
+#:   - 메시지 하나의 길이 (role 별로 다름 — 아래 참고)
+#:   - 이력 전체 길이 (오래된 것부터 버림)
+_HISTORY_MAX_MESSAGES = 24
+_HISTORY_MAX_CHARS_TOTAL = 12000
+
+#: 사용자 발화 상한. 긴 붙여넣기 한 번이 예산을 다 먹지 않도록 앞에서 자릅니다
+#: (사용자가 하려는 말은 보통 앞에 있습니다).
+_HISTORY_MAX_CHARS_USER = 2000
+
+#: 에이전트 답변 상한. 절차 안내는 2000자를 예사로 넘는데, 이력을 읽는 쪽은
+#: 지금 슬롯 추출기 하나뿐이고 거기서 필요한 건 "직전에 무엇을 물었는가"입니다.
+#: 그 질문은 항상 답변 **끝**에 붙으므로, 앞에서 자르면 정작 필요한 문장이
+#: 날아갑니다. 그래서 assistant 만 뒤에서부터 남깁니다.
+_HISTORY_MAX_CHARS_ASSISTANT = 800
+
+#: 잘라냈다는 표시. 모델이 "앞이 잘린 글"임을 알 수 있게 붙입니다.
+_TRUNCATION_MARK = "…"
+
+#: 이력에 들어갈 수 있는 role.
+_HISTORY_ROLES = ("user", "assistant")
+
+
+def _trim_history(history: list[dict[str, str]]) -> list[dict[str, str]]:
+    """상한을 넘으면 오래된 메시지부터 버립니다.
+
+    자르는 방향이 "앞에서부터"인 이유: 슬롯 추출에서 중요한 건 최근 문맥이고,
+    확정된 값은 이미 에이전트 상태(HeirState 등)에 남아 있어서 오래된 원문이
+    사라져도 잃는 게 없습니다.
+    """
+    trimmed = history[-_HISTORY_MAX_MESSAGES:]
+    while (
+        trimmed and sum(len(m["content"]) for m in trimmed) > _HISTORY_MAX_CHARS_TOTAL
+    ):
+        trimmed.pop(0)
+    return trimmed
 
 
 @dataclass
@@ -68,11 +123,57 @@ class SessionState:
     will_status: Optional[WillStatus] = None
     pending_handoff: Optional[AgentName] = None
     last_agent: Optional[AgentName] = None
+    #: 이 세션을 소유한 사용자 id. None이면 비로그인 세션입니다.
+    #: 보관 기간(session_ttl_seconds)과 접근 권한(can_be_accessed_by)이
+    #: 이 값 하나로 갈립니다.
+    user_id: Optional[str] = None
     family_graph_id: Optional[str] = None
+    #: 이 세션의 대화 원문. [{"role": "user"|"assistant", "content": str}, ...]
+    #: 시간순이고, 상한(_HISTORY_MAX_*)을 넘으면 오래된 것부터 버립니다.
+    #:
+    #: 왜 필요한가: 슬롯 추출기가 이전에는 "이번 턴 발화 한 줄"만 받았습니다.
+    #: 그래서 시스템이 "돌아가신 날짜가 언제인가요?"라고 묻고 사용자가 "어제"라고
+    #: 답하면, 추출기 입장에서는 그 "어제"가 무엇의 날짜인지 알 근거가 없어
+    #: null을 돌려주고 같은 질문을 반복했습니다. 이력을 함께 넘겨야 풀립니다.
+    #:
+    #: financial_profile / will_status 와 같은 이유로 컬럼을 새로 만들지 않고
+    #: per_agent_context JSON 의 "_shared" 아래에 함께 저장합니다.
+    history: list[dict[str, str]] = field(default_factory=list)
     updated_at: float = field(default_factory=time.time)
 
     def context_for(self, agent: AgentName) -> dict[str, Any]:
         return dict(self.per_agent_context.get(agent.value, {}))
+
+    def can_be_accessed_by(self, user_id: Optional[str]) -> bool:
+        """요청자가 이 세션을 이어받을 수 있는지.
+
+        family_graph의 user_can_access와 같은 규칙입니다.
+        - 소유자가 없는(비로그인) 세션: session_id를 아는 사람이면 누구나.
+          session_id 자체가 접근 권한처럼 쓰이는 값(capability token)입니다.
+        - 소유자가 있는 세션: 그 사용자 본인만. 남의 세션 id를 찍어 넣어도
+          "없는 세션"과 똑같이 새 대화가 시작될 뿐, 내용이 새지 않습니다.
+        """
+        if self.user_id is None:
+            return True
+        return self.user_id == user_id
+
+    def append_history(self, role: str, content: str) -> None:
+        """대화 한 줄을 이력에 덧붙입니다. 빈 내용은 넣지 않습니다.
+
+        자르는 방향이 role 마다 다릅니다 (_HISTORY_MAX_CHARS_* 주석 참고) —
+        사용자 발화는 앞을, 에이전트 답변은 뒤를 남깁니다.
+        """
+        if role not in _HISTORY_ROLES:
+            raise ValueError(f"알 수 없는 role: {role!r}")
+        text = (content or "").strip()
+        if not text:
+            return
+        if role == "assistant":
+            if len(text) > _HISTORY_MAX_CHARS_ASSISTANT:
+                text = _TRUNCATION_MARK + text[-_HISTORY_MAX_CHARS_ASSISTANT:]
+        elif len(text) > _HISTORY_MAX_CHARS_USER:
+            text = text[:_HISTORY_MAX_CHARS_USER] + _TRUNCATION_MARK
+        self.history = _trim_history([*self.history, {"role": role, "content": text}])
 
     def remember(
         self,
@@ -104,6 +205,9 @@ class SessionState:
             if will_status:
                 shared["will_status"] = will_status
 
+        if self.history:
+            shared["history"] = self.history
+
         if shared:
             data[self.SHARED_KEY] = shared
         return data
@@ -127,21 +231,56 @@ class SessionState:
             except Exception:  # noqa: BLE001
                 logger.warning("세션의 will_status 가 손상돼 비웁니다.")
 
+        history: list[dict[str, str]] = []
+        for item in shared.get("history") or []:
+            # 저장된 값이 깨져 있어도 대화 전체를 날리지 않고 그 줄만 버립니다.
+            if (
+                isinstance(item, dict)
+                and item.get("role") in _HISTORY_ROLES
+                and isinstance(item.get("content"), str)
+            ):
+                history.append({"role": item["role"], "content": item["content"]})
+
         return cls(
             per_agent_context=raw,
             financial_profile=profile,
             will_status=will_status,
+            history=_trim_history(history),
             **kwargs,
         )
 
 
 class SessionStore:
-    """세션 상태 저장소 인터페이스. 지금은 인메모리 구현 하나뿐입니다."""
+    """세션 상태 저장소 인터페이스.
 
-    def load(self, session_id: str) -> SessionState:
+    load 의 user_id 는 "이 요청을 보낸 사람"입니다. 남의 세션을 이어받지
+    못하게 막고(can_be_accessed_by), 비로그인으로 시작한 세션을 로그인 후
+    계정에 붙이는(claim) 판단에 씁니다.
+
+    소유권 검사는 load 와 save 양쪽에 있어야 합니다. load 만 막으면, 남의
+    session_id 를 찍어 넣은 요청이 읽기는 실패해서 빈 상태로 시작하더라도
+    저장 단계에서 그 빈 상태로 원래 주인의 행을 덮어써 버립니다.
+    """
+
+    def load(self, session_id: str, user_id: Optional[str] = None) -> SessionState:
         raise NotImplementedError
 
     def save(self, session_id: str, state: SessionState) -> None:
+        raise NotImplementedError
+
+    def purge_expired(self) -> int:
+        """만료된 세션을 실제로 지우고 지운 개수를 돌려줍니다."""
+        return 0
+
+    def latest_for_user(self, user_id: str) -> Optional[tuple[str, SessionState]]:
+        """이 사용자의 가장 최근 세션 (session_id, 상태). 없으면 None.
+
+        로그아웃하면 클라이언트가 session_id 를 버립니다. 서버에는 30일 동안
+        그 세션이 그대로 남아 있는데 아무도 그걸 가리키지 않으니, 다시
+        로그인해도 대화가 처음부터 시작됐습니다. 재로그인 시 "내 마지막 세션이
+        무엇이었는지"를 돌려받기 위한 조회입니다
+        (family_graph 의 get_latest_for_user 와 같은 역할).
+        """
         raise NotImplementedError
 
 
@@ -150,20 +289,52 @@ class InMemorySessionStore(SessionStore):
         self._sessions: dict[str, SessionState] = {}
         self._lock = Lock()
 
-    def load(self, session_id: str) -> SessionState:
+    def load(self, session_id: str, user_id: Optional[str] = None) -> SessionState:
         with self._lock:
             state = self._sessions.get(session_id)
             if state is None or self._is_expired(state):
-                return SessionState()
+                return SessionState(user_id=user_id)
+            if not state.can_be_accessed_by(user_id):
+                # 남의 세션이면 "없는 것"과 똑같이 취급합니다 (내용 유출 방지).
+                logger.warning("소유자가 다른 세션 접근 시도 — 새 세션으로 시작합니다.")
+                return SessionState(user_id=user_id)
             return state
 
     def save(self, session_id: str, state: SessionState) -> None:
         with self._lock:
+            existing = self._sessions.get(session_id)
+            if existing is not None and not existing.can_be_accessed_by(state.user_id):
+                logger.warning(
+                    "소유자가 다른 세션에는 저장하지 않습니다(session=%s).",
+                    mask_sensitive_id(session_id),
+                )
+                return
             self._sessions[session_id] = state
+
+    def purge_expired(self) -> int:
+        with self._lock:
+            expired = [
+                sid for sid, st in self._sessions.items() if self._is_expired(st)
+            ]
+            for sid in expired:
+                del self._sessions[sid]
+            return len(expired)
+
+    def latest_for_user(self, user_id: str) -> Optional[tuple[str, SessionState]]:
+        with self._lock:
+            owned = [
+                (sid, st)
+                for sid, st in self._sessions.items()
+                if st.user_id == user_id and not self._is_expired(st)
+            ]
+        if not owned:
+            return None
+        return max(owned, key=lambda item: item[1].updated_at)
 
     @staticmethod
     def _is_expired(state: SessionState) -> bool:
-        return (time.time() - state.updated_at) > _SESSION_TTL_SECONDS
+        ttl = session_ttl_seconds(state.user_id)
+        return (time.time() - state.updated_at) > ttl
 
 
 class PostgresSessionStore(SessionStore):
@@ -175,24 +346,34 @@ class PostgresSessionStore(SessionStore):
     존재 자체를 몰라도 됩니다.
     """
 
-    def load(self, session_id: str) -> SessionState:
+    def load(self, session_id: str, user_id: Optional[str] = None) -> SessionState:
         with session_scope() as db:
             row = db.get(ChatSession, session_id)
             if row is None or row.expires_at < datetime.now(timezone.utc):
-                return SessionState()
-            return SessionState.from_json_context(
+                return SessionState(user_id=user_id)
+
+            state = SessionState.from_json_context(
                 row.per_agent_context or {},
                 pending_handoff=(
                     AgentName(row.pending_handoff) if row.pending_handoff else None
                 ),
                 last_agent=(AgentName(row.last_agent) if row.last_agent else None),
+                user_id=row.user_id,
                 family_graph_id=row.family_graph_id,
                 updated_at=row.updated_at.timestamp(),
             )
+            if not state.can_be_accessed_by(user_id):
+                # 남의 세션이면 "없는 것"과 똑같이 취급합니다 (내용 유출 방지).
+                logger.warning(
+                    "소유자가 다른 세션 접근 시도(session=%s) — 새 세션으로 시작합니다.",
+                    mask_sensitive_id(session_id),
+                )
+                return SessionState(user_id=user_id)
+            return state
 
     def save(self, session_id: str, state: SessionState) -> None:
         now = datetime.now(timezone.utc)
-        expires_at = now + timedelta(seconds=_SESSION_TTL_SECONDS)
+        expires_at = now + timedelta(seconds=session_ttl_seconds(state.user_id))
         # 같은 session_id로 두 요청이 동시에 "없는 세션"을 보면 둘 다 INSERT를
         # 시도해 PK 충돌이 납니다. flush에서 IntegrityError가 나면 한 번 더
         # 시도해 이미 커밋된 row를 갱신합니다.
@@ -205,6 +386,15 @@ class PostgresSessionStore(SessionStore):
                         row = ChatSession(session_id=session_id)
                         db.add(row)
                         db.flush()
+                    elif row.user_id is not None and row.user_id != state.user_id:
+                        # 남의 세션 id 를 찍어 넣은 요청. load 가 이미 빈 상태를
+                        # 돌려줬으므로, 여기서 막지 않으면 그 빈 상태가 원래
+                        # 주인의 대화를 통째로 덮어씁니다.
+                        logger.warning(
+                            "소유자가 다른 세션에는 저장하지 않습니다(session=%s).",
+                            mask_sensitive_id(session_id),
+                        )
+                        return
 
                     family_graph_id = state.family_graph_id
                     if (
@@ -222,6 +412,7 @@ class PostgresSessionStore(SessionStore):
                         )
                         family_graph_id = None
 
+                    row.user_id = state.user_id
                     row.family_graph_id = family_graph_id
                     row.last_agent = (
                         state.last_agent.value if state.last_agent else None
@@ -237,6 +428,49 @@ class PostgresSessionStore(SessionStore):
                 continue
         assert last_error is not None
         raise last_error
+
+    def latest_for_user(self, user_id: str) -> Optional[tuple[str, SessionState]]:
+        with session_scope() as db:
+            row = (
+                db.execute(
+                    select(ChatSession)
+                    .where(
+                        ChatSession.user_id == user_id,
+                        ChatSession.expires_at >= datetime.now(timezone.utc),
+                    )
+                    .order_by(ChatSession.updated_at.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            if row is None:
+                return None
+            return row.session_id, SessionState.from_json_context(
+                row.per_agent_context or {},
+                pending_handoff=(
+                    AgentName(row.pending_handoff) if row.pending_handoff else None
+                ),
+                last_agent=(AgentName(row.last_agent) if row.last_agent else None),
+                user_id=row.user_id,
+                family_graph_id=row.family_graph_id,
+                updated_at=row.updated_at.timestamp(),
+            )
+
+    def purge_expired(self) -> int:
+        """만료된 세션 행을 실제로 삭제합니다.
+
+        예전에는 load()가 만료된 행을 무시만 하고 행 자체는 영구히 남았습니다.
+        비로그인 대화의 원문·사망일·재산정보가 그대로 쌓인다는 뜻이라, 만료를
+        "안 보이게 하는 것"과 "지우는 것"을 분리하지 않고 실제로 지웁니다.
+        """
+        with session_scope() as db:
+            result = db.execute(
+                delete(ChatSession).where(
+                    ChatSession.expires_at < datetime.now(timezone.utc)
+                )
+            )
+            return int(result.rowcount or 0)
 
 
 #: 오케스트레이터 프로세스 전역에서 공유하는 싱글턴 — 기본값은 인메모리입니다.

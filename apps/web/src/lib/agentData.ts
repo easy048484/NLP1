@@ -157,6 +157,29 @@ export function parseSignals(
   return signals.length ? signals : null;
 }
 
+/**
+ * asset_organizer는 구조화된 pending_questions를 안 주고 대신 pending_categories
+ * (문자열 배열)와 안내 문구만 준다 — "나머지는 없어요"를 직접 타이핑하지
+ * 않아도 되게, 이 배열이 있으면 선택지 1개짜리 PendingQuestion을 합성한다.
+ * field는 일부러 비워둔다 — asset_organizer는 구조화 context가 아니라
+ * 평문 "나머지는 없어요"를 사용자 발화로 받아야 _is_negative_answer()가
+ * 인식한다(ChoiceGroup은 field가 없으면 평문만 보낸다).
+ */
+function assetOrganizerPendingQuestion(
+  ownNamespace: Record<string, unknown> | null,
+): PendingQuestion | null {
+  const categories = asArray(ownNamespace?.pending_categories).filter(
+    (c): c is string => typeof c === "string" && c.length > 0,
+  );
+  if (categories.length === 0) return null;
+  return {
+    requirement: "",
+    field: "",
+    question: `아직 말씀 안 하신 항목이 있어요: ${categories.join(", ")}. 있으면 알려주시고, 없으면 아래에서 선택해주세요.`,
+    options: [{ label: "나머지는 없어요", value: "나머지는 없어요" }],
+  };
+}
+
 export function parsePendingQuestions(
   data: Record<string, unknown>,
   agentKey?: string,
@@ -165,6 +188,11 @@ export function parsePendingQuestions(
   // namespace에 없으면 평면(top-level) 키로만 폴백한다(다른 agent namespace
   // 순회 금지). agentKey가 없을 때만(legacy 호출) 기존처럼 첫 namespace를
   // 순회하는 deepFindNamespaceFirst를 쓴다.
+  if (agentKey) {
+    const ownNamespace = asRecord(data[agentKey]);
+    const synthesized = assetOrganizerPendingQuestion(ownNamespace);
+    if (synthesized) return [synthesized];
+  }
   const raw = agentKey
     ? (() => {
         const ownNamespace = asRecord(data[agentKey]);

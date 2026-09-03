@@ -75,6 +75,11 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+/* 로그인/회원가입은 다른 이동 링크와 달리 밑줄을 항상 보여준다(요청 확정). */
+.link-underline {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .site-utility-text {
   color: var(--ink-inverse-muted);
   padding: 4px 2px;
@@ -229,8 +234,6 @@
   font-size: var(--text-sm);
   font-weight: 700;
   color: var(--brand-navy);
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 
 /* ================= 패럴랙스 이미지 공통 ================= */

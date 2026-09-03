@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { AGENCIES, POST_DEATH_STEPS } from "../../lib/content";
 import { Eyebrow } from "../../components/ui";
 import { PhotoBand } from "../../components/site/Photo";
@@ -34,9 +34,12 @@ const STEPS = [
   { n: "04", title: "할 일·일정 정리", body: "지금 해야 할 일과 기한을 체크리스트와 캘린더로 받습니다." },
 ];
 
-export function HomePage() {
-  const navigate = useNavigate();
+/** 상담 시작 = 새 탭. 현재 페이지(홈)를 유지한 채 상담을 별도 탭에서 진행한다. */
+function openConsult() {
+  window.open("/onboarding/role", "_blank", "noopener,noreferrer");
+}
 
+export function HomePage() {
   return (
     <>
       {/* ===== HERO ===== */}
@@ -57,13 +60,13 @@ export function HomePage() {
           </h1>
           <p className="hero-lead">
             생전 자산 준비부터 사후 상속 절차와 상속세까지. 복잡한 제도와 기한을
-            EZNEXT가 정리해 지금 해야 할 일 하나부터 알려드립니다.
+            EZ-NEXT가 정리해 지금 해야 할 일 하나부터 알려드립니다.
           </p>
           <div className="hero-actions">
             <button
               type="button"
               className="btn btn-gold btn-lg"
-              onClick={() => navigate("/onboarding/role")}
+              onClick={openConsult}
             >
               무료로 상담 시작
             </button>
@@ -184,7 +187,7 @@ export function HomePage() {
               <h3>제도와 사람을 잇습니다</h3>
               <p>
                 안심상속 원스톱, 대한법률구조공단 132 등 공식 창구로 이어지도록
-                안내합니다. EZNEXT는 그 사이의 길잡이입니다.
+                안내합니다. EZ-NEXT는 그 사이의 길잡이입니다.
               </p>
             </Reveal>
           </div>
@@ -228,11 +231,11 @@ export function HomePage() {
         </div>
         <div className="cta-band-inner">
           <h2>지금, 해야 할 일 하나부터 확인하세요</h2>
-          <p>가족관계만 입력하면 나머지는 EZNEXT가 순서대로 안내합니다.</p>
+          <p>가족관계만 입력하면 나머지는 EZ-NEXT가 순서대로 안내합니다.</p>
           <button
             type="button"
             className="btn btn-gold btn-lg"
-            onClick={() => navigate("/onboarding/role")}
+            onClick={openConsult}
           >
             무료로 상담 시작
           </button>

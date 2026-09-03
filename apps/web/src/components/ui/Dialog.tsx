@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 const FOCUSABLE =
   'a[href],button:not([disabled]),textarea,input,select,[tabindex]:not([tabindex="-1"])';
@@ -61,7 +62,10 @@ export function Dialog({
     };
   }, [onClose]);
 
-  return (
+  // body에 포탈로 붙인다 — 그렇지 않으면 backdrop-filter가 걸린 조상(다크 테마의
+  // .app-header/.composer 등)이 position:fixed 오버레이의 containing block이
+  // 돼버려서, 전체 화면이 아니라 그 조상 박스 안에만 작게 뜨는 문제가 생긴다.
+  return createPortal(
     <div className={`dialog-overlay dialog-${variant}`} onMouseDown={onClose}>
       <div
         ref={panelRef}
@@ -80,6 +84,7 @@ export function Dialog({
         <div className="dialog-body">{children}</div>
         {footer && <div className="dialog-footer">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

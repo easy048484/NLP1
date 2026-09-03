@@ -131,21 +131,40 @@ export function Composer() {
             </>
           }
         >
-          <p>
-            유언장 사진은 내용 판독을 위해 외부 AI 서비스로 전송됩니다.
-            <br />
-            사진은 판독 후 저장하지 않습니다.
-          </p>
-          <p>
-            아래는 유언 요건 확인에 필요하지 않으니 가능하면 가려주세요.
-            <br />
-            · 주민등록번호 · 전화번호 · 계좌번호
-          </p>
-          <p>
-            단, 아래는 요건 확인에 반드시 필요하니 가리지 말아주세요.
-            <br />
-            · 성명 · 주소 · 작성 날짜
-          </p>
+          <div className="upload-notice">
+            <p className="upload-notice-intro">
+              <span aria-hidden="true">🔒</span>
+              유언장 사진이나 안심상속 원스톱 조회결과 캡처는 내용 판독을 위해
+              외부 AI 서비스로 전송됩니다. 사진은 판독 후 저장하지 않습니다.
+            </p>
+
+            <div className="upload-notice-rule upload-notice-warn">
+              <span className="upload-notice-icon" aria-hidden="true">
+                ⚠
+              </span>
+              <div>
+                <strong>가려주세요!</strong>
+                <p>주민등록번호 · 전화번호 · 계좌번호 전체 자릿수</p>
+              </div>
+            </div>
+
+            <div className="upload-notice-rule upload-notice-keep">
+              <span className="upload-notice-icon" aria-hidden="true">
+                ✓
+              </span>
+              <div>
+                <strong>가리지 말아주세요</strong>
+                <p>
+                  <span className="upload-notice-tag">유언장</span>
+                  성명 · 주소 · 작성 날짜
+                </p>
+                <p>
+                  <span className="upload-notice-tag">안심상속</span>
+                  자산·부채 종류와 금액, 기관명
+                </p>
+              </div>
+            </div>
+          </div>
         </Dialog>
       )}
     </div>

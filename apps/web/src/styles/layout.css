@@ -37,6 +37,13 @@
   padding: 2px 8px;
   border: 1px solid var(--brand-gold);
   border-radius: var(--radius-pill);
+  background: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.app-header-axis:hover,
+.app-header-axis:focus-visible {
+  background: var(--brand-gold-soft);
 }
 .app-header-user {
   font-size: var(--text-caption);

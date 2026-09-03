@@ -8,13 +8,18 @@
   식별할 때 쓰는 FastAPI 의존성.
 """
 
-from .dependencies import get_current_user, get_current_user_optional
+from .dependencies import (
+    get_current_user,
+    get_current_user_id_optional,
+    get_current_user_optional,
+)
 from .models import User
 from .router import router
 
 __all__ = [
     "User",
     "get_current_user",
+    "get_current_user_id_optional",
     "get_current_user_optional",
     "router",
 ]

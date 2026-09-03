@@ -12,7 +12,8 @@
 import type { AuthResponse, AuthUser } from "../types";
 import { API_BASE_URL } from "./api";
 
-const TOKEN_KEY = "nlp1.auth_token";
+/** scopedStorage가 "지금 로그인 상태인지"를 판단할 때도 이 키를 봅니다. */
+export const TOKEN_KEY = "nlp1.auth_token";
 const USER_KEY = "nlp1.auth_user";
 
 export interface StoredAuth {

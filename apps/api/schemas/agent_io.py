@@ -176,6 +176,17 @@ class AgentInput(BaseModel):
             "세션 값으로 채워 넣으므로 프론트는 보통 비워둡니다."
         ),
     )
+    history: list[dict[str, str]] = Field(
+        default_factory=list,
+        description=(
+            "이 세션의 대화 원문 (시간순, 마지막 원소가 이번 턴 user_message). "
+            "[{'role': 'user'|'assistant', 'content': str}, ...] 형식이고 "
+            "오케스트레이터가 세션에서 채워 넣으므로 프론트는 비워둡니다. "
+            "슬롯 추출기가 '어제'처럼 앞 문맥이 있어야 해석되는 답변을 읽는 데 "
+            "씁니다 — 이력 없이 마지막 한 줄만 보면 같은 질문을 반복하게 됩니다. "
+            "길이 상한은 오케스트레이터(session_store._HISTORY_MAX_*)가 겁니다."
+        ),
+    )
     context: dict[str, Any] = Field(default_factory=dict)
     image_base64: Optional[str] = Field(
         default=None,

@@ -95,7 +95,7 @@ export function GuidePage() {
             <p>
               전문(全文)을 직접 쓰고, <strong>작성 연월일 · 주소 · 성명</strong>을 적은
               뒤 <strong>날인</strong>해야 합니다. 한 가지라도 빠지면 무효로 판단한
-              판례가 있습니다. EZNEXT의 유언 요건 점검으로 항목별로 확인할 수 있습니다.
+              판례가 있습니다. EZ-NEXT의 유언 요건 점검으로 항목별로 확인할 수 있습니다.
             </p>
           </div>
         </div>

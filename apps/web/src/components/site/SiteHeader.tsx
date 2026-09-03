@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
-import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, useLocation } from "react-router-dom";
 import { useApp } from "../../lib/appState";
 import { Wordmark } from "../ui";
+
+/** 상담 시작 = 새 탭. 현재 페이지를 유지한 채 상담을 별도 탭에서 진행한다. */
+function openConsult() {
+  window.open("/onboarding/role", "_blank", "noopener,noreferrer");
+}
 
 const NAV = [
   { to: "/service", label: "서비스 소개" },
@@ -12,7 +17,6 @@ const NAV = [
 /** 상조·금융기관 홈페이지 형식의 상단 네비게이션 (유틸리티 바 + 메인 내비). */
 export function SiteHeader() {
   const { auth, logout } = useApp();
-  const navigate = useNavigate();
   const { pathname } = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -37,13 +41,13 @@ export function SiteHeader() {
             </>
           ) : (
             <>
-              <Link to="/login" className="site-utility-link">
+              <Link to="/login" className="site-utility-link link-underline">
                 로그인
               </Link>
               <span className="site-utility-sep" aria-hidden="true">
                 ·
               </span>
-              <Link to="/signup" className="site-utility-link">
+              <Link to="/signup" className="site-utility-link link-underline">
                 회원가입
               </Link>
             </>
@@ -53,7 +57,7 @@ export function SiteHeader() {
 
       <div className="site-nav-bar">
         <div className="site-nav-inner">
-          <Link to="/" className="site-logo" aria-label="EZNEXT 홈">
+          <Link to="/" className="site-logo" aria-label="EZ-NEXT 홈">
             <Wordmark size="sm" />
           </Link>
 
@@ -84,7 +88,7 @@ export function SiteHeader() {
             <button
               type="button"
               className="btn btn-primary site-nav-cta"
-              onClick={() => navigate("/onboarding/role")}
+              onClick={openConsult}
             >
               상담 시작
             </button>

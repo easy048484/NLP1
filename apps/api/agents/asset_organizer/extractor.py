@@ -456,7 +456,13 @@ def extract_financial_slots(text: str) -> ExtractionResult:
     if not unresolved:
         return result
 
-    llm_payload = _llm_extract(text)
+    # 원문 전체가 아니라 정규식이 못 알아본 세그먼트만 LLM에 넘긴다. 원문
+    # 전체를 다시 넘기면 정규식이 이미 정확히 찾은 항목(예: "아파트 5억원")을
+    # LLM이 독립적으로 또 찾아내고, 그 결과가 아래에서 regex 결과에 그대로
+    # extend()되어 같은 항목이 두 번 쌓인다(실측 재현: "아파트 5억원, 예금
+    # 8천만원, 대출은 없습니다" → "대출은 없습니다"만 unresolved인데도 원문
+    # 전체를 LLM에 보내면 부동산·예금이 중복 생성돼 순자산이 2배로 잡혔다).
+    llm_payload = _llm_extract(" ".join(unresolved))
     if llm_payload is None:
         for segment in unresolved:
             result.missing.append(
