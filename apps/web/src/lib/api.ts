@@ -96,12 +96,8 @@ export const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:8000";
 
 export interface ChatCallResult {
-  /** 실제로 서버에 전송한 요청 본문 (개발자 모드 JSON 뷰어용) */
-  request: AgentInput;
   /** 정규화된 합성 응답. 실패 시 null */
   response: ChatResponse | null;
-  /** 서버가 돌려준 원본 JSON (개발자 모드용) */
-  raw: unknown;
   ok: boolean;
   status: number | null;
   errorMessage: string | null;
@@ -258,9 +254,7 @@ export async function sendChatMessage(
           ? JSON.stringify((json as { detail: unknown }).detail)
           : `HTTP ${res.status}`;
       return {
-        request,
         response: null,
-        raw: json,
         ok: false,
         status: res.status,
         errorMessage: detail,
@@ -270,9 +264,7 @@ export async function sendChatMessage(
 
     const response = normalizeChatResponse(json);
     return {
-      request,
       response,
-      raw: json,
       ok: response !== null,
       status: res.status,
       errorMessage: response === null ? "응답 형식을 이해하지 못했습니다." : null,
@@ -281,9 +273,7 @@ export async function sendChatMessage(
   } catch (err) {
     const latencyMs = Math.round(performance.now() - startedAt);
     return {
-      request,
       response: null,
-      raw: null,
       ok: false,
       status: null,
       errorMessage:

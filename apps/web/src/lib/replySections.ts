@@ -24,6 +24,13 @@ function stripHr(s: string): string {
   return s.replace(/^\s*-{3,}\s*/, "").replace(/\s*-{3,}\s*$/, "").trim();
 }
 
+/** 카드 제목·라벨·질문처럼 <Markdown>이 아니라 일반 텍스트로 그대로
+ * 렌더되는 짧은 필드에서 "**볼드**"/"__볼드__" 마커만 걷어낸다 — 안
+ * 걷어내면 별표가 글자 그대로 화면에 노출된다. */
+function stripInlineMarkup(s: string): string {
+  return s.replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1");
+}
+
 /**
  * "## 제목" H2가 2개 이상이면 섹션 카드로 쪼갠다. 실제 답변은 섹션마다
  * "---"로 구분되어 있어(첫 섹션 앞에도 있을 수 있음) 헤더를 먼저 찾고 나서
@@ -46,7 +53,10 @@ export function parseReplySections(text: string): ParsedReplySections | null {
     const start = (m.index ?? 0) + m[0].length;
     const end =
       i + 1 < matches.length ? (matches[i + 1].index ?? trimmed.length) : trimmed.length;
-    return { title: m[1].trim(), body: stripHr(trimmed.slice(start, end)) };
+    return {
+      title: stripInlineMarkup(m[1].trim()),
+      body: stripHr(trimmed.slice(start, end)),
+    };
   });
 
   let footer: string | null = null;
@@ -93,7 +103,10 @@ export function parseConfirmChecklist(text: string): ParsedConfirmChecklist | nu
   const items: ConfirmChecklistItem[] = [];
   let m: RegExpExecArray | null;
   while ((m = bulletRe.exec(listParagraph))) {
-    items.push({ label: m[1].trim(), question: m[2].trim() });
+    items.push({
+      label: stripInlineMarkup(m[1].trim()),
+      question: stripInlineMarkup(m[2].trim()),
+    });
   }
   if (items.length === 0) return null;
 
