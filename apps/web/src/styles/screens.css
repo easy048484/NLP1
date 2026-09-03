@@ -645,10 +645,17 @@
   font-size: var(--text-body);
 }
 
-/* ---- 확인 질문 체크리스트 (decedent_estate의 자유응답형 다중 확인) ---- */
+/* ---- 확인 질문 체크리스트 (decedent_estate의 자유응답형 다중 확인) ----
+ * followup-block과 같은 "답이 필요한 블록" 계열 — 금색 테두리+은은한 금색
+ * 배경으로 감싸 본문과 확실히 구분되게 한다(surface-sunken만으로는 다크
+ * 테마에서 assistant-bubble 배경과 명도차가 거의 없어 카드 경계가 안 보임). */
 .confirm-checklist {
   display: grid;
   gap: var(--sp-3);
+  padding: var(--sp-4);
+  border: 1px solid var(--brand-gold);
+  border-radius: var(--radius-lg);
+  background: var(--brand-gold-soft);
 }
 .confirm-checklist-intro {
   font-size: var(--text-sm);
@@ -662,10 +669,11 @@
 }
 .confirm-checklist-item {
   display: grid;
-  grid-template-columns: 26px 1fr;
+  grid-template-columns: 28px 1fr;
   gap: var(--sp-3);
   padding: var(--sp-3);
-  background: var(--surface-sunken);
+  background: var(--surface-card);
+  border: 1px solid var(--line);
   border-radius: var(--radius-md);
 }
 .confirm-checklist-item strong {
@@ -680,21 +688,24 @@
   line-height: 1.5;
 }
 .confirm-checklist-icon {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--brand-gold);
-  color: #fff;
+  color: #1e1b15;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.85rem;
+  font-size: 0.9rem;
 }
 .confirm-checklist-hint {
   font-size: var(--text-caption);
   color: var(--ink-muted);
   margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-card);
+  border-radius: var(--radius-md);
 }
 .confirm-checklist-hint em {
   color: var(--brand-navy);
@@ -704,11 +715,14 @@
 .confirm-checklist-rest {
   font-size: var(--text-caption);
   color: var(--ink-muted);
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--line-strong);
   padding-top: var(--sp-3);
 }
 
-/* ---- 절차 안내 캐러셀 (## 섹션 2개 이상인 긴 답변) ---- */
+/* ---- 절차 안내 캐러셀 (## 섹션 2개 이상인 긴 답변) ----
+ * 확인 질문 체크리스트와 성격이 달라(응답 필요 아님, 훑어보는 정보) 금색
+ * 배경으로 덮지 않는 대신, 굵은 테두리+상단 금색 액센트 바+그림자로 카드
+ * 경계를 뚜렷하게 세운다. */
 .reply-carousel {
   display: grid;
   gap: var(--sp-3);
@@ -717,18 +731,22 @@
   font-size: var(--text-sm);
 }
 .reply-carousel-card {
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
+  border-top: 4px solid var(--brand-gold);
   border-radius: var(--radius-lg);
   background: var(--surface-sunken);
   padding: var(--sp-4);
   display: grid;
   gap: var(--sp-3);
+  box-shadow: var(--shadow-card);
 }
 .reply-carousel-head {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: var(--sp-2);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--line);
 }
 .reply-carousel-title-wrap {
   text-align: center;
@@ -757,7 +775,8 @@
   flex: none;
 }
 .reply-carousel-nav:hover:not(:disabled) {
-  border-color: var(--brand-navy);
+  border-color: var(--brand-gold);
+  color: var(--brand-gold);
 }
 .reply-carousel-nav:disabled {
   opacity: 0.35;
@@ -979,48 +998,6 @@
   display: flex;
   justify-content: flex-end;
   gap: var(--sp-2);
-}
-
-/* ---- dev panel ---- */
-.dev-panel {
-  margin-top: var(--sp-2);
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--radius-md);
-  background: var(--surface-sunken);
-}
-.dev-panel-toggle {
-  width: 100%;
-  text-align: left;
-  padding: var(--sp-2) var(--sp-3);
-  font-size: var(--text-caption);
-  font-family: ui-monospace, Menlo, monospace;
-  color: var(--ink-muted);
-}
-.dev-panel-body {
-  padding: 0 var(--sp-3) var(--sp-3);
-  display: grid;
-  gap: var(--sp-2);
-}
-.dev-panel-error {
-  color: var(--state-bad);
-  font-size: var(--text-caption);
-}
-.dev-json-label {
-  font-size: 0.7rem;
-  font-weight: 700;
-  color: var(--ink-muted);
-  margin-bottom: 2px;
-}
-.dev-json-pre {
-  background: #0b1021;
-  color: #d1d5db;
-  font-family: ui-monospace, Menlo, monospace;
-  font-size: 0.72rem;
-  line-height: 1.5;
-  padding: var(--sp-3);
-  border-radius: var(--radius-sm);
-  overflow-x: auto;
-  max-height: 320px;
 }
 
 /* ---- family graph panel (sheet) ---- */

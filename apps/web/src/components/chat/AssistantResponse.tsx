@@ -24,6 +24,7 @@ function renderReply(reply: string) {
         intro={sections.intro}
         sections={sections.sections}
         footer={sections.footer}
+        footerQuestion={sections.footerQuestion}
       />
     );
   }

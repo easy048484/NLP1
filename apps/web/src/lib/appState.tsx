@@ -8,7 +8,6 @@ import {
   type ReactNode,
 } from "react";
 import type {
-  AgentInput,
   AgentPlan,
   ChatResponse,
   ConsultAxis,
@@ -47,14 +46,6 @@ export interface Turn {
   response?: ChatResponse;
   isError?: boolean;
   errorText?: string;
-  /** 개발자 모드용 */
-  debug?: {
-    request: AgentInput;
-    raw: unknown;
-    status: number | null;
-    latencyMs: number;
-    errorMessage: string | null;
-  };
 }
 
 function createSessionId(): string {
@@ -285,13 +276,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
             id: `a-${Date.now()}`,
             role: "assistant",
             response: res,
-            debug: {
-              request: result.request,
-              raw: result.raw,
-              status: result.status,
-              latencyMs: result.latencyMs,
-              errorMessage: result.errorMessage,
-            },
           },
         ]);
         if (res.plan) setPlan(res.plan);
@@ -305,16 +289,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             id: `err-${Date.now()}`,
             role: "assistant",
             isError: true,
-            errorText:
-              "지금 서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.\n" +
-              "(개발자 모드를 켜면 자세한 오류를 볼 수 있어요.)",
-            debug: {
-              request: result.request,
-              raw: result.raw,
-              status: result.status,
-              latencyMs: result.latencyMs,
-              errorMessage: result.errorMessage,
-            },
+            errorText: "지금 서버에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.",
           },
         ]);
       }

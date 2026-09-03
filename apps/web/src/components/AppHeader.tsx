@@ -11,13 +11,9 @@ const OTHER_AXIS: Record<ConsultAxis, ConsultAxis> = {
 };
 
 export function AppHeader({
-  devMode,
-  onToggleDev,
   theme,
   onToggleTheme,
 }: {
-  devMode: boolean;
-  onToggleDev: () => void;
   theme: "dark" | "light";
   onToggleTheme: () => void;
 }) {
@@ -81,14 +77,6 @@ export function AppHeader({
             로그인
           </button>
         )}
-        <button
-          type="button"
-          className={`app-header-btn dev-toggle${devMode ? " on" : ""}`}
-          aria-pressed={devMode}
-          onClick={onToggleDev}
-        >
-          {"</>"} 개발자
-        </button>
       </div>
 
       {showAxisConfirm && axis && (

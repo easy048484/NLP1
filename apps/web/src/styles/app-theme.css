@@ -226,7 +226,6 @@
 .app-shell[data-app-theme="dark"] .tax-breakdown,
 .app-shell[data-app-theme="dark"] .dialog-panel,
 .app-shell[data-app-theme="dark"] .inst-wizard,
-.app-shell[data-app-theme="dark"] .dev-panel,
 .app-shell[data-app-theme="dark"] .fn-tile {
   background: var(--surface-card);
   -webkit-backdrop-filter: blur(16px) saturate(1.25);
@@ -283,10 +282,6 @@
 .app-shell[data-app-theme="dark"] .app-header-btn:hover {
   background: var(--surface-sunken);
   color: var(--ink);
-}
-.app-shell[data-app-theme="dark"] .app-header-btn.dev-toggle.on {
-  background: var(--brand-gold);
-  color: #1e1b15;
 }
 .app-shell[data-app-theme="dark"] .app-header-axis {
   color: var(--brand-gold);

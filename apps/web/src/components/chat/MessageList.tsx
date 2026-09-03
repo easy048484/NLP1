@@ -1,14 +1,11 @@
 import { useEffect, useRef, type ReactNode, type Ref } from "react";
 import { useApp, type Turn } from "../../lib/appState";
-import { useDevMode } from "../AppShell";
 import { AssistantResponse } from "./AssistantResponse";
-import { DevPanel } from "./DevPanel";
 
 export function MessageList({ children }: { children?: ReactNode }) {
   const { turns, loading } = useApp();
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastRowRef = useRef<HTMLDivElement>(null);
-  const devMode = useDevMode();
 
   const lastTurn = turns[turns.length - 1];
   useEffect(() => {
@@ -30,7 +27,6 @@ export function MessageList({ children }: { children?: ReactNode }) {
           <MessageRow
             key={turn.id}
             turn={turn}
-            devMode={devMode}
             rowRef={i === turns.length - 1 ? lastRowRef : undefined}
           />
         ))}
@@ -57,15 +53,7 @@ export function MessageList({ children }: { children?: ReactNode }) {
   );
 }
 
-function MessageRow({
-  turn,
-  devMode,
-  rowRef,
-}: {
-  turn: Turn;
-  devMode: boolean;
-  rowRef?: Ref<HTMLDivElement>;
-}) {
+function MessageRow({ turn, rowRef }: { turn: Turn; rowRef?: Ref<HTMLDivElement> }) {
   if (turn.role === "user") {
     return (
       <div className="msg-row msg-user" ref={rowRef}>
@@ -81,7 +69,6 @@ function MessageRow({
     return (
       <div className="msg-row msg-assistant" ref={rowRef}>
         <div className="bubble bubble-assistant bubble-error">{turn.errorText}</div>
-        {devMode && turn.debug && <DevPanel debug={turn.debug} />}
       </div>
     );
   }
@@ -95,7 +82,6 @@ function MessageRow({
         // 저장하지 않으므로 텍스트만 있고, 그래서 말풍선으로만 보여준다.
         turn.text && <div className="bubble bubble-assistant">{turn.text}</div>
       )}
-      {devMode && turn.debug && <DevPanel debug={turn.debug} />}
     </div>
   );
 }

@@ -15,13 +15,37 @@ export interface ReplySection {
 export interface ParsedReplySections {
   intro: string | null;
   sections: ReplySection[];
+  /** 면책 고지 등 — 작은 글씨로 항상 노출 (평문 렌더 — ** 마커는 미리 걷어냄) */
   footer: string | null;
+  /** 면책 고지 맨 앞에 "**...?**"로 붙어 오는 후속 질문만 따로 뽑아낸 것 —
+   * 있으면 카드 바로 아래에 별도 후속질문 블록으로 보여준다. */
+  footerQuestion: string | null;
+}
+
+/** 면책 고지 문단 맨 앞에 붙는 "**질문...?**" 문장만 후속질문으로 뽑아낸다.
+ * 물음표로 끝나는 볼드 문장만 질문으로 취급 — 그 외의 볼드 문장(예:
+ * "**위 정보는 검증 전입니다.**")은 그냥 고지 본문의 일부로 남긴다. */
+const LEADING_BOLD_QUESTION = /^\*\*([^*]+?\?)\*\*\s*/;
+
+function splitFooterQuestion(footer: string): { question: string | null; text: string | null } {
+  const m = footer.match(LEADING_BOLD_QUESTION);
+  if (!m) return { question: null, text: stripInlineMarkup(footer) || null };
+  const question = stripInlineMarkup(m[1].trim());
+  const text = stripInlineMarkup(footer.slice(m[0].length).trim());
+  return { question, text: text || null };
 }
 
 /** 섹션 사이 구분선("---")을 앞뒤에서 잘라낸다 — 각 섹션 본문은 다음
  * "## " 제목 직전까지 슬라이스되므로 구분선이 꼬리에 그대로 남는다. */
 function stripHr(s: string): string {
   return s.replace(/^\s*-{3,}\s*/, "").replace(/\s*-{3,}\s*$/, "").trim();
+}
+
+/** 카드 제목·라벨·질문처럼 <Markdown>이 아니라 일반 텍스트로 그대로
+ * 렌더되는 짧은 필드에서 "**볼드**"/"__볼드__" 마커만 걷어낸다 — 안
+ * 걷어내면 별표가 글자 그대로 화면에 노출된다. */
+function stripInlineMarkup(s: string): string {
+  return s.replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1");
 }
 
 /**
@@ -46,18 +70,24 @@ export function parseReplySections(text: string): ParsedReplySections | null {
     const start = (m.index ?? 0) + m[0].length;
     const end =
       i + 1 < matches.length ? (matches[i + 1].index ?? trimmed.length) : trimmed.length;
-    return { title: m[1].trim(), body: stripHr(trimmed.slice(start, end)) };
+    return {
+      title: stripInlineMarkup(m[1].trim()),
+      body: stripHr(trimmed.slice(start, end)),
+    };
   });
 
   let footer: string | null = null;
+  let footerQuestion: string | null = null;
   const last = sections[sections.length - 1];
   const footerMatch = last.body.match(/\n-{3,}\n+([\s\S]+)$/);
   if (footerMatch && footerMatch.index !== undefined) {
     last.body = last.body.slice(0, footerMatch.index).trim();
-    footer = footerMatch[1].trim();
+    const split = splitFooterQuestion(footerMatch[1].trim());
+    footerQuestion = split.question;
+    footer = split.text;
   }
 
-  return { intro, sections, footer };
+  return { intro, sections, footer, footerQuestion };
 }
 
 export interface ConfirmChecklistItem {
@@ -93,7 +123,10 @@ export function parseConfirmChecklist(text: string): ParsedConfirmChecklist | nu
   const items: ConfirmChecklistItem[] = [];
   let m: RegExpExecArray | null;
   while ((m = bulletRe.exec(listParagraph))) {
-    items.push({ label: m[1].trim(), question: m[2].trim() });
+    items.push({
+      label: stripInlineMarkup(m[1].trim()),
+      question: stripInlineMarkup(m[2].trim()),
+    });
   }
   if (items.length === 0) return null;
 

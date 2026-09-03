@@ -12,10 +12,12 @@ export function ReplyCarousel({
   intro,
   sections,
   footer,
+  footerQuestion,
 }: {
   intro: string | null;
   sections: ReplySection[];
   footer: string | null;
+  footerQuestion: string | null;
 }) {
   const [index, setIndex] = useState(0);
   const total = sections.length;
@@ -77,6 +79,13 @@ export function ReplyCarousel({
           ))}
         </div>
       </div>
+
+      {footerQuestion && (
+        <div className="followup-block">
+          <p className="followup-head">한 가지만 더 확인할게요</p>
+          <div className="followup-q">{footerQuestion}</div>
+        </div>
+      )}
 
       {footer && <p className="reply-carousel-footer">{footer}</p>}
     </div>

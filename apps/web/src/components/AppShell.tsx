@@ -1,10 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useApp } from "../lib/appState";
 import { useFamilyGraphSync } from "../lib/useFamilyGraph";
 import { AppHeader } from "./AppHeader";
@@ -12,12 +6,6 @@ import { ContextPanel } from "./ContextPanel";
 import { FamilyGraphPanel } from "./FamilyGraphPanel";
 import { SchedulePanel } from "./SchedulePanel";
 import { Disclaimer } from "./ui";
-
-const DevModeContext = createContext(false);
-// eslint-disable-next-line react-refresh/only-export-components
-export function useDevMode(): boolean {
-  return useContext(DevModeContext);
-}
 
 type AppTheme = "dark" | "light";
 const THEME_KEY = "eznext.app_theme";
@@ -36,7 +24,6 @@ function readTheme(): AppTheme {
  */
 export function AppShell({ children }: { children: ReactNode }) {
   const { familyGraphId, setFamilyGraphId, setFamilyGraph, plan } = useApp();
-  const [devMode, setDevMode] = useState(false);
   const [familyPanelOpen, setFamilyPanelOpen] = useState(false);
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [theme, setTheme] = useState<AppTheme>(readTheme);
@@ -52,54 +39,50 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [theme]);
 
   return (
-    <DevModeContext.Provider value={devMode}>
-      <div className="app-shell" data-app-theme={theme}>
-        <a className="skip-link" href="#main">
-          본문 바로가기
-        </a>
-        <AppHeader
-          devMode={devMode}
-          onToggleDev={() => setDevMode((v) => !v)}
-          theme={theme}
-          onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
-        />
+    <div className="app-shell" data-app-theme={theme}>
+      <a className="skip-link" href="#main">
+        본문 바로가기
+      </a>
+      <AppHeader
+        theme={theme}
+        onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+      />
 
-        <div className={`app-body${plan ? " has-schedule" : ""}`}>
-          <button
-            type="button"
-            className="context-panel-toggle"
-            aria-expanded={panelExpanded}
-            onClick={() => setPanelExpanded((v) => !v)}
-          >
-            준비 현황 {panelExpanded ? "접기 ▲" : "펼치기 ▼"}
-          </button>
+      <div className={`app-body${plan ? " has-schedule" : ""}`}>
+        <button
+          type="button"
+          className="context-panel-toggle"
+          aria-expanded={panelExpanded}
+          onClick={() => setPanelExpanded((v) => !v)}
+        >
+          준비 현황 {panelExpanded ? "접기 ▲" : "펼치기 ▼"}
+        </button>
 
-          {plan && (
-            <div className="schedule-panel-wrap">
-              <SchedulePanel />
-            </div>
-          )}
-
-          <main id="main" className="app-main">
-            {children}
-          </main>
-
-          <div className={`context-panel-wrap${panelExpanded ? " expanded" : ""}`}>
-            <ContextPanel onEditFamily={() => setFamilyPanelOpen(true)} />
+        {plan && (
+          <div className="schedule-panel-wrap">
+            <SchedulePanel />
           </div>
-        </div>
-
-        <Disclaimer variant="global" />
-
-        {familyPanelOpen && (
-          <FamilyGraphPanel
-            familyGraphId={familyGraphId}
-            onFamilyGraphIdChange={(id) => setFamilyGraphId(id)}
-            onGraphChange={(g) => setFamilyGraph(g)}
-            onClose={() => setFamilyPanelOpen(false)}
-          />
         )}
+
+        <main id="main" className="app-main">
+          {children}
+        </main>
+
+        <div className={`context-panel-wrap${panelExpanded ? " expanded" : ""}`}>
+          <ContextPanel onEditFamily={() => setFamilyPanelOpen(true)} />
+        </div>
       </div>
-    </DevModeContext.Provider>
+
+      <Disclaimer variant="global" />
+
+      {familyPanelOpen && (
+        <FamilyGraphPanel
+          familyGraphId={familyGraphId}
+          onFamilyGraphIdChange={(id) => setFamilyGraphId(id)}
+          onGraphChange={(g) => setFamilyGraph(g)}
+          onClose={() => setFamilyPanelOpen(false)}
+        />
+      )}
+    </div>
   );
 }
