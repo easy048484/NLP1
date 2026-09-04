@@ -269,12 +269,21 @@
   letter-spacing: 0.06em;
   color: var(--ink-muted);
 }
+.ft-center-node {
+  min-width: 104px;
+}
 .ft-center-node .ft-node-rel {
   color: var(--brand-gold);
+  font-size: 0.62rem;
 }
 .ft-node-name {
   font-size: var(--text-sm);
   font-weight: 600;
+}
+.ft-center-node .ft-node-name {
+  font-size: var(--text-body);
+  font-weight: 700;
+  color: #fff;
 }
 .ft-node-tag {
   font-size: 0.65rem;
@@ -1191,4 +1200,147 @@
 }
 .fp-add-row input {
   flex: 1;
+}
+
+/* ============ STARTER PROMPTS (채팅 첫 진입 예시 질문) ============ */
+.starter-prompts {
+  margin: var(--sp-2) 0 var(--sp-5);
+}
+.starter-prompts-label {
+  font-size: var(--text-caption);
+  font-weight: 700;
+  color: var(--ink-muted);
+  letter-spacing: 0.02em;
+  margin-bottom: var(--sp-2);
+}
+.starter-prompts-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.starter-chip {
+  text-align: left;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--brand-gold);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--ink);
+  transition: transform var(--motion-fast), border-color var(--motion-fast),
+    background var(--motion-fast);
+}
+.starter-chip::before {
+  content: "\201C";
+  color: var(--brand-gold);
+  font-weight: 700;
+  margin-right: 2px;
+}
+.starter-chip:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: var(--brand-navy);
+  background: var(--brand-gold-soft);
+}
+.starter-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.fn-rail-or {
+  font-size: var(--text-caption);
+  font-weight: 700;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+  margin: var(--sp-4) 0 var(--sp-2);
+}
+
+/* ============ FAMILY — 기준 인물 앵커 + 이름 입력 ============ */
+.family-anchor {
+  margin: var(--sp-4) 0 var(--sp-5);
+  padding: var(--sp-4);
+  border: 1.5px solid var(--brand-navy);
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
+}
+.family-anchor-label {
+  display: block;
+  font-family: var(--font-serif);
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-bottom: var(--sp-2);
+}
+.family-anchor-input {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-body);
+}
+.family-anchor-hint {
+  margin-top: var(--sp-2);
+  font-size: var(--text-caption);
+  color: var(--ink-muted);
+  line-height: 1.5;
+}
+.family-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: center;
+  margin-top: var(--sp-2);
+}
+.family-name-input {
+  flex: 1 1 160px;
+  min-height: 44px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+.family-minor-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-caption);
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+.family-list {
+  list-style: none;
+  padding: 0;
+  margin: var(--sp-2) 0 var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.family-list li,
+.family-added-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-size: var(--text-sm);
+}
+.family-tag {
+  margin-left: var(--sp-2);
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--brand-gold-soft);
+  color: var(--brand-gold);
+}
+.family-remove {
+  font-size: var(--text-caption);
+  color: var(--ink-faint);
+  text-decoration: underline;
+  padding: 2px 4px;
+}
+.family-remove:hover:not(:disabled) {
+  color: var(--brand-navy);
 }
