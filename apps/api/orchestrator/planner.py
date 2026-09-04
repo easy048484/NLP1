@@ -3,16 +3,23 @@
 
 classify
 --------
-키워드 우선, 애매할 때만 LLM.
+LLM-first. 키워드는 게이트가 아니라 힌트입니다.
 
-  등급           조건                                    처리
-  Fast Path      직전 턴 핸드오프 대상이 있음             build_plan 생략, 그 에이전트 1개
-  Standard Path  키워드 후보 0~1개                        후보 1개(없으면 직전 에이전트→기본)
-  Full Pipeline  키워드 후보 2개 이상                     LLM 이 후보 중 실제 필요한 것만 고름
-                                                          → DAG → 병렬/순차 → compose
+  LLM 사용 가능   전체 에이전트(is_stub 제외)를 후보로 LLM 이 고른다. 프롬프트에
+                  직전 에이전트 · 직전 어시스턴트 발화(=직전 질문) · 핸드오프 예정 ·
+                  키워드 힌트를 함께 넘기고, 직전 에이전트가 있으면 "__continue__"
+                  (이어가기) 선택지를 준다. 1개 → Standard, 2개 이상 → build_plan(Full).
+  LLM 사용 불가   _rule_classify — 이전 키워드 규칙 그대로:
+                  Fast(핸드오프) → Standard(키워드 1개 / 없으면 직전→axis→기본) →
+                  Full(키워드 2개 이상 전부).
 
-LLM 을 못 쓰는 환경(ANTHROPIC_API_KEY 없음, 호출 실패, 거절)에서는 키워드 후보
-전부를 그대로 계획에 넣습니다 — 개발 원칙 2 "항상 실행 가능".
+왜 바꿨나: 키워드가 후보를 제한하던 구조에서는 (a) 키워드가 하나도 안 걸리면
+LLM 이 호출조차 안 돼 직전 에이전트에 붙잡히고, (b) 진행 중인 질문에 답하는
+발화("네, 은행 계좌 하나 있어요")가 다른 에이전트 키워드에 걸려 대화를 가로챘다.
+LLM 이 후보 전체와 대화 상태를 보면 둘 다 구조적으로 사라진다.
+
+LLM 을 못 쓰는 환경(ANTHROPIC_API_KEY 없음, 호출 실패, 거절)에서는 키워드 규칙으로
+내려간다 — 개발 원칙 2 "항상 실행 가능".
 
 build_plan
 ----------
@@ -44,7 +51,7 @@ from schemas import (
 )
 
 from . import registry
-from .llm_policy import llm_enabled, llm_required
+from .llm_policy import llm_enabled, llm_required, router_model
 from .handoff import build_agent_context
 
 logger = logging.getLogger(__name__)
@@ -74,83 +81,202 @@ class Plan:
 # ------------------------------------------------------------------ classify
 
 
-# _llm_enabled 는 llm_policy 로 이동 (compose.py 와 중복 제거)
+#: LLM 라우터가 "직전 에이전트와의 대화를 이어간다"를 고를 때 쓰는 예약 이름.
+#: AgentName 이 아니므로 registry 에 없고, _llm_route 가 last_agent 로 치환합니다.
+CONTINUE = "__continue__"
+
+_ROUTE_TOOL_NAME = "route_message"
+
+#: 직전 어시스턴트 발화를 프롬프트에 넣을 때 남기는 최대 글자 수. 뒤쪽을 남깁니다
+#: — 사용자에게 던진 질문은 보통 답변 끝에 있습니다.
+_LAST_ASSISTANT_MAX_CHARS = 500
+
+_AXIS_LABEL = {"pre_need": "생전 준비", "post_death": "사후 처리"}
 
 
-_CLASSIFY_TOOL_NAME = "select_agents"
-
-
-def _classify_prompt(candidates: list[AgentName]) -> str:
+def _catalog_lines(names: list[AgentName]) -> list[str]:
+    """에이전트 카탈로그 — spec.py 의 axis / description / example_utterances 그대로."""
     specs = registry.all_specs()
-    lines = [
-        "당신은 가족 자산·상속 상담 서비스의 라우터입니다. 사용자 메시지를 읽고 아래 "
-        "후보 에이전트 중 이번 답변에 실제로 필요한 것만 고르세요. 여러 주제를 한 번에 "
-        "물었으면 여러 개를 고르고, 하나만 물었으면 하나만 고르세요. 후보 밖의 이름은 "
-        "절대 쓰지 마세요.",
-        "",
-        "후보:",
-    ]
-    for name in candidates:
+    lines: list[str] = []
+    for name in names:
         spec = specs[name]
-        stub = (
-            " (준비 중 — 사용자가 명시적으로 그 주제를 물었을 때만)"
-            if spec.is_stub
-            else ""
-        )
-        lines.append(f"- {name.value} [{spec.axis.value}]: {spec.description}{stub}")
+        axis = _AXIS_LABEL.get(spec.axis.value, spec.axis.value)
+        lines.append(f"- {name.value} [{axis}]: {spec.description}")
         for utterance in spec.example_utterances[:3]:
             lines.append(f'    예) "{utterance}"')
+    return lines
+
+
+def _route_system_prompt(candidates: list[AgentName], offer_continue: bool) -> str:
+    """라우팅 LLM 시스템 프롬프트.
+
+    대화 상태(직전 에이전트, 직전 질문 등)는 여기 넣지 않고 user 쪽으로 보냅니다
+    — 요청마다 바뀌는 값을 빼야 이 프롬프트가 고정 접두사로 남아 캐시가 됩니다.
+    """
+    lines = [
+        "당신은 가족 자산·상속 상담 서비스의 라우터입니다. 사용자의 이번 메시지에 "
+        "어느 에이전트가 답해야 하는지 고르세요.",
+        "",
+        "에이전트:",
+        *_catalog_lines(candidates),
+        "",
+        "판단 규칙:",
+    ]
+    if offer_continue:
+        lines += [
+            f'1. 사용자가 직전 어시스턴트의 질문에 답하고 있으면 "{CONTINUE}" 를 '
+            "고르세요. 답변 안에 다른 에이전트의 주제 단어(계좌, 재산, 세금 등)가 "
+            '섞여 있어도 마찬가지입니다 — "예금 계좌가 있나요?" 에 "네, 은행 계좌 하나 '
+            '있어요" 라고 답한 것은 새 주제가 아니라 진행 중인 대화입니다. 진행 중인 '
+            "대화를 끊지 않는 것이 최우선입니다.",
+            "2. 사용자가 새 주제를 꺼냈으면 그 주제를 맡는 에이전트를 고르세요. 직전 "
+            "에이전트와 같은 에이전트여도 이름을 그대로 고르면 됩니다.",
+        ]
+    else:
+        lines += [
+            "1. 사용자 메시지의 주제를 맡는 에이전트를 고르세요.",
+            "2. 이어갈 직전 대화가 없는 새 대화입니다.",
+        ]
+    lines += [
+        "3. 한 메시지에 서로 다른 주제가 여럿이면 여러 개를 고르고, 하나만 물었으면 "
+        "하나만 고르세요.",
+        '4. [핸드오프 예정] 이 있으면: 사용자가 그 흐름을 따라가는 답변("네 봐주세요", '
+        '"알려주세요")이면 그 에이전트를 고르고, 다른 주제를 꺼냈으면 무시하세요.',
+        "5. [키워드 힌트] 는 단순 문자열 매칭 결과라 오탐이 잦습니다. 참고만 하고 "
+        "메시지의 뜻을 우선하세요.",
+        "6. 목록에 없는 이름은 절대 쓰지 마세요.",
+    ]
     return "\n".join(lines)
 
 
-def _llm_select(
-    user_message: str, candidates: list[AgentName]
+def _route_user_text(
+    user_message: str,
+    *,
+    last_agent: Optional[AgentName],
+    last_assistant_message: Optional[str],
+    pending_handoff: Optional[AgentName],
+    axis: Optional[str],
+    keyword_hits: list[AgentName],
+) -> str:
+    """요청마다 바뀌는 대화 상태 + 사용자 메시지."""
+    specs = registry.all_specs()
+    lines = ["[대화 상태]"]
+    lines.append(f"- 상담 구분: {_AXIS_LABEL.get(axis or '', '미지정')}")
+    if last_agent is not None and last_agent in specs:
+        lines.append(
+            f"- 직전 에이전트: {last_agent.value} ({specs[last_agent].description})"
+        )
+    else:
+        lines.append("- 직전 에이전트: 없음 (새 대화)")
+    if last_assistant_message:
+        tail = last_assistant_message[-_LAST_ASSISTANT_MAX_CHARS:]
+        lines.append(f"- 직전 어시스턴트 발화: <<<{tail}>>>")
+    else:
+        lines.append("- 직전 어시스턴트 발화: 없음")
+    if pending_handoff is not None and pending_handoff in specs:
+        lines.append(f"- 핸드오프 예정: {pending_handoff.value}")
+    if keyword_hits:
+        lines.append(f"- 키워드 힌트: {', '.join(n.value for n in keyword_hits)}")
+    lines += ["", "[사용자 메시지]", user_message]
+    return "\n".join(lines)
+
+
+def _last_assistant_message(
+    history: Optional[list[dict[str, str]]],
+) -> Optional[str]:
+    """이력에서 마지막 assistant 발화 = 직전 턴에 사용자가 본 문장(질문 포함)."""
+    for item in reversed(history or []):
+        if item.get("role") == "assistant" and item.get("content"):
+            return item["content"]
+    return None
+
+
+def _llm_route(
+    user_message: str,
+    *,
+    last_agent: Optional[AgentName],
+    pending_handoff: Optional[AgentName],
+    last_assistant_message: Optional[str],
+    axis: Optional[str],
+    keyword_hits: list[AgentName],
 ) -> Optional[list[AgentName]]:
-    """후보 중 필요한 에이전트를 LLM 이 고릅니다. 실패하면 None (호출부가 폴백)."""
+    """LLM 이 전체 에이전트 중 이번 턴에 필요한 것을 고릅니다. 못 쓰면 None.
+
+    후보는 키워드와 무관하게 등록된 에이전트 전부(is_stub 제외)입니다. 직전
+    에이전트가 있으면 CONTINUE 선택지를 함께 줘서 "이어가기 vs 전환"을 LLM 이
+    직접 결정하게 합니다. 실패하면 None 을 돌려주고 호출부가 규칙 경로로
+    폴백합니다 (required 모드면 예외를 그대로 올림).
+    """
     if not llm_enabled():
         return None
+    specs = registry.all_specs()
+    candidates = [name for name, spec in specs.items() if not spec.is_stub]
+    if not candidates:
+        return None
+    offer_continue = last_agent is not None and last_agent in candidates
+    enum = [c.value for c in candidates] + ([CONTINUE] if offer_continue else [])
+    tool = {
+        "name": _ROUTE_TOOL_NAME,
+        "description": "이번 사용자 메시지에 답할 에이전트를 고른다",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agents": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": enum},
+                    "minItems": 1,
+                    "description": (
+                        "답변을 맡을 에이전트 이름. 직전 질문에 답하는 중이면 "
+                        f"{CONTINUE}"
+                    ),
+                },
+                "reason": {"type": "string", "description": "한 문장 근거"},
+            },
+            "required": ["agents"],
+        },
+    }
     try:
         from llm import claude
 
-        tool = {
-            "name": _CLASSIFY_TOOL_NAME,
-            "description": "이번 답변에 필요한 에이전트 이름 목록을 고른다",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "agents": {
-                        "type": "array",
-                        "items": {
-                            "type": "string",
-                            "enum": [c.value for c in candidates],
-                        },
-                        "minItems": 1,
-                    }
-                },
-                "required": ["agents"],
-            },
-        }
         result = claude.extract(
-            system=_classify_prompt(candidates),
-            user_text=user_message,
+            system=_route_system_prompt(candidates, offer_continue),
+            user_text=_route_user_text(
+                user_message,
+                last_agent=last_agent,
+                last_assistant_message=last_assistant_message,
+                pending_handoff=pending_handoff,
+                axis=axis,
+                keyword_hits=keyword_hits,
+            ),
             tool=tool,
             max_tokens=1024,
             effort="low",
+            model=router_model(),
         )
     except Exception:  # noqa: BLE001 — LLMUnavailable 포함, 어떤 실패든 폴백
         if llm_required():
             raise
-        logger.warning("라우팅 LLM 분류 실패 — 키워드 후보 전부로 폴백", exc_info=True)
+        logger.warning("라우팅 LLM 분류 실패 — 규칙 경로로 폴백", exc_info=True)
         return None
 
     picked: list[AgentName] = []
     for raw in result.get("agents", []):
-        try:
-            name = AgentName(raw)
-        except ValueError:
+        if raw == CONTINUE:
+            name = last_agent if offer_continue else None
+        else:
+            try:
+                name = AgentName(raw)
+            except ValueError:
+                name = None
+        if name is None or name not in candidates or name in picked:
             continue
-        if name in candidates and name not in picked:
-            picked.append(name)
+        picked.append(name)
+    logger.debug(
+        "라우팅 LLM: %r → %s (%s)",
+        user_message[:60],
+        [n.value for n in picked],
+        result.get("reason", ""),
+    )
     return picked or None
 
 
@@ -174,28 +300,24 @@ def _axis_default_agent(axis: Optional[str], default_agent: AgentName) -> AgentN
     return target
 
 
-def classify(
-    user_message: str,
+def _rule_classify(
+    candidates: list[AgentName],
     *,
     pending_handoff: Optional[AgentName],
     last_agent: Optional[AgentName],
     default_agent: AgentName,
-    axis: Optional[str] = None,
+    axis: Optional[str],
 ) -> Plan:
-    """이번 턴에 실행할 에이전트와 경로 등급을 정합니다 (계획의 층 구성은 build_plan).
+    """LLM 을 못 쓸 때의 규칙 경로 — LLM-first 이전의 키워드 라우팅 그대로.
 
-    axis(생전 준비 / 사후 절차)는 키워드 후보가 하나도 없을 때만 개입합니다 —
-    직전 에이전트가 있으면 그 대화를 이어가고, 없으면 axis 에 맞는 기본 에이전트
-    (사후→heir_navigator, 생전→asset_organizer)로 시작합니다.
+    candidates 는 registry.match_keywords() 결과입니다.
     """
-    # (1) 직전 턴 핸드오프가 최우선 — 기존 라우터와 동일. Fast Path.
+    # (1) 직전 턴 핸드오프가 최우선. Fast Path.
     if (
         pending_handoff is not None
         and registry.get_optional(pending_handoff) is not None
     ):
         return Plan(path=PATH_FAST, layers=[[pending_handoff]])
-
-    candidates = registry.match_keywords(user_message)
 
     # (2) 키워드 후보 1개 → Standard. (3) 없으면 직전 에이전트 → (4) axis 기본 → (5) 기본.
     if len(candidates) == 1:
@@ -209,17 +331,57 @@ def classify(
             target = default_agent
         return Plan(path=PATH_STANDARD, layers=[[target]])
 
-    # (5) 후보 2개 이상 → Full Pipeline. LLM 이 고르고, 못 고르면 전부.
-    selected = _llm_select(user_message, candidates)
-    llm_used = selected is not None
-    if selected is None:
-        selected = candidates
-    if len(selected) == 1:
-        # LLM 이 하나로 좁혔으면 굳이 합성할 것이 없다 — Standard 로 내린다.
-        return Plan(path=PATH_STANDARD, layers=[[selected[0]]], llm_used=llm_used)
-    plan = build_plan(selected)
-    plan.llm_used = llm_used
-    return plan
+    # (6) 후보 2개 이상 → 전부 실행 (LLM 이 없으니 고를 수 없다).
+    return build_plan(candidates)
+
+
+def classify(
+    user_message: str,
+    *,
+    pending_handoff: Optional[AgentName],
+    last_agent: Optional[AgentName],
+    default_agent: AgentName,
+    axis: Optional[str] = None,
+    history: Optional[list[dict[str, str]]] = None,
+) -> Plan:
+    """이번 턴에 실행할 에이전트와 경로 등급을 정합니다 (계획의 층 구성은 build_plan).
+
+    LLM 을 쓸 수 있으면 LLM 이 전체 에이전트를 놓고 고릅니다. 키워드 매칭 결과는
+    프롬프트에 힌트로만 들어가고 후보를 제한하지 않습니다. pending_handoff 도
+    강제 라우팅이 아니라 힌트입니다 — 사용자가 흐름을 따라가면 그 에이전트로,
+    다른 주제를 꺼내면 새 주제를 따릅니다.
+
+    LLM 을 못 쓰면(키 없음, 호출 실패, off) _rule_classify 의 키워드 규칙으로
+    내려갑니다 — 개발 원칙 2 "항상 실행 가능".
+
+    history 는 세션 이력(role/content dict 목록)입니다. 마지막 assistant 발화를
+    "직전 질문"으로 LLM 에 넘겨, 사용자가 그 질문에 답하는 중인지("네, 은행 계좌
+    하나 있어요") 새 주제를 꺼낸 건지 구분하게 합니다.
+    """
+    keyword_hits = registry.match_keywords(user_message)
+
+    selected = _llm_route(
+        user_message,
+        last_agent=last_agent,
+        pending_handoff=pending_handoff,
+        last_assistant_message=_last_assistant_message(history),
+        axis=axis,
+        keyword_hits=keyword_hits,
+    )
+    if selected is not None:
+        if len(selected) == 1:
+            return Plan(path=PATH_STANDARD, layers=[[selected[0]]], llm_used=True)
+        plan = build_plan(selected)
+        plan.llm_used = True
+        return plan
+
+    return _rule_classify(
+        keyword_hits,
+        pending_handoff=pending_handoff,
+        last_agent=last_agent,
+        default_agent=default_agent,
+        axis=axis,
+    )
 
 
 # ---------------------------------------------------------------- build_plan

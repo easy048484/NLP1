@@ -95,8 +95,13 @@ def test_planner_required_raises(monkeypatch) -> None:
     monkeypatch.setenv("ORCHESTRATOR_USE_LLM", "required")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     with pytest.raises(Exception):
-        planner._llm_select(
-            "상속세랑 유언장 다", [AgentName.TAX_CALCULATOR, AgentName.DECEDENT_ESTATE]
+        planner._llm_route(
+            "상속세랑 유언장 다",
+            last_agent=None,
+            pending_handoff=None,
+            last_assistant_message=None,
+            axis=None,
+            keyword_hits=[AgentName.TAX_CALCULATOR, AgentName.DECEDENT_ESTATE],
         )
 
 
@@ -104,8 +109,13 @@ def test_planner_on_falls_back(monkeypatch) -> None:
     monkeypatch.setenv("ORCHESTRATOR_USE_LLM", "on")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     assert (
-        planner._llm_select(
-            "상속세랑 유언장 다", [AgentName.TAX_CALCULATOR, AgentName.DECEDENT_ESTATE]
+        planner._llm_route(
+            "상속세랑 유언장 다",
+            last_agent=None,
+            pending_handoff=None,
+            last_assistant_message=None,
+            axis=None,
+            keyword_hits=[AgentName.TAX_CALCULATOR, AgentName.DECEDENT_ESTATE],
         )
         is None
     )

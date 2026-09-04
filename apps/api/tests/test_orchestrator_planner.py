@@ -146,8 +146,10 @@ def test_full_pipeline_without_llm_takes_all_keyword_candidates():
 
 
 def test_llm_selection_narrows_candidates(monkeypatch):
+    # LLM 이 하나로 좁히면 합성할 것이 없으니 Standard 로 내려간다.
+    # (LLM 경로 자체의 검증은 test_orchestrator_llm_routing.py)
     monkeypatch.setattr(
-        planner, "_llm_select", lambda msg, cands: [AgentName.TAX_CALCULATOR]
+        planner, "_llm_route", lambda msg, **kw: [AgentName.TAX_CALCULATOR]
     )
     plan = planner.classify(
         "재산 정리하고 상속세도 궁금해요",
