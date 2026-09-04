@@ -185,7 +185,7 @@ export function FamilyScreen() {
                     배우자 추가
                   </Button>
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     disabled={busy}
                     onClick={() => {
                       setPersonName("");
@@ -283,7 +283,7 @@ export function FamilyScreen() {
               </div>
               <div className="intake-actions">
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   disabled={busy}
                   onClick={() =>
                     setPhase(children.length === 0 ? "parents" : "children")
@@ -326,7 +326,7 @@ export function FamilyScreen() {
                   >
                     부모님 추가
                   </Button>
-                  <Button variant="ghost" disabled={busy} onClick={done}>
+                  <Button variant="outline" disabled={busy} onClick={done}>
                     안 계세요
                   </Button>
                 </div>
