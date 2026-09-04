@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import { useApp } from "../../lib/appState";
 import {
+  parseAssetAmountRequest,
   parsePendingQuestions,
   parseShares,
   parseShareWarnings,
@@ -10,6 +11,7 @@ import {
 import { Markdown } from "../../lib/markdown";
 import { formatWonExact } from "../../lib/format";
 import type { AgentOutput } from "../../types";
+import { AmountInputCard } from "./AmountInputCard";
 import {
   AmountDisplay,
   ChoiceGroup,
@@ -37,6 +39,7 @@ export function AgentCards({
   const data = contribution.data ?? {};
 
   const signals = parseSignals(data, contribution.agent);
+  const amountRequest = parseAssetAmountRequest(data, contribution.agent);
   const pending = parsePendingQuestions(data, contribution.agent);
   const tax = parseTaxResult(data, contribution.agent);
   const shares = parseShares(data, contribution.agent);
@@ -45,6 +48,22 @@ export function AgentCards({
   const cards: ReactElement[] = [];
 
   if (mode === "questions") {
+    // pending_amounts(특정 카테고리 금액 되묻기)와 pending_categories(전체
+    // 카테고리 나열)는 백엔드에서 항상 서로 배타적이다
+    // (agent.py._continue_after_categories) — 금액 되묻기가 있으면 그쪽을
+    // 우선하고, 긴 원 단위 숫자를 직접 치지 않아도 되는 단위 입력 위젯을
+    // 보여준다.
+    if (amountRequest) {
+      cards.push(
+        <AmountInputCard
+          key="amount-input"
+          label={amountRequest.label}
+          onConfirm={(amountWon) => void send(`${amountWon}원`)}
+          onUnknown={() => void send("몰라요")}
+        />,
+      );
+      return <div className="agent-cards">{cards}</div>;
+    }
     if (pending) {
       pending.forEach((q, i) => {
         cards.push(

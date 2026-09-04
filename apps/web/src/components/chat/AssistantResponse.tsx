@@ -1,7 +1,7 @@
 import { agentMeta } from "../../lib/agents";
 import { Markdown } from "../../lib/markdown";
 import type { ChatResponse } from "../../types";
-import { hasPendingQuestions } from "../../lib/agentData";
+import { hasAssetAmountRequest, hasPendingQuestions } from "../../lib/agentData";
 import { parseConfirmChecklist, parseReplySections } from "../../lib/replySections";
 import { AgentAvatar, ConcatNoticeBadge, NeedsReviewBadge } from "../ui";
 import { AgentCards } from "./AgentCards";
@@ -41,8 +41,10 @@ function renderReply(reply: string) {
  */
 export function AssistantResponse({ response }: { response: ChatResponse }) {
   const agents = dedupeAgents(response);
-  const followups = response.contributions.filter((c) =>
-    hasPendingQuestions(c.data ?? {}, c.agent),
+  const followups = response.contributions.filter(
+    (c) =>
+      hasPendingQuestions(c.data ?? {}, c.agent) ||
+      hasAssetAmountRequest(c.data ?? {}, c.agent),
   );
 
   return (
