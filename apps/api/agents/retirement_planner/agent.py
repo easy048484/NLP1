@@ -194,7 +194,19 @@ def _build_engine_input(state: dict[str, Any], shared: SharedProfile | None):
         assets = []
 
     if raw_liabilities is not None:
-        liabilities = [models.Liability(**liability) for liability in raw_liabilities]
+        # asset_organizer는 금액을 모르는 부채(confidence=="unknown_amount")를
+        # remaining_balance=None으로 넘긴다 — 이 에이전트의 로컬 Liability
+        # 모델은 remaining_balance가 여전히 필수 int라(engine.py가 정밀/단순
+        # 모드 판단에 실제 숫자로 산술하므로 None을 받아줄 방법이 없다),
+        # 금액을 모르는 항목은 시뮬레이션 입력에서 제외한다 — 0으로
+        # 추측해 넣으면 부채가 없는 것처럼 계산되므로 아예 빼는 쪽이
+        # 안전하다("조용한 실패 금지"와 같은 이유로, 다만 여긴 되물을
+        # 방법이 없어 침묵하고 제외하는 것 자체가 유일한 안전한 선택).
+        liabilities = [
+            models.Liability(**liability)
+            for liability in raw_liabilities
+            if liability.get("remaining_balance") is not None
+        ]
     elif shared is not None:
         liabilities = _synthesize_liabilities_from_flat(shared)
     else:
