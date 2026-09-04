@@ -54,10 +54,10 @@ def test_checklist_completion_no_longer_hands_off_and_ends_at_asset_organizer():
     )
     assert output.agent == AgentName.ASSET_ORGANIZER
 
+    # 대출은 remaining_balance만 확인되면 수집 완료다(상환 정보 후속질문
+    # 없음) — 나머지 카테고리도 이번 턴에 다 확인됐으니 "없어요" 한 번으로
+    # 바로 마무리된다.
     output = router.route(AgentInput(session_id=session, user_message="없어요"))
-    assert output.agent == AgentName.ASSET_ORGANIZER
-
-    output = router.route(AgentInput(session_id=session, user_message="몰라요"))
     assert output.agent == AgentName.ASSET_ORGANIZER
     assert output.data[AgentName.ASSET_ORGANIZER.value]["status"] == "done"
     assert output.handoffs == []  # 예전엔 여기서 retirement_planner 핸드오프가 걸렸다

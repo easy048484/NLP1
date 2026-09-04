@@ -13,10 +13,19 @@ agents/retirement_planner/로 그대로 옮겼고, 이 파일에는 체크리스
 알지만 금액이 없는 항목은 임의로 0을 채우지 않고 금액만 콕 집어 되묻는다
 (extractor.py의 "조용한 실패 금지" 원칙 그대로) — 단, 보험은 예외로 금액
 없이도 확인된 것으로 처리한다(추출기 쪽 기존 원칙 그대로, 아래
-_merge_extraction 참고). 부채는 remaining_balance가 확인된 뒤,
-monthly_payment/end_age가 비어 있으면 한 번만(강제로 캐묻지 않고) 후속
-질문을 던진다 — 답을 안 하거나 애매하면 재질문 없이 단순 모드로 남긴다.
-퇴직연금도 완전히 같은 패턴으로, 확인되면 수령 방식을 한 번만 후속
+_merge_extraction 참고). 부채는 remaining_balance만 확인되면 그걸로
+수집 완료다 — monthly_payment/end_age(정밀 모드 판단 기준)는 이
+에이전트가 먼저 캐묻지 않는다(이 필드들은 은퇴자금 시뮬레이션이
+이 에이전트에 있던 시절의 잔여 후속질문이었는데, 그 계산 로직은
+retirement_planner로 이관됐고 지금은 데모 제외 상태라 asset_organizer가
+물어봐도 쓸 곳이 없다 — 아래 "빌드 히스토리" 참고). 사용자가 스스로
+"1억 남았고 월 80만원씩 갚고 있어요"처럼 한 문장에 상환 정보까지
+같이 말하면 그건 별개 문제이지만, extractor.extract_liabilities()는
+remaining_balance만 파싱하므로 현재는 이 필드들이 채워질 경로 자체가
+없다(Liability.monthly_payment/end_age 스키마 필드는 하위 호환을 위해
+남겨둠 — retirement_planner의 정밀/단순 모드 판단이 이 필드를 그대로
+읽는다).
+퇴직연금은 여전히 완전히 같은 패턴으로, 확인되면 수령 방식을 한 번만 후속
 질문한다 — 연금형+시작나이+월액이 다 확인되면 자산은 그대로 두고
 추가로 IncomeStream을 만들어 시뮬레이션에 반영하고(정밀 모드), 아니면
 지금처럼 비유동 자산으로만 남긴다(단순 모드, _apply_pension_followup_answer
@@ -218,8 +227,6 @@ def _empty_state() -> dict[str, Any]:
         "checked_categories": [],
         "pending_categories": [],
         "pending_amounts": [],
-        "liability_followup_asked": False,
-        "liability_followup_resolved": False,
         "pension_followup_asked": False,
         "pension_followup_resolved": False,
         "status": "collecting",
@@ -450,27 +457,6 @@ def _merge_disclosures(
     return bool(items)
 
 
-def _liabilities_needing_followup(state: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        liability
-        for liability in state["liabilities"]
-        if liability["monthly_payment"] is None or liability["end_age"] is None
-    ]
-
-
-def _liability_followup_question(state: dict[str, Any]) -> str:
-    types = list(
-        dict.fromkeys(
-            liability["type"] for liability in _liabilities_needing_followup(state)
-        )
-    )
-    types_text = ", ".join(types)
-    return (
-        f"혹시 {types_text}은(는) 월 얼마씩 갚고 계신지, 언제쯤 다 갚으실 예정인지도 "
-        "아시면 알려주세요. 모르셔도 괜찮아요."
-    )
-
-
 def _parse_end_age(message: str, current_age: int | None) -> int | None:
     """current_age를 이미 아는 상태에서만 상대 표현을 해석한다 —
     extractor.py의 "문맥 없는 파싱에서는 추측하지 않는다" 원칙과 다른
@@ -499,38 +485,6 @@ def _parse_end_age(message: str, current_age: int | None) -> int | None:
             return end_age
 
     return None
-
-
-def _apply_liability_followup_answer(
-    state: dict[str, Any], message: str, current_age: int | None
-) -> None:
-    """후속질문 답변을 해석해 가장 먼저 대기 중인 부채 하나에만 반영한다
-    (부채가 여러 개여도 뭉뚱그려 물어본 것이라 특정 부채를 가리키지 않는다).
-    monthly_payment/end_age 둘 다 못 알아들었으면(예: "몰라요", "나중에요")
-    아무것도 채우지 않는다 — 재질문하지 않고 단순 모드로 남긴다.
-
-    ⚠️ 답을 받았으면(설령 "모름"이어도) 이 시점에 liability_followup_resolved를
-    반드시 True로 마킹한다 — 실측으로 발견된 버그: 이 플래그 없이
-    _liabilities_needing_followup(state)(부채 필드가 여전히 비어 있는지)만으로
-    "아직 답변 대기 중인지"를 판단하면, 단순 모드로 확정된 뒤에도(필드가
-    영구히 비어 있으므로) 그 조건이 계속 True로 남아 이후 모든 턴을 이
-    함수가 계속 가로챈다 — 그 결과 뒤에 대기 중인 다른 후속질문(퇴직연금
-    등)이 자기 차례를 영영 못 받는다. "재질문 금지" 원칙과 반대 방향
-    문제라, 답을 받은 시점에 명확히 종결 처리하는 게 핵심이다."""
-    state["liability_followup_resolved"] = True
-
-    targets = _liabilities_needing_followup(state)
-    if not targets:
-        return
-    target = targets[0]
-
-    monthly_payment = extractor.parse_monthly_expense_answer(message)
-    if monthly_payment is not None:
-        target["monthly_payment"] = monthly_payment
-
-    end_age = _parse_end_age(message, current_age)
-    if end_age is not None:
-        target["end_age"] = end_age
 
 
 # ============================================================ 퇴직연금 소득 전환
@@ -800,10 +754,6 @@ def _continue_after_categories(
             "있으면 알려주시고, 없으면 '없음'이라고 답해주세요.",
         )
 
-    if not state["liability_followup_asked"] and _liabilities_needing_followup(state):
-        state["liability_followup_asked"] = True
-        return _output(state, _liability_followup_question(state))
-
     if not state["pension_followup_asked"] and _has_pension_asset(state):
         state["pension_followup_asked"] = True
         return _output(state, _PENSION_FOLLOWUP_QUESTION)
@@ -856,30 +806,10 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
     if has_image:
         return _handle_image_turn(payload, state)
 
-    # 0) 부채 정밀 모드 후속질문에 대한 답이면 그것부터 처리한다. current_age는
-    #    더 이상 이 에이전트가 직접 모으지 않고, develop의 공유
+    # 0) 퇴직연금 수령 방식 후속질문에 대한 답이면 그것부터 처리한다.
+    #    current_age는 이 에이전트가 직접 모으지 않고 develop의 공유
     #    financial_profile에서 온다(retirement_planner가 먼저 물어봤을 때만
     #    존재) — 없으면 절대 나이 표현만 해석하고 상대 표현은 포기한다.
-    #    ⚠️ "아직 답변을 못 받았는지"는 _liabilities_needing_followup(state)
-    #    (필드가 비어 있는지)가 아니라 liability_followup_resolved로 판단한다
-    #    — 단순 모드로 확정돼도 필드는 영구히 비어 있으므로, 필드 상태만
-    #    보면 이후 모든 턴에서 계속 "아직 답변 대기 중"으로 오판해 다른
-    #    후속질문(퇴직연금 등)의 차례를 영영 못 오게 만드는 버그가 있었다.
-    was_awaiting_liability_followup = (
-        state["liability_followup_asked"] and not state["liability_followup_resolved"]
-    )
-    if was_awaiting_liability_followup:
-        current_age = (
-            payload.financial_profile.current_age
-            if payload.financial_profile is not None
-            else None
-        )
-        _apply_liability_followup_answer(state, message, current_age)
-        return _continue_after_categories(payload, state)
-
-    # 0-2) 퇴직연금 수령 방식 후속질문에 대한 답이면 그것부터 처리한다 —
-    #      0)과 완전히 같은 이유로 current_age를 공유 financial_profile에서
-    #      가져온다.
     was_awaiting_pension_followup = (
         state["pension_followup_asked"] and not state["pension_followup_resolved"]
     )

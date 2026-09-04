@@ -254,10 +254,8 @@ def test_full_checklist_exports_flat_financial_profile_with_extra_detail():
 
     output = agent.run(_continue(session_id, "없어요", state))
     state = output.data[STATE_KEY]
-    assert state["liability_followup_asked"] is True  # 대출에 상환 정보가 없어 후속질문
-
-    output = agent.run(_continue(session_id, "몰라요", state))
-    state = output.data[STATE_KEY]
+    # 부채는 remaining_balance만 확인되면 바로 수집 완료다 — 상환 정보
+    # (monthly_payment/end_age) 후속질문을 더 이상 먼저 묻지 않는다.
 
     assert state["status"] == "done"
     assert output.financial_profile is not None
@@ -368,105 +366,45 @@ def test_mixed_asset_types_are_classified_exclusively_without_overlap():
     assert total == 100_000_000 + 50_000_000 + 500_000_000 + 20_000_000
 
 
-def test_liability_followup_uses_shared_current_age_for_relative_years():
-    """current_age는 이제 이 에이전트가 직접 안 모으고 develop의 공유
-    financial_profile(retirement_planner가 먼저 물어봤다고 가정)에서 온다."""
-    session_id = "p1"
-    state = agent.run(
-        AgentInput(session_id=session_id, user_message="대출 5천만원 있어요")
-    ).data[STATE_KEY]
-    output = agent.run(_continue(session_id, "없어요", state))
-    state = output.data[STATE_KEY]
-    assert state["liability_followup_asked"] is True
-
-    shared = FinancialProfile(current_age=58)
-    output2 = agent.run(
-        _continue(
-            session_id, "월 50만원, 3년 남았어요", state, financial_profile=shared
-        )
-    )
-    state2 = output2.data[STATE_KEY]
-
-    liability = state2["liabilities"][0]
-    assert liability["monthly_payment"] == 500_000
-    assert liability["end_age"] == 61  # 58 + 3
-
-
-def test_liability_followup_without_shared_current_age_skips_relative_interpretation():
-    """공유 financial_profile에 current_age가 아직 없으면(retirement_planner를
-    아직 거치지 않음) 상대 표현은 추측하지 않고 단순 모드로 남긴다."""
-    session_id = "p2"
-    state = agent.run(
-        AgentInput(session_id=session_id, user_message="대출 5천만원 있어요")
-    ).data[STATE_KEY]
-    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
-
-    output = agent.run(_continue(session_id, "3년 남았어요", state))  # current_age 없음
-    state2 = output.data[STATE_KEY]
-
-    liability = state2["liabilities"][0]
-    assert liability["end_age"] is None
-
-
-def test_ambiguous_followup_answer_falls_back_to_simple_mode_without_loop():
-    session_id = "p5"
-    state = agent.run(
-        AgentInput(session_id=session_id, user_message="대출 5천만원 있어요")
-    ).data[STATE_KEY]
-    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
-
-    output = agent.run(
-        _continue(
-            session_id,
-            "나중에요",
-            state,
-            financial_profile=FinancialProfile(current_age=58),
-        )
-    )
-    state2 = output.data[STATE_KEY]
-
-    liability = state2["liabilities"][0]
-    assert liability["monthly_payment"] is None
-    assert liability["end_age"] is None
-    assert state2["status"] == "done"  # 재질문 없이 바로 마무리로 진행
-
-
 def test_parse_end_age_rejects_calendar_year_expression():
     assert agent._parse_end_age("2030년까지 갚아요", current_age=58) is None
 
 
-# ================================ 부채 후속질문 게이트가 다른 후속질문을 안 가로채는지
+# ================================ 대출 후속질문 단순화 (monthly_payment/end_age 안 물어봄)
 
 
-def test_liability_simple_mode_resolved_flag_prevents_reasking():
-    """부채가 단순 모드로 확정되면(예: "몰라요") liability_followup_resolved가
-    True로 마킹돼, 다음 턴에 같은 후속질문이 다시 뜨지 않아야 한다 — 실측
-    재현됐던 버그: monthly_payment/end_age 필드가 영구히 비어 있어서
-    _liabilities_needing_followup()만으로 판단하면 계속 "아직 답변
-    대기 중"으로 오판했다."""
+def test_liability_balance_confirmed_never_triggers_repayment_followup():
+    """대출은 remaining_balance만 확인되면 그걸로 수집 완료다 —
+    monthly_payment/end_age(상환 정보)를 먼저 캐묻지 않는다. 이 필드는
+    은퇴자금 시뮬레이션이 asset_organizer에 있던 시절의 잔여 후속질문이었고,
+    그 계산은 retirement_planner로 이관된 지금은 asset_organizer가 물어봐도
+    쓸 곳이 없다."""
     session_id = "gate1"
     state = agent.run(
         AgentInput(session_id=session_id, user_message="대출 5천만원 있어요")
     ).data[STATE_KEY]
-    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
-    assert state["liability_followup_asked"] is True
-    assert state["liability_followup_resolved"] is False  # 아직 답변 전
 
-    output = agent.run(_continue(session_id, "몰라요", state))
+    output = agent.run(_continue(session_id, "없어요", state))
     state2 = output.data[STATE_KEY]
-    assert state2["liability_followup_resolved"] is True
-    assert state2["status"] == "done"
 
-    # 다음 턴에 아무 말이나 보내도 부채 후속질문이 다시 뜨면 안 된다.
+    assert "월 얼마씩 갚고" not in output.reply
+    assert state2["status"] == "done"
+    liability = state2["liabilities"][0]
+    assert liability["remaining_balance"] == 50_000_000
+    assert liability["monthly_payment"] is None
+    assert liability["end_age"] is None
+
+    # 마무리 이후 아무 말이나 보내도 상환 정보 질문이 뜨면 안 된다.
     output2 = agent.run(_continue(session_id, "네 알겠습니다", state2))
     assert "월 얼마씩 갚고" not in output2.reply
 
 
-def test_pension_followup_gets_asked_after_liability_simple_mode_resolves():
-    """이전엔 버그로 인해 부채가 단순 모드로 남으면(필드가 계속 비어 있어)
-    liability 게이트가 매 턴 재발동해서 퇴직연금 후속질문 차례가 영영 안
-    왔다 — 이제는 부채 답변 직후 곧바로 퇴직연금 후속질문이 나와야 한다
-    (버그가 재현되던 시나리오를 그대로 재검증)."""
+def test_pension_followup_asked_right_after_liability_balance_confirmed():
+    """대출과 퇴직연금이 같은 대화에 함께 있으면, 대출은 잔액 확인만으로
+    바로 끝나고(상환 정보 후속질문 없음) 퇴직연금 수령 방식 후속질문만
+    정상적으로 한 번 나와야 한다 — 예전에는 부채 후속질문 게이트가 이
+    차례를 가로막는 버그가 있었다(build history 참고), 그 버그의 원인
+    자체(부채 후속질문)가 이제 없으므로 더 이상 재현될 수 없다."""
     session_id = "gate2"
     state = agent.run(
         AgentInput(
@@ -474,51 +412,31 @@ def test_pension_followup_gets_asked_after_liability_simple_mode_resolves():
             user_message="대출 5천만원, 퇴직연금 8천만원 있어요",
         )
     ).data[STATE_KEY]
-    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
-    assert state["liability_followup_asked"] is True
 
-    output = agent.run(_continue(session_id, "몰라요", state))  # 부채 후속질문 답변
+    output = agent.run(_continue(session_id, "없어요", state))
     state2 = output.data[STATE_KEY]
 
+    assert "월 얼마씩 갚고" not in output.reply
     assert "퇴직연금은 일시금으로 받으실 예정인가요" in output.reply
     assert state2["pension_followup_asked"] is True
     assert state2["status"] == "collecting"  # 아직 안 끝남 — 퇴직연금 답변 대기 중
 
-
-def test_liability_and_pension_followups_each_asked_exactly_once():
-    """부채·퇴직연금이 같은 대화에 함께 있어도 각자 후속질문을 정확히 한
-    번씩만 받고, 둘 다 해결된 뒤에는 어느 쪽도 다시 뜨지 않아야 한다."""
-    session_id = "gate3"
-    state = agent.run(
-        AgentInput(
-            session_id=session_id,
-            user_message="대출 5천만원, 퇴직연금 8천만원 있어요",
-        )
-    ).data[STATE_KEY]
-    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
-
-    output = agent.run(_continue(session_id, "몰라요", state))
-    assert "퇴직연금은 일시금으로 받으실 예정인가요" in output.reply
-    state = output.data[STATE_KEY]
-
-    output = agent.run(
-        _continue(session_id, "연금으로 65살부터 월 100만원씩 받을 거예요", state)
+    output2 = agent.run(
+        _continue(session_id, "연금으로 65살부터 월 100만원씩 받을 거예요", state2)
     )
-    state = output.data[STATE_KEY]
+    state3 = output2.data[STATE_KEY]
 
-    assert state["status"] == "done"
-    assert state["liability_followup_asked"] is True
-    assert state["liability_followup_resolved"] is True
-    assert state["pension_followup_asked"] is True
-    assert state["pension_followup_resolved"] is True
-    assert state["incomes"] == [
+    assert state3["status"] == "done"
+    assert state3["pension_followup_asked"] is True
+    assert state3["pension_followup_resolved"] is True
+    assert state3["incomes"] == [
         {"type": "퇴직연금", "monthly": 1_000_000, "start_age": 65, "end_age": None}
     ]
 
     # 마무리 이후 아무 말이나 보내도 두 후속질문 다 다시 뜨면 안 된다.
-    output2 = agent.run(_continue(session_id, "감사합니다", state))
-    assert "월 얼마씩 갚고" not in output2.reply
-    assert "퇴직연금은 일시금으로" not in output2.reply
+    output3 = agent.run(_continue(session_id, "감사합니다", state3))
+    assert "월 얼마씩 갚고" not in output3.reply
+    assert "퇴직연금은 일시금으로" not in output3.reply
 
 
 # =============================================== 퇴직연금 수령 방식 후속질문
@@ -718,16 +636,12 @@ def test_lease_deposit_liability_recognized_under_debt_category_simple_mode():
     # 새 체크리스트 카테고리가 아니라 기존 "부채" 하나로 묶인다.
     assert "임대보증금반환채무" not in agent._ALL_CATEGORIES
 
-    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
-    assert (
-        state["liability_followup_asked"] is True
-    )  # 기존 부채 이중 모드 로직 그대로 동작
-
-    # 이 유형은 보통 "월 상환액"이라는 개념이 없어 후속질문에 답을 못 하고
-    # 자연히 단순 모드(정밀 모드 강제 없음)로 남는다.
-    output = agent.run(_continue(session_id, "몰라요", state))
+    # remaining_balance만 확인되면 수집 완료다 — monthly_payment/end_age
+    # 상환 정보 후속질문을 먼저 캐묻지 않는다(대출 후속질문 단순화).
+    output = agent.run(_continue(session_id, "없어요", state))
     state2 = output.data[STATE_KEY]
 
+    assert "월 얼마씩 갚고" not in output.reply
     assert state2["status"] == "done"
     liability = state2["liabilities"][0]
     assert liability["monthly_payment"] is None
