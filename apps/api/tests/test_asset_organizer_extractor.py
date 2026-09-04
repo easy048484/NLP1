@@ -302,6 +302,87 @@ def test_negated_liability_segment_marked_absent_not_missing_value(text):
     assert missing[0]["liability_type"] == "대출"
 
 
+# --------------------------------------- 4-5) 나열 범위 부정 표현 (D-01)
+
+
+def _absent_types(result: extractor.ExtractionResult) -> set[str]:
+    return {
+        item["asset_type"] for item in result.missing if item["kind"] == "asset_absent"
+    }
+
+
+def _value_missing_types(result: extractor.ExtractionResult) -> set[str]:
+    return {
+        item["asset_type"] for item in result.missing if item["kind"] == "asset_value"
+    }
+
+
+def test_comma_list_trailing_negation_marks_every_listed_type_absent():
+    """실측 재현된 버그(D-01): "주식, 펀드, 자동차, 퇴직연금, 보험은
+    없어요."에서 쉼표로 나열된 앞 항목들("주식","펀드","자동차","퇴직연금")은
+    자기 세그먼트에 부정 표현이 없어(맨 명사 나열) "유형은 확인, 금액만
+    모름"으로 잘못 분류되고 금액을 무한 재질문했다. 나열 끝의 "보험은
+    없어요"가 나열 전체에 걸리는 부정임을 인식해야 한다."""
+    result = extractor.extract_financial_slots(
+        "주식, 펀드, 자동차, 퇴직연금, 보험은 없어요."
+    )
+
+    assert result.assets == []
+    assert _absent_types(result) == {"주식", "펀드", "자동차", "퇴직연금"}
+    assert _value_missing_types(result) == set()
+    assert [tag.type for tag in result.insurance_tags] == ["보험"]
+
+
+def test_and_conjunction_negation_marks_both_types_absent():
+    """ "주식과 펀드는 없어요."는 쉼표 없이 한 세그먼트에 유형 두 개가
+    같이 있다 — 기존 _match_asset_type(첫 매칭만 반환)로는 두 번째 유형을
+    놓쳤다."""
+    result = extractor.extract_financial_slots("주식과 펀드는 없어요.")
+
+    assert result.assets == []
+    assert _absent_types(result) == {"주식", "펀드"}
+
+
+def test_first_item_negated_second_item_has_amount_in_one_segment():
+    """ "주식은 없고 펀드는 1000만원" — "없고"로 이어진 한 문장에 부정된
+    유형과 금액이 있는 유형이 섞여 있다. "없고" 분리 없이는 전체가 한
+    세그먼트로 남아 펀드의 금액이 주식에 잘못 배정됐다."""
+    result = extractor.extract_financial_slots("주식은 없고 펀드는 1000만원")
+
+    assert result.assets == [extractor.Asset(type="펀드", value=10_000_000)]
+    assert _absent_types(result) == {"주식"}
+
+
+def test_amount_then_comma_then_negated_type_only_negates_the_second():
+    """ "주식 1000만원, 펀드는 없어요" — 대조군: 앞 항목이 확정 금액을
+    가지므로 나열 부정 전파 로직이 여기까지 거슬러 올라가면 안 된다."""
+    result = extractor.extract_financial_slots("주식 1000만원, 펀드는 없어요")
+
+    assert result.assets == [extractor.Asset(type="주식", value=10_000_000)]
+    assert _absent_types(result) == {"펀드"}
+
+
+def test_bare_list_without_trailing_predicate_falls_back_to_value_missing():
+    """나열이 부정으로 끝나지 않고 문장이 끝나면(서술어 없음) 기존처럼
+    개별 금액 재질문 대상으로 남아야 한다 — 조용히 흡수되거나 absent로
+    잘못 확정되면 안 된다."""
+    result = extractor.extract_financial_slots("주식, 펀드")
+
+    assert result.assets == []
+    assert _absent_types(result) == set()
+    assert _value_missing_types(result) == {"주식", "펀드"}
+
+
+def test_single_bare_type_mention_still_asks_amount_normally():
+    """단건 "집 한 채 있어요"(서술어 있음, 부정 아님)는 이번 수정과 무관하게
+    기존처럼 금액 재질문 대상이어야 한다(회귀 방지)."""
+    result = extractor.extract_financial_slots("집 한 채 있어요")
+
+    assert result.assets == []
+    assert _value_missing_types(result) == {"부동산"}
+    assert _absent_types(result) == set()
+
+
 # ------------------------------------------------------------- 5) 이미지 판독
 
 
