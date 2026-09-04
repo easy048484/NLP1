@@ -221,6 +221,48 @@ export function hasAssetAmountRequest(
   return parseAssetAmountRequest(data, agentKey) !== null;
 }
 
+/**
+ * asset_organizer가 자산정리 시작 의사만 있고 구체적인 자산 항목이 없어
+ * (예: "자산 정리하고 싶어요") 카테고리 선택 UI로 진입시키는 중인지
+ * (state.awaiting_category_selection) 확인한다. 이 플래그는 이번 턴
+ * 응답에만 실리는 신호다(agent.py의 _empty_state() 키 목록에 없어 다음
+ * 턴에 다시 로드되지 않음) — pending_amounts/pending_categories와 달리
+ * 대화 상태로 지속되지 않는다.
+ */
+export function hasCategorySelectionRequest(
+  data: Record<string, unknown>,
+  agentKey?: string,
+): boolean {
+  if (!agentKey) return false;
+  const ownNamespace = asRecord(data[agentKey]);
+  return ownNamespace?.awaiting_category_selection === true;
+}
+
+export interface RemainingCategoriesPrompt {
+  /** 아직 확인 안 된 카테고리(백엔드 state.pending_categories 그대로). */
+  categories: string[];
+}
+
+/**
+ * 선택 항목 입력이 끝난 뒤 남은 미확인 카테고리를 한 번에 확인하는
+ * 단계(state.pending_categories)를 읽는다. assetOrganizerPendingQuestion과
+ * 같은 소스를 읽지만, 이쪽은 "네 모두 없어요"/"더 있어요" 두 버튼 UI
+ * (RemainingCategoriesPrompt 컴포넌트)를 위해 카테고리 배열 자체를
+ * 그대로 넘긴다 — 문구 조립은 컴포넌트가 한다.
+ */
+export function parseRemainingCategoriesPrompt(
+  data: Record<string, unknown>,
+  agentKey?: string,
+): RemainingCategoriesPrompt | null {
+  if (!agentKey) return null;
+  const ownNamespace = asRecord(data[agentKey]);
+  const categories = asArray(ownNamespace?.pending_categories).filter(
+    (c): c is string => typeof c === "string" && c.length > 0,
+  );
+  if (categories.length === 0) return null;
+  return { categories };
+}
+
 export function parsePendingQuestions(
   data: Record<string, unknown>,
   agentKey?: string,

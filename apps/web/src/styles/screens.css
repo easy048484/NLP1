@@ -1118,6 +1118,66 @@
   color: var(--ink-faint);
 }
 
+/* ---- asset_organizer category select card ---- */
+.category-select-card {
+  display: grid;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border: 1px solid var(--agent-asset);
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
+}
+.category-select-hint {
+  font-size: var(--text-caption);
+  color: var(--ink-muted);
+}
+.category-select-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.category-select-btn {
+  min-height: var(--control-min);
+  padding: 0 var(--sp-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface-page);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.category-select-on {
+  border-color: var(--agent-asset);
+  background: var(--agent-asset-bg);
+  color: var(--agent-asset);
+  font-weight: 700;
+}
+.category-select-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ---- asset_organizer remaining categories prompt ---- */
+.remaining-categories-card {
+  display: grid;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border: 1px solid var(--agent-asset);
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
+}
+.remaining-categories-question {
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+.remaining-categories-actions {
+  display: flex;
+  gap: var(--sp-2);
+}
+.remaining-categories-actions .btn {
+  flex: 1;
+}
+
 /* ---- family graph panel (sheet) ---- */
 .fp-note {
   font-size: var(--text-caption);
