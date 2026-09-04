@@ -9,9 +9,11 @@
 
 - load_session: session_id 로 이전 턴까지의 상태(SessionState)를 불러옵니다.
 - classify (planner.classify): 이번 턴에 실행할 에이전트와 경로 등급을 정합니다.
-    Fast      직전 턴 핸드오프 대상 1개 (기존 pending_handoff 규칙 그대로)
-    Standard  키워드 후보 1개 / 없으면 직전 에이전트 → 기본 에이전트
-    Full      키워드 후보 2개 이상 → LLM 이 필요한 것만 고름 → requires/produces 로 DAG
+  LLM-first — LLM 이 전체 에이전트를 후보로 놓고, 직전 에이전트 · 직전 질문 ·
+  핸드오프 예정 · 키워드 힌트를 보고 고릅니다 (planner.py 독스트링 참고).
+    Standard  LLM 이 1개 고름 / LLM 없을 때 키워드 후보 1개 (없으면 직전 → 기본)
+    Full      LLM 이 2개 이상 고름 / LLM 없을 때 키워드 후보 2개 이상 → DAG
+    Fast      LLM 없을 때만: 직전 턴 핸드오프 대상 1개 (LLM 이 있으면 힌트로 강등)
   이름 → 에이전트 대응은 orchestrator/registry.py 가 agents/*/spec.py 를 자동으로
   읽어 만듭니다. 여기에는 에이전트 이름이 하드코딩돼 있지 않습니다.
 - build_context: family_graph(요청값 > family_graph_id 조회)와 financial_profile
@@ -137,6 +139,9 @@ def node_classify(state: GraphState) -> GraphState:
         last_agent=session.last_agent,
         default_agent=_DEFAULT_AGENT,
         axis=payload.axis,
+        # 직전 assistant 발화(=직전 질문)를 라우터가 보게 한다. load_session 이
+        # 이번 user_message 를 이미 이력에 넣었으므로 마지막 assistant 는 직전 턴이다.
+        history=session.history,
     )
     return {"plan": plan}
 
