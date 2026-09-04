@@ -180,6 +180,47 @@ function assetOrganizerPendingQuestion(
   };
 }
 
+export interface AssetAmountRequest {
+  /** 백엔드 pending_amounts 항목 kind — 후속 메시지 문구 조립에만 쓴다. */
+  kind: "asset_value" | "liability_value";
+  /** 되묻는 대상 카테고리 이름 (예: "예금", "대출"). */
+  label: string;
+}
+
+/**
+ * asset_organizer가 특정 카테고리의 금액을 되묻는 중인지(state.pending_amounts
+ * 첫 항목) 확인한다. 백엔드는 이 항목이 있으면 그 금액 질문만 reply로 보내고
+ * pending_categories는 비워두므로(agent.py._continue_after_categories 참고),
+ * 두 종류의 후속 질문은 항상 서로 배타적이다 — 이 항목이 있으면 카테고리
+ * 선택지(assetOrganizerPendingQuestion) 대신 금액 입력 위젯을 렌더해야 한다.
+ */
+export function parseAssetAmountRequest(
+  data: Record<string, unknown>,
+  agentKey?: string,
+): AssetAmountRequest | null {
+  if (!agentKey) return null;
+  const ownNamespace = asRecord(data[agentKey]);
+  const pendingAmounts = asArray(ownNamespace?.pending_amounts);
+  if (pendingAmounts.length === 0) return null;
+  const first = asRecord(pendingAmounts[0]);
+  if (!first) return null;
+  const kind = asString(first.kind);
+  if (kind !== "asset_value" && kind !== "liability_value") return null;
+  const label = asString(
+    kind === "asset_value" ? first.asset_type : first.liability_type,
+  );
+  if (!label) return null;
+  return { kind, label };
+}
+
+/** 이 data 에 asset_organizer 금액 되묻기(pending_amounts)가 있는지. */
+export function hasAssetAmountRequest(
+  data: Record<string, unknown>,
+  agentKey?: string,
+): boolean {
+  return parseAssetAmountRequest(data, agentKey) !== null;
+}
+
 export function parsePendingQuestions(
   data: Record<string, unknown>,
   agentKey?: string,
