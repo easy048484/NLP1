@@ -157,6 +157,12 @@ _PARSE_FAILED_REPLY = (
 #: _load_state()가 그대로 걸러낸다) — 프론트가 카테고리를 선택해 보내는
 #: 다음 턴은 실제 유형 키워드가 담긴 문장이라 이 분기를 다시 타지 않는다.
 _CATEGORY_SELECT_PROMPT = "가지고 계신 자산을 선택해주세요. 여러 개 선택할 수 있어요."
+#: 사후 모드 전용 문구 — "가지고 계신"(1인칭 소유 표현)은 남은 가족이
+#: 고인의 재산을 정리하는 이 시나리오에 맞지 않는다. 조회/확인 출처가
+#: 본인이 아니라 안심상속 등 외부 조회 결과일 수 있다는 뉘앙스도 담는다.
+_POST_DEATH_CATEGORY_SELECT_PROMPT = (
+    "조회되거나 확인된 고인의 재산·부채를 선택해주세요. 여러 개 선택할 수 있어요."
+)
 #: 일부는 구조화됐지만 나머지는 이해 못한 경우(부분 성공) — 이미 반영된
 #: 항목은 그대로 두고, 다음 안내에 짧은 안내만 덧붙인다. 전체를 재질문
 #: 상태로 되돌리면 이미 확인된 항목까지 다시 물어보는 것처럼 보여
@@ -960,7 +966,12 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
             state["pending_categories"] = []
             if is_first_turn:
                 state["awaiting_category_selection"] = True
-                return _output(state, _CATEGORY_SELECT_PROMPT)
+                prompt = (
+                    _POST_DEATH_CATEGORY_SELECT_PROMPT
+                    if mode == _POST_DEATH_MODE
+                    else _CATEGORY_SELECT_PROMPT
+                )
+                return _output(state, prompt)
             return _output(state, _PARSE_FAILED_REPLY)
 
     state["pending_categories"] = []
