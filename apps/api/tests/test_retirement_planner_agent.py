@@ -236,6 +236,49 @@ def test_pension_income_from_extra_is_wired_into_engine_profile():
     assert pension_asset.value == 500_000_000  # 원금은 그대로 유지(정보 손실 없음)
 
 
+def test_itemized_liability_with_unknown_amount_is_excluded_not_crashed():
+    """asset_organizer는 금액을 모르는 부채(confidence=="unknown_amount")를
+    remaining_balance=None으로 넘길 수 있다 — 이 에이전트의 로컬 Liability
+    모델은 remaining_balance가 여전히 필수 int라(engine.py가 실제 숫자로
+    산술) None을 그대로 재구성하면 검증 오류가 난다. 0으로 추측해 넣지도
+    않고(부채가 없는 것처럼 계산됨) 조용히 시뮬레이션 입력에서 제외해야
+    한다 — 확정된 다른 부채는 그대로 반영된다."""
+    shared = FinancialProfile(
+        current_age=60,
+        monthly_expense=1_000_000,
+        extra={
+            "asset_organizer": {
+                "assets": [],
+                "liabilities": [
+                    {
+                        "type": "대출",
+                        "remaining_balance": None,
+                        "monthly_payment": None,
+                        "end_age": None,
+                        "note": None,
+                        "confidence": "unknown_amount",
+                    },
+                    {
+                        "type": "카드론",
+                        "remaining_balance": 3_000_000,
+                        "monthly_payment": None,
+                        "end_age": None,
+                        "note": None,
+                        "confidence": "confirmed",
+                    },
+                ],
+            }
+        },
+    )
+    profile = agent._build_engine_input(
+        {"current_age": 60, "monthly_expense": 1_000_000}, shared
+    )
+
+    assert len(profile.liabilities) == 1
+    assert profile.liabilities[0].type == "카드론"
+    assert profile.liabilities[0].remaining_balance == 3_000_000
+
+
 def test_no_incomes_key_in_extra_synthesizes_empty_income_list():
     """asset_organizer가 애초에 퇴직연금을 연금형으로 전환한 적이 없으면
     extra에 "incomes" 자체가 없다 — flat 집계엔 소득을 담을 자리가 없어

@@ -1013,9 +1013,11 @@ def test_all_confirmed_assets_show_no_disclaimer():
 
 
 def test_dont_know_liability_amount_creates_permanent_unknown_amount_liability():
-    """실측 재현된 버그: "대출이 있어요" → "몰라요"가 remaining_balance=0으로
-    확정 저장됐다(부채는 confidence를 무시했었음). 이제 자산과 동일하게
-    unknown_amount로 영구 확정하고, 실제 0원과 구분돼야 한다."""
+    """실측 재현된 버그(2차): "대출이 있어요" → "몰라요"가 처음엔
+    remaining_balance=0으로 확정 저장됐다(부채는 confidence를 무시했었음).
+    그다음엔 confidence는 반영했지만 remaining_balance는 여전히 0(자산과
+    같은 자리표시자 방식)이라 "몰라요"와 "0원"이 값 자체로는 구분이 안
+    됐다 — 이제 remaining_balance는 None이어야 한다(0은 실제 0원 전용)."""
     output1 = agent.run(AgentInput(session_id="lunk1", user_message="대출이 있어요"))
     state1 = output1.data[STATE_KEY]
     assert state1["pending_amounts"][0]["liability_type"] == "대출"
@@ -1025,7 +1027,7 @@ def test_dont_know_liability_amount_creates_permanent_unknown_amount_liability()
 
     liability = next(liab for liab in state2["liabilities"] if liab["type"] == "대출")
     assert liability["confidence"] == "unknown_amount"
-    assert liability["remaining_balance"] == 0
+    assert liability["remaining_balance"] is None
     assert state2["pending_amounts"] == []
 
 
@@ -1100,6 +1102,27 @@ def test_liability_confidence_defaults_to_confirmed_for_backward_compatibility()
     """새 confidence 필드 도입 전 저장된 부채 dict(키 자체가 없음)도
     기존처럼 confirmed로 취급해야 한다(하위 호환, Asset과 동일 패턴)."""
     assert agent._is_confirmed({"type": "대출", "remaining_balance": 1000}) is True
+
+
+def test_liability_model_validator_enforces_unknown_amount_balance_is_none():
+    """models.Liability의 model_validator가 confidence/remaining_balance
+    불변식을 강제한다 — confirmed면 remaining_balance가 int여야 하고,
+    unknown_amount면 반드시 None이어야 한다. 어느 쪽이든 어겨서 직접
+    Liability를 만들면(예: 다른 에이전트가 asset_organizer의 itemized
+    데이터를 잘못 재구성하는 경우) 조용히 통과시키지 않고 즉시 실패한다."""
+    from pydantic import ValidationError
+
+    from agents.asset_organizer.models import Liability
+
+    # 정상 케이스 둘 다 통과해야 한다.
+    Liability(type="대출", remaining_balance=1_000_000, confidence="confirmed")
+    Liability(type="대출", remaining_balance=None, confidence="unknown_amount")
+
+    with pytest.raises(ValidationError):
+        Liability(type="대출", remaining_balance=0, confidence="unknown_amount")
+
+    with pytest.raises(ValidationError):
+        Liability(type="대출", remaining_balance=None, confidence="confirmed")
 
 
 # ===================================================== 사후 모드: 다기관 조회 결과 해석

@@ -318,11 +318,15 @@ def _append_resolved_pending_item(
     confidence: str = "confirmed",
 ) -> None:
     """confidence는 자산·부채 둘 다 같은 의미다(Asset.confidence/
-    Liability.confidence 참고) — "몰라요"(unknown_amount)면 실제 0원이
-    아니라 구조적 자리표시자로만 amount=0을 받는다. 실측 재현된 버그:
-    예전엔 부채 쪽이 confidence를 무시하고 amount를 그대로
-    remaining_balance에 넣어서, "대출 몰라요"가 "대출 0원"으로 확정
-    저장됐다."""
+    Liability.confidence 참고)이지만 자리표시자 방식은 다르다 — 자산은
+    unknown_amount여도 value=amount(=0)를 그대로 쓰고(Asset의 기존 규약,
+    여기서는 손대지 않음), 부채는 remaining_balance를 아예 None으로
+    남긴다(models.Liability의 model_validator가 이 불변식을 강제한다) —
+    "0원"(confirmed, 실제 0원)과 "몰라요"(unknown_amount, 금액 자체를
+    모름)를 값으로도 구분하기 위해서다. 실측 재현된 버그: 예전엔 부채
+    쪽이 confidence를 완전히 무시하거나(1차), confidence는 저장해도
+    remaining_balance는 항상 amount(=0)를 그대로 넣어서(2차) "대출
+    몰라요"가 "대출 0원"과 구분 안 되는 값으로 저장됐다."""
     if item["kind"] == "asset_value":
         state["assets"].append(
             {
@@ -337,7 +341,7 @@ def _append_resolved_pending_item(
         state["liabilities"].append(
             {
                 "type": item["liability_type"],
-                "remaining_balance": amount,
+                "remaining_balance": None if confidence == "unknown_amount" else amount,
                 "monthly_payment": None,
                 "end_age": None,
                 "note": None,
@@ -712,8 +716,9 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
         if a["type"] != "부동산" and a["type"] not in _FINANCIAL_ASSET_TYPES
     )
     # 7번 참고 — "금액모름" 부채(confidence != "confirmed")는 total_debts에
-    # 안 들어간다. remaining_balance=0이 구조적 자리표시자일 뿐이라 그대로
-    # 더하면 확인 안 된 채무가 조용히 "빚 없음"으로 둔갑한다.
+    # 안 들어간다. remaining_balance가 None이라 그대로 더하면(걸러내지
+    # 않으면) TypeError가 난다 — 자산의 "0으로 조용히 섞임" 위험과 달리,
+    # 부채는 아예 계산이 실패하는 쪽으로 더 안전하게 만들어져 있다.
     confirmed_liabilities = [
         liability for liability in liabilities if _is_confirmed(liability)
     ]
