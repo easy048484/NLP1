@@ -317,9 +317,12 @@ def _append_resolved_pending_item(
     *,
     confidence: str = "confirmed",
 ) -> None:
-    """confidence는 자산(asset_value)에만 의미가 있다 — 부채는 이번 라운드
-    3단계 신뢰도 범위 밖이라(과제 경계, "이번 라운드는 재산 목록화에만
-    집중") 항상 confirmed 취급 그대로 둔다."""
+    """confidence는 자산·부채 둘 다 같은 의미다(Asset.confidence/
+    Liability.confidence 참고) — "몰라요"(unknown_amount)면 실제 0원이
+    아니라 구조적 자리표시자로만 amount=0을 받는다. 실측 재현된 버그:
+    예전엔 부채 쪽이 confidence를 무시하고 amount를 그대로
+    remaining_balance에 넣어서, "대출 몰라요"가 "대출 0원"으로 확정
+    저장됐다."""
     if item["kind"] == "asset_value":
         state["assets"].append(
             {
@@ -338,6 +341,7 @@ def _append_resolved_pending_item(
                 "monthly_payment": None,
                 "end_age": None,
                 "note": None,
+                "confidence": confidence,
             }
         )
 
@@ -574,14 +578,32 @@ def _format_summary(state: dict[str, Any]) -> str:
         lines.append("\n[자산] 없음")
 
     liabilities = state["liabilities"]
-    total_liabilities = sum(liability["remaining_balance"] for liability in liabilities)
+    confirmed_liabilities = [
+        liability for liability in liabilities if _is_confirmed(liability)
+    ]
+    unknown_amount_liabilities = [
+        liability for liability in liabilities if not _is_confirmed(liability)
+    ]
+    # 자산과 동일한 원칙 — "금액모름" 부채를 조용히 0으로 합산하지 않는다.
+    total_liabilities = sum(
+        liability["remaining_balance"] for liability in confirmed_liabilities
+    )
     if liabilities:
         lines.append("\n[부채]")
         lines.extend(
             f"- {liability['type']}: {_format_krw(liability['remaining_balance'])}"
-            for liability in liabilities
+            for liability in confirmed_liabilities
+        )
+        lines.extend(
+            f"- {liability['type']}: 금액 확인 안 됨"
+            for liability in unknown_amount_liabilities
         )
         lines.append(f"\n부채 합계: {_format_krw(total_liabilities)}")
+        if unknown_amount_liabilities:
+            lines.append(
+                f"({len(unknown_amount_liabilities)}개 항목은 금액이 확인되지 않아 "
+                "총액에서 제외됨)"
+            )
     else:
         lines.append("\n[부채] 없음")
 
@@ -630,7 +652,8 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
     4. financial_debts는 아예 채우지 않는다 — Liability.type이 자유
        문자열이라 "금융기관 채무"인지 판단할 근거가 없다. tax_calculator가
        채권자 정보를 기준으로 직접 확인 질문을 넣기로 했다. total_debts
-       (전체 채무 합계)에는 전부 들어간다.
+       (전체 채무 합계)에는 confidence=="confirmed"인 부채만 들어간다 —
+       7번 참고.
     5. InsuranceTag(보험)는 flat 스키마에 대응 필드가 아예 없다 — 부채의
        monthly_payment/end_age(2번)와 같은 방식으로 extra["asset_organizer"]
        ["insurance"]에 원본 그대로 보존한다. flat 필드만 보는 소비자에게는
@@ -646,9 +669,14 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
        존재만 확인해준 경우, 또는 생전 모드에서 "몰라요"로 답한 경우)인
        자산은 real_estate_value/financial_assets/other_assets 세 필드
        어디에도 안 들어간다 — 확인 안 된 금액을 0으로 넣으면 순자산이
-       실제보다 적어 보이게 왜곡된다(3번과 같은 원칙). extra의 itemized
-       assets에는 confidence 그대로 남아 있으니, 정확한 총액이 필요한
-       소비자는 flat 필드만 보지 말고 그걸 직접 걸러서 써야 한다.
+       실제보다 적어 보이게 왜곡된다(3번과 같은 원칙). 부채도 완전히
+       같은 원칙이다 — confidence=="unknown_amount"인 부채(예: "대출이
+       있어요" → "몰라요")는 total_debts에 안 들어간다. 확인 안 된 채무를
+       0으로 넣으면 이번엔 반대 방향으로(순자산이 실제보다 커 보이게)
+       왜곡된다 — 어느 방향이든 조용한 0 대입은 안전하지 않다는 원칙은
+       자산·부채 모두 동일하다. extra의 itemized assets/liabilities에는
+       confidence가 그대로 남아 있으니, 정확한 총액이 필요한 소비자는
+       flat 필드만 보지 말고 그걸 직접 걸러서 써야 한다.
 
     checked_categories에 있는 카테고리만 값을 채운다(전부는 아니어도
     최소 하나는 확인된 상태) — 아직 안 물어본 카테고리까지 0으로 채우면
@@ -683,7 +711,15 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
         for a in confirmed_assets
         if a["type"] != "부동산" and a["type"] not in _FINANCIAL_ASSET_TYPES
     )
-    total_debts = sum(liability["remaining_balance"] for liability in liabilities)
+    # 7번 참고 — "금액모름" 부채(confidence != "confirmed")는 total_debts에
+    # 안 들어간다. remaining_balance=0이 구조적 자리표시자일 뿐이라 그대로
+    # 더하면 확인 안 된 채무가 조용히 "빚 없음"으로 둔갑한다.
+    confirmed_liabilities = [
+        liability for liability in liabilities if _is_confirmed(liability)
+    ]
+    total_debts = sum(
+        liability["remaining_balance"] for liability in confirmed_liabilities
+    )
 
     return FinancialProfile(
         real_estate_value=real_estate_value,
