@@ -185,6 +185,47 @@ def test_negated_asset_mention_completes_category_without_asking_amount():
     assert "예금" not in output.reply
 
 
+def test_comma_listed_categories_all_negated_by_trailing_predicate_reach_done():
+    """실측 재현된 버그(D-01): 사후 모드에서 안심상속 조회 결과로 예금·부동산·
+    부채가 확정된 뒤 "주식, 펀드, 자동차, 퇴직연금, 보험은 없어요."라고
+    답하면, 쉼표로 나열된 앞 4개 유형이 각자 "유형은 확인, 금액만 모름"으로
+    잘못 분류돼 "주식 금액이 얼마인지 알려주시겠어요?" 식으로 무한
+    재질문했다. 나열 전체가 absent/checked 처리되고 pending_amounts에
+    남지 않아야 한다."""
+    session_id = "d01"
+    state = agent.run(
+        AgentInput(
+            session_id=session_id,
+            user_message="안심상속 조회 결과 예금 8,000만, 아파트 공시가 5억, 카드대출 2,000만",
+            context={"mode": "post_death"},
+        )
+    ).data[STATE_KEY]
+    assert state["pending_categories"] == [
+        "주식",
+        "펀드",
+        "자동차",
+        "퇴직연금",
+        "보험",
+    ]
+
+    output = agent.run(
+        _continue(session_id, "주식, 펀드, 자동차, 퇴직연금, 보험은 없어요.", state)
+    )
+    state2 = output.data[STATE_KEY]
+
+    for category in ("주식", "펀드", "자동차", "퇴직연금", "보험"):
+        assert category in state2["checked_categories"]
+    assert state2["pending_amounts"] == []
+    assert state2["pending_categories"] == []
+    assert "금액이 얼마인지" not in output.reply
+
+    # 남은 흐름(부채 정밀 모드 후속질문)까지 마치면 정상 종결된다 —
+    # 이번 버그와 무관한 후속질문이 하나 더 있을 뿐, 다시 카테고리를
+    # 재질문하지 않는다.
+    output2 = agent.run(_continue(session_id, "몰라요", state2))
+    assert output2.data[STATE_KEY]["status"] == "done"
+
+
 def test_liability_without_amount_asks_then_resolves_via_bare_number():
     output1 = agent.run(AgentInput(session_id="i6", user_message="대출이 좀 있어요"))
 
