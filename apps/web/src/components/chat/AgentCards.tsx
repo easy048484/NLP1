@@ -1,17 +1,22 @@
 import type { ReactElement } from "react";
 import { useApp } from "../../lib/appState";
 import {
+  hasCategorySelectionRequest,
   parseAssetAmountRequest,
   parsePendingQuestions,
+  parseRemainingCategoriesPrompt,
   parseShares,
   parseShareWarnings,
   parseSignals,
   parseTaxResult,
 } from "../../lib/agentData";
+import { composeCategorySelectionMessage } from "../../lib/assetCategories";
 import { Markdown } from "../../lib/markdown";
 import { formatWonExact } from "../../lib/format";
 import type { AgentOutput } from "../../types";
 import { AmountInputCard } from "./AmountInputCard";
+import { AssetCategorySelectCard } from "./AssetCategorySelectCard";
+import { RemainingCategoriesPrompt } from "./RemainingCategoriesPrompt";
 import {
   AmountDisplay,
   ChoiceGroup,
@@ -40,12 +45,26 @@ export function AgentCards({
 
   const signals = parseSignals(data, contribution.agent);
   const amountRequest = parseAssetAmountRequest(data, contribution.agent);
+  const categorySelectionRequested = hasCategorySelectionRequest(data, contribution.agent);
+  const remainingCategories = parseRemainingCategoriesPrompt(data, contribution.agent);
   const pending = parsePendingQuestions(data, contribution.agent);
   const tax = parseTaxResult(data, contribution.agent);
   const shares = parseShares(data, contribution.agent);
   const shareWarnings = parseShareWarnings(data, contribution.agent);
 
   const cards: ReactElement[] = [];
+
+  // 카테고리 선택("자산 정리하고 싶어요" 시작 의사, 또는 남은 카테고리
+  // 중 "더 있어요")에서 선택 완료를 누르면 실제 파싱은 백엔드
+  // extractor.py의 기존 키워드 매칭 경로를 그대로 탄다 — 선택한 라벨을
+  // 나열한 평문 문장을 보낼 뿐, 별도 구조화 context는 쓰지 않는다
+  // (composeCategorySelectionMessage 문서 참고). "기타"만 선택하면 대응
+  // 키워드가 없어 빈 문자열이 되므로, 그 경우에만 자유 입력을 유도하는
+  // 문장으로 대신한다.
+  const submitCategorySelection = (selectedKeys: string[]) => {
+    const message = composeCategorySelectionMessage(selectedKeys);
+    void send(message || "기타 자산이 있어요.");
+  };
 
   if (mode === "questions") {
     // pending_amounts(특정 카테고리 금액 되묻기)와 pending_categories(전체
@@ -60,6 +79,28 @@ export function AgentCards({
           label={amountRequest.label}
           onConfirm={(amountWon) => void send(`${amountWon}원`)}
           onUnknown={() => void send("몰라요")}
+        />,
+      );
+      return <div className="agent-cards">{cards}</div>;
+    }
+    // 시작 의사만 있고 구체적 항목이 없을 때(awaiting_category_selection)
+    // — 파싱 실패 재질문 대신 카테고리 선택 UI로 바로 진입시킨다.
+    if (categorySelectionRequested) {
+      cards.push(
+        <AssetCategorySelectCard key="category-select" onSubmit={submitCategorySelection} />,
+      );
+      return <div className="agent-cards">{cards}</div>;
+    }
+    // 선택한 카테고리 입력이 끝난 뒤 남은 미확인 카테고리 일괄 확인 —
+    // "네, 모두 없어요"(기존 평문 부정 답변 경로)와 "더 있어요"(같은
+    // 선택 UI를 남은 카테고리로 좁혀 재표시) 두 갈래.
+    if (remainingCategories) {
+      cards.push(
+        <RemainingCategoriesPrompt
+          key="remaining-categories"
+          categories={remainingCategories.categories}
+          onConfirmNone={() => void send("나머지는 없어요")}
+          onSelectMore={submitCategorySelection}
         />,
       );
       return <div className="agent-cards">{cards}</div>;

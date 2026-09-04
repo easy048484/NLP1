@@ -1,7 +1,11 @@
 import { agentMeta } from "../../lib/agents";
 import { Markdown } from "../../lib/markdown";
 import type { ChatResponse } from "../../types";
-import { hasAssetAmountRequest, hasPendingQuestions } from "../../lib/agentData";
+import {
+  hasAssetAmountRequest,
+  hasCategorySelectionRequest,
+  hasPendingQuestions,
+} from "../../lib/agentData";
 import { parseConfirmChecklist, parseReplySections } from "../../lib/replySections";
 import { AgentAvatar, ConcatNoticeBadge, NeedsReviewBadge } from "../ui";
 import { AgentCards } from "./AgentCards";
@@ -44,7 +48,8 @@ export function AssistantResponse({ response }: { response: ChatResponse }) {
   const followups = response.contributions.filter(
     (c) =>
       hasPendingQuestions(c.data ?? {}, c.agent) ||
-      hasAssetAmountRequest(c.data ?? {}, c.agent),
+      hasAssetAmountRequest(c.data ?? {}, c.agent) ||
+      hasCategorySelectionRequest(c.data ?? {}, c.agent),
   );
 
   return (
