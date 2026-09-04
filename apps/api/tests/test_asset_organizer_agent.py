@@ -1009,6 +1009,99 @@ def test_all_confirmed_assets_show_no_disclaimer():
     assert output.financial_profile.financial_assets == 100_000_000
 
 
+# ================================================ 부채 3단계 신뢰도 (unknown_amount != 0)
+
+
+def test_dont_know_liability_amount_creates_permanent_unknown_amount_liability():
+    """실측 재현된 버그: "대출이 있어요" → "몰라요"가 remaining_balance=0으로
+    확정 저장됐다(부채는 confidence를 무시했었음). 이제 자산과 동일하게
+    unknown_amount로 영구 확정하고, 실제 0원과 구분돼야 한다."""
+    output1 = agent.run(AgentInput(session_id="lunk1", user_message="대출이 있어요"))
+    state1 = output1.data[STATE_KEY]
+    assert state1["pending_amounts"][0]["liability_type"] == "대출"
+
+    output2 = agent.run(_continue("lunk1", "몰라요", state1))
+    state2 = output2.data[STATE_KEY]
+
+    liability = next(liab for liab in state2["liabilities"] if liab["type"] == "대출")
+    assert liability["confidence"] == "unknown_amount"
+    assert liability["remaining_balance"] == 0
+    assert state2["pending_amounts"] == []
+
+
+def test_explicit_zero_liability_amount_is_confirmed_not_unknown():
+    """ "0원"이라고 명시적으로 답하면 confirmed 0원이다 — "몰라요"(unknown)와
+    구분돼야 한다."""
+    state1 = agent.run(
+        AgentInput(session_id="lunk2", user_message="대출이 있어요")
+    ).data[STATE_KEY]
+    output2 = agent.run(_continue("lunk2", "0원", state1))
+    state2 = output2.data[STATE_KEY]
+
+    liability = next(liab for liab in state2["liabilities"] if liab["type"] == "대출")
+    assert liability["confidence"] == "confirmed"
+    assert liability["remaining_balance"] == 0
+
+
+def test_negated_liability_mention_is_absent_not_unknown_amount():
+    """ "대출은 없어요"는 unknown_amount가 아니라 absent(항목 자체가 없음)다 —
+    liabilities 리스트에 아예 항목이 안 생겨야 한다(D-01/Round 15 회귀 방지)."""
+    state1 = agent.run(
+        AgentInput(session_id="lunk3", user_message="예금 3천만원 있어요")
+    ).data[STATE_KEY]
+    output2 = agent.run(_continue("lunk3", "대출은 없어요", state1))
+    state2 = output2.data[STATE_KEY]
+
+    assert state2["liabilities"] == []
+    assert "부채" in state2["checked_categories"]
+
+
+def test_unknown_amount_liability_is_never_reasked_in_next_turn():
+    """한 번 unknown_amount로 확정되면 이후 아무 턴에서도 그 부채의 금액을
+    다시 묻지 않는다(자산 unknown_amount와 동일한 "한 번 답하면 끝" 원칙)."""
+    state1 = agent.run(
+        AgentInput(session_id="lunk4", user_message="대출이 있어요")
+    ).data[STATE_KEY]
+    state2 = agent.run(_continue("lunk4", "몰라요", state1)).data[STATE_KEY]
+
+    output3 = agent.run(_continue("lunk4", "없어요", state2))
+
+    assert "대출" not in output3.reply or "얼마" not in output3.reply
+    state3 = output3.data[STATE_KEY]
+    assert state3["pending_amounts"] == []
+    assert len([liab for liab in state3["liabilities"] if liab["type"] == "대출"]) == 1
+
+
+def test_total_debts_excludes_unknown_amount_liability_and_shows_disclaimer():
+    """total_debts/순자산 계산에서 unknown_amount 부채를 0으로 합산하지
+    않는다 — 자산과 동일하게 총액에서 제외하고 요약에 안내를 남긴다."""
+    session_id = "lunk5"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 1억 있고 대출이 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "몰라요", state)).data[
+        STATE_KEY
+    ]  # 대출 금액
+    output = agent.run(_continue(session_id, "없어요", state))
+
+    assert output.financial_profile.total_debts == 0
+    assert output.financial_profile.financial_assets == 100_000_000
+    assert "1개 항목은 금액이 확인되지 않아 총액에서 제외됨" in output.reply
+    assert "대출: 금액 확인 안 됨" in output.reply
+    # confidence가 real_estate_value 등 다른 필드와 뒤섞여 0으로 대충
+    # 합산되지 않았는지 — 순자산이 예금 1억 그대로여야 한다(부채가
+    # 조용히 0으로 잡혀 순자산이 그대로 1억으로 "좋아 보이는" 것과
+    # 겉보기엔 같은 숫자이지만, 이유가 "차감할 확정 채무가 없어서"가
+    # 아니라 "채무 금액이 미확인이라 제외돼서"라는 걸 요약 문구로 구분한다.
+    assert "순자산: 1억" in output.reply
+
+
+def test_liability_confidence_defaults_to_confirmed_for_backward_compatibility():
+    """새 confidence 필드 도입 전 저장된 부채 dict(키 자체가 없음)도
+    기존처럼 confirmed로 취급해야 한다(하위 호환, Asset과 동일 패턴)."""
+    assert agent._is_confirmed({"type": "대출", "remaining_balance": 1000}) is True
+
+
 # ===================================================== 사후 모드: 다기관 조회 결과 해석
 
 

@@ -22,7 +22,7 @@ LiabilityType = str
 #: 3단계 금액 신뢰도. "미확인"(아직 언급 자체가 안 됨)은 이 타입에 없다 —
 #: Asset 레코드 자체가 아직 존재하지 않는 상태라 별도 값이 필요 없다
 #: (checked_categories/pending_categories로 이미 추적됨, agent.py 참고).
-AssetConfidence = Literal["confirmed", "unknown_amount"]
+AmountConfidence = Literal["confirmed", "unknown_amount"]
 
 
 class Asset(BaseModel):
@@ -46,7 +46,7 @@ class Asset(BaseModel):
         default=None,
         description="사용자가 직접 입력한 연 명목수익률. 서비스가 기본값을 제시하지 않음",
     )
-    confidence: AssetConfidence = Field(
+    confidence: AmountConfidence = Field(
         default="confirmed",
         description=(
             "confirmed=금액까지 확인됨(기존 동작과 동일 기본값). "
@@ -75,15 +75,34 @@ class Liability(BaseModel):
     금지 원칙, extractor.py 참고). monthly_payment/end_age는 사용자가
     자연스럽게 말했을 때만 채워지는 선택 정보다.
 
-    ⚠️ schemas.FinancialProfile에는 이 두 필드를 담을 자리가 없다 —
-    total_debts 하나로만 내보내지므로, 정밀/단순 모드 구분은 extra로
-    itemized 리스트를 함께 넘겨야만 보존된다 (agent.py 참고)."""
+    confidence는 Asset.confidence와 완전히 같은 의미와 규칙이다 —
+    "unknown_amount"면 remaining_balance는 항상 0(구조적 자리표시자일 뿐,
+    실제 0원이 아님). "대출이 있어요" → "몰라요"처럼 존재는 확인됐지만
+    금액을 모르는 경우이며, total_debts/순자산 계산에서 반드시 confidence로
+    걸러내고 써야 한다(agent.py의 _format_summary/_to_shared_profile 참고).
+    그냥 remaining_balance를 더하면 "확인 안 됨"과 "확인했더니 0원"이 섞여
+    total_debts가 실제보다 적어 보이는 왜곡이 생긴다.
+
+    ⚠️ schemas.FinancialProfile에는 이 필드들을 담을 자리가 없다 —
+    total_debts 하나로만 내보내지므로, 정밀/단순 모드 구분과 confidence는
+    extra로 itemized 리스트를 함께 넘겨야만 보존된다 (agent.py 참고)."""
 
     type: str = Field(description='"대출", "카드론", "전세자금대출" 등')
-    remaining_balance: int = Field(ge=0, description="남은 원금 (원)")
+    remaining_balance: int = Field(
+        ge=0, description="남은 원금 (원). confidence 설명 참고"
+    )
     monthly_payment: int | None = Field(default=None, description="매월 상환액 (원)")
     end_age: int | None = Field(default=None, description="상환 종료 예상 나이")
     note: str | None = None
+    confidence: AmountConfidence = Field(
+        default="confirmed",
+        description=(
+            "confirmed=금액까지 확인됨(기존 동작과 동일 기본값). "
+            "unknown_amount=존재는 확인됐지만 금액은 모름 — 사용자가 '몰라요'로"
+            " 답한 경우. 한 번 이 상태가 되면 영구적으로 취급하고 다시 캐묻지"
+            " 않는다(Asset.confidence와 동일 원칙)."
+        ),
+    )
 
 
 class InsuranceTag(BaseModel):
