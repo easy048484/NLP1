@@ -33,8 +33,8 @@ export function FamilyTree({
 
       <div className="ft-row ft-center-row">
         <div className="ft-center-node">
-          <span className="ft-node-rel">{centerLabel}</span>
-          <span className="ft-node-name">기준</span>
+          <span className="ft-node-rel">기준</span>
+          <span className="ft-node-name">{centerLabel}</span>
         </div>
         {spouse && (
           <>
