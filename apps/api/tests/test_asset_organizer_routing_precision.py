@@ -13,14 +13,14 @@ asset_organizer를 후보로 잘못 끼워 넣었다(routing false positive) —
 
 사후 모드 명시적 진입을 위해 "안심상속" 키워드를 추가했다.
 
-빚/채무 관련 질문(예: "상속포기해야 하나요?")은 "빚"이 여전히 정당한
-키워드라 키워드 후보 단계에서는 asset_organizer가 계속 후보에 남는다 —
-이건 의도된 트레이드오프다(실제 재산 규모를 언급하며 상속포기를 묻는
-경우도 있어 "빚" 자체를 빼기는 과하다). 최종적으로 asset_organizer가
-불필요하게 선택되지 않는지는 LLM 분류(Full Pipeline, 후보 2개 이상)에
-달려 있고, 이 환경에는 LLM이 없어(ANTHROPIC_API_KEY 없음) 로컬에서는
-후보 집합까지만 검증한다 — 실제 최종 선택 여부는 production smoke로
-확인했다(작업 보고 참고).
+후속 실측 재현(2차): generic "빚"/"채무" 키워드도 같은 클래스의 문제였다
+— "빚이 많을 것 같은데 상속포기해야 하나요?", "채무가 많아서 한정승인을
+해야 하나요?"처럼 재산 목록화가 아니라 상속포기·한정승인 절차 판단을
+묻는 문장에도 asset_organizer가 후보로 남았고, production에서 LLM도
+걸러내지 못해 실제로 실행까지 됐다(불필요한 실행 확인됨). "빚"/"채무"를
+제거하고 대신 재산·부채 확인·파악 의도가 문구 자체에 명확한 구체 표현
+("빚부터 파악", "빚이 얼마" 등)만 남겼다 — 막연히 "빚이 많다"는 더 이상
+후보가 아니고, "빚부터 파악하고 싶다"는 여전히 후보다.
 """
 
 from __future__ import annotations
@@ -134,15 +134,53 @@ def test_asset_plus_tax_message_keeps_both_as_candidates():
     assert agents == {AgentName.ASSET_ORGANIZER, AgentName.TAX_CALCULATOR}
 
 
-def test_renunciation_question_keeps_asset_organizer_as_keyword_candidate_but_not_alone():
-    """ "빚이 많을 것 같은데 상속포기해야 하나요?"는 "빚" 키워드 때문에
-    asset_organizer도 키워드 후보 단계에는 남는다(의도된 트레이드오프,
-    docstring 참고) — 다만 heir_navigator도 반드시 후보에 있어야 하고,
-    실제 어느 쪽이 최종 선택되는지는 LLM 분류(이 환경엔 없음)에 달려
-    있어 production smoke로 별도 확인한다."""
+def test_renunciation_question_no_longer_matches_asset_organizer():
+    """실측 재현된 후속 버그: 이전엔 generic "빚" 키워드 때문에
+    "빚이 많을 것 같은데 상속포기해야 하나요?"에 asset_organizer가
+    후보로 남아 production에서 LLM도 걸러내지 못하고 실제 실행까지
+    됐다(재산 목록화가 아니라 상속포기 절차 판단을 묻는 문장인데도).
+    "빚"을 의도가 명확한 구체 표현("빚부터 파악" 등)으로 좁힌 뒤로는
+    이 문장이 asset_organizer 후보에서 완전히 빠지고 heir_navigator
+    단독 후보가 돼야 한다."""
     hits = registry.match_keywords("빚이 많을 것 같은데 상속포기해야 하나요?")
-    assert AgentName.HEIR_NAVIGATOR in hits
-    # asset_organizer가 후보에 남는 것 자체는 허용하되(빚=합법적 키워드),
-    # heir_navigator 없이 asset_organizer 혼자만 후보가 되는 회귀는 막는다.
-    if AgentName.ASSET_ORGANIZER in hits:
-        assert AgentName.HEIR_NAVIGATOR in hits
+    assert hits == [AgentName.HEIR_NAVIGATOR]
+
+
+def test_limited_approval_question_no_longer_matches_asset_organizer():
+    """같은 클래스의 버그가 "채무"에도 있었다 — "채무가 많아서 한정승인을
+    해야 하나요?"도 이제 asset_organizer 후보에서 빠지고 heir_navigator
+    단독이어야 한다."""
+    hits = registry.match_keywords("채무가 많아서 한정승인을 해야 하나요?")
+    assert hits == [AgentName.HEIR_NAVIGATOR]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "돌아가신 아버지 빚부터 파악하고 싶어요",
+        "고인에게 빚이 얼마나 있는지 정리하고 싶어요",
+    ],
+)
+def test_debt_inventory_intent_phrases_still_match_asset_organizer(message):
+    """ "빚"을 의도가 명확한 구체 표현으로 좁혔지만, 실제 재산·부채
+    목록화 의도가 담긴 문장("빚부터 파악", "빚이 얼마나")까지 막으면
+    안 된다 — asset_organizer가 여전히 후보여야 한다."""
+    assert AgentName.ASSET_ORGANIZER in registry.match_keywords(message)
+
+
+def test_renunciation_question_routes_to_heir_navigator_alone():
+    """실제 route()로도 확인: 위 두 절차 판단 문장은 asset_organizer가
+    전혀 실행되지 않고 heir_navigator 단독으로 처리돼야 한다."""
+    for msg in (
+        "빚이 많을 것 같은데 상속포기해야 하나요?",
+        "채무가 많아서 한정승인을 해야 하나요?",
+    ):
+        output = router.route(
+            AgentInput(
+                session_id=f"prec-r5-{hash(msg)}",
+                user_message=msg,
+                axis="post_death",
+            )
+        )
+        assert output.agent == AgentName.HEIR_NAVIGATOR
+        assert [c.agent for c in output.contributions] == [AgentName.HEIR_NAVIGATOR]
