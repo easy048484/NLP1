@@ -90,6 +90,19 @@ _NOTARIAL_WILL_TYPE = "notarial"
 # 자체가 확인되지 않는다"라, 요건 판정을 아예 돌지 않고 법정상속 안내로 넘긴다.
 _NO_WILL_TYPE = "none"
 
+# will_type이 미확인일 때, 사용자 메시지에 자필증서 방식이 명백히 드러나 있으면
+# 방식 선택 질문을 다시 하지 않고 바로 handwritten으로 확정한다(되물음 루프
+# 버그 수정). 오탐 방지를 위해 최소·명백한 표현만 deterministic하게 매칭한다 —
+# LLM 분류는 쓰지 않는다. "직접 작성"처럼 애매한 표현은 의도적으로 제외했다.
+_HANDWRITTEN_MESSAGE_MARKERS = ("자필", "직접 손으로 쓴", "손으로 직접 쓴")
+
+
+def _infer_will_type_from_message(user_message: str) -> Optional[str]:
+    if any(marker in user_message for marker in _HANDWRITTEN_MESSAGE_MARKERS):
+        return _HANDWRITTEN_WILL_TYPE
+    return None
+
+
 # intent(이용 목적): "review"(기본, 이미 있는 유언장/대본 점검) | "prepare"(아직
 # 작성 전, 준비 가이드). full 지원 방식(handwritten/unknown/recording)에서만 의미가
 # 있다 — notarial/secret/oral은 애초에 review/prepare 구분 없이 안내만 한다.
@@ -917,7 +930,13 @@ def _run_pipeline(payload: AgentInput) -> AgentOutput:
     will_type = state.will_type
 
     if will_type is None:
-        return _will_type_question_output(state)
+        inferred = _infer_will_type_from_message(payload.user_message)
+        if inferred is None:
+            return _will_type_question_output(state)
+        # context/네임스페이스에 명시값이 없을 때만 여기 도달하므로, 추론값이
+        # 기존 명시값을 덮어쓸 일은 없다(명시값 우선 원칙 유지).
+        state.will_type = inferred
+        will_type = inferred
 
     if will_type not in _valid_will_type_values():
         return _will_type_question_output(
