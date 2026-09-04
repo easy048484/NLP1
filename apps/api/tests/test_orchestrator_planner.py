@@ -159,6 +159,75 @@ def test_llm_selection_narrows_candidates(monkeypatch):
     assert plan.layers == [[AgentName.TAX_CALCULATOR]]
 
 
+def test_decedent_estate_routing_scenarios():
+    """decedent_estate example_utterances 보강(자필/직접 작성/녹음 유언) 관련
+    회귀 — 5개 라우팅 시나리오. 응답 문구가 아니라 agents/path/층 순서 등
+    라우팅 계약만 검증한다. ANTHROPIC_API_KEY 는 conftest 가 지우므로 후보
+    2개 이상(#4)은 LLM 실패 폴백(키워드 후보 전부)을 탄다."""
+
+    # 1) 자필 표현이 문장에 명확 — 키워드 "유언장" 단독 후보로 Standard.
+    #    PR #92(will_type 되물음 방지)는 agent.py 쪽 동작이라 이 테스트의
+    #    범위(라우팅) 밖이지만, decedent_estate 로 정확히 도달하는지는 확인한다.
+    plan = planner.classify(
+        "자필로 쓴 유언장이 있는데 효력이 있나요?",
+        pending_handoff=None,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert plan.path == "standard"
+    assert plan.layers == [[AgentName.DECEDENT_ESTATE]]
+
+    # 2) "유언장을 직접 쓰려고" — 마찬가지로 "유언장" 키워드 단독 후보.
+    plan = planner.classify(
+        "유언장을 직접 쓰려고 하는데 형식 요건이 궁금해요",
+        pending_handoff=None,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert plan.path == "standard"
+    assert plan.layers == [[AgentName.DECEDENT_ESTATE]]
+
+    # 3) 녹음 유언 — "유언" 키워드로 여전히 decedent_estate 단독 후보.
+    plan = planner.classify(
+        "녹음으로 남긴 유언도 효력이 있나요?",
+        pending_handoff=None,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert plan.path == "standard"
+    assert plan.layers == [[AgentName.DECEDENT_ESTATE]]
+
+    # 4) 유언 효력 + 상속세 — 후보 2개(Full). decedent_estate 가 will_status 를
+    #    생산하고 tax_calculator 가 그걸 참고하므로, DAG 상 decedent_estate 층이
+    #    tax_calculator 층보다 먼저 와야 한다.
+    plan = planner.classify(
+        "유언장 효력도 확인하고 상속세도 계산해줘",
+        pending_handoff=None,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert plan.path == "full"
+    assert set(plan.agents) == {AgentName.DECEDENT_ESTATE, AgentName.TAX_CALCULATOR}
+    decedent_layer_idx = next(
+        i for i, layer in enumerate(plan.layers) if AgentName.DECEDENT_ESTATE in layer
+    )
+    tax_layer_idx = next(
+        i for i, layer in enumerate(plan.layers) if AgentName.TAX_CALCULATOR in layer
+    )
+    assert decedent_layer_idx < tax_layer_idx
+
+    # 5) 상속포기 — heir_navigator 단독. decedent_estate 가 섞이면 안 된다.
+    plan = planner.classify(
+        "상속포기는 언제까지 해야 하나요?",
+        pending_handoff=None,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert plan.path == "standard"
+    assert plan.layers == [[AgentName.HEIR_NAVIGATOR]]
+    assert AgentName.DECEDENT_ESTATE not in plan.agents
+
+
 # ------------------------------------------------------------ build_plan
 
 
