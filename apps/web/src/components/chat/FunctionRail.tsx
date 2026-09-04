@@ -13,6 +13,20 @@ interface AgentFunction {
   blurb: string;
   prompt: string;
   axis?: "pre_need" | "post_death";
+  /**
+   * post_death 화면에서 쓸 문구 오버라이드 — axis를 지정하지 않고 두 화면
+   * 모두에 노출하는 기능(예: asset_organizer)에서, 생전/사후 문구가 달라야
+   * 할 때만 채운다.
+   */
+  postDeathBlurb?: string;
+  postDeathPrompt?: string;
+  /**
+   * 클릭 시 현재 axis를 context.mode로 명시해서 보낼지 — asset_organizer처럼
+   * 에이전트 자체가 pre_need/post_death 모드를 구분하는 경우에만 true.
+   * (다른 기능들은 axis를 오케스트레이터 라우팅 힌트로만 쓰고 에이전트
+   * 내부 모드 개념이 없어 해당 없음.)
+   */
+  sendModeContext?: boolean;
 }
 
 const AGENT_FUNCTIONS: AgentFunction[] = [
@@ -20,9 +34,11 @@ const AGENT_FUNCTIONS: AgentFunction[] = [
     key: "asset",
     agent: "asset_organizer",
     name: "자산 정리",
-    blurb: "예금·보험·부동산·연금을 한눈에 모으고 은퇴 자금을 점검",
-    prompt: "가진 자산을 정리하고 싶어요",
-    axis: "pre_need",
+    blurb: "예금·보험·부동산 등 재산과 부채를 한눈에 정리",
+    prompt: "가진 재산과 부채를 미리 정리하고 싶어요",
+    postDeathBlurb: "고인의 재산·부채와 안심상속 조회 결과를 한눈에 정리",
+    postDeathPrompt: "돌아가신 가족의 재산과 부채를 정리하고 싶어요",
+    sendModeContext: true,
   },
   {
     key: "will",
@@ -66,25 +82,35 @@ export function FunctionRail() {
   );
 
   const fns = AGENT_FUNCTIONS.filter((f) => !f.axis || f.axis === axis);
+  const isPostDeath = axis === "post_death";
 
   return (
     <div className="fn-rail" role="group" aria-label="에이전트 기능">
       {fns.map((f) => {
         const active = engaged.has(f.agent);
+        const blurb = isPostDeath && f.postDeathBlurb ? f.postDeathBlurb : f.blurb;
+        const prompt = isPostDeath && f.postDeathPrompt ? f.postDeathPrompt : f.prompt;
         return (
           <button
             key={f.key}
             type="button"
             className={`fn-tile${active ? " fn-tile-active" : ""}`}
             disabled={loading}
-            onClick={() => void send(f.prompt)}
+            onClick={() =>
+              void send(
+                prompt,
+                f.sendModeContext
+                  ? { context: { mode: isPostDeath ? "post_death" : "pre_need" } }
+                  : undefined,
+              )
+            }
           >
             <span className="fn-tile-top">
               <AgentAvatar agent={f.agent} size="sm" />
               {active && <span className="fn-tile-status">진행 중</span>}
             </span>
             <span className="fn-tile-name">{f.name}</span>
-            <span className="fn-tile-blurb">{f.blurb}</span>
+            <span className="fn-tile-blurb">{blurb}</span>
           </button>
         );
       })}
