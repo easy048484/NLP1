@@ -1,51 +1,116 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../lib/appState";
-import { getFamilyGraph } from "../lib/familyGraph";
-import { useIntake } from "../lib/useIntake";
 import {
-  CHILDREN_COUNT_OPTIONS,
-  childrenCountOptionLabel,
-  resumeIntroLine,
-} from "../lib/familyIntakeFlow";
+  addFamilyMember,
+  deleteFamilyMember,
+  ensureFamilyGraph,
+  getFamilyGraph,
+} from "../lib/familyGraph";
 import { FamilyTree } from "../components/FamilyTree";
-import { Button, ChoiceGroup, Eyebrow, GoldRule, YesNo } from "../components/ui";
+import { Button, Eyebrow, GoldRule } from "../components/ui";
+import type { RelationType } from "../types";
 
 /**
- * 가족관계 인테이크 — 시각적 가족트리 + 한 번에 한 질문.
- * 민법 1000조 순서(배우자 → 자녀 → 부모), 30초 해피패스, "나중에" 스킵.
+ * 가족관계 인테이크 — "누구 기준인지"를 화면 맨 위에 못박고(고인/나 이름),
+ * 배우자 → 자녀 → 부모 순서로 이름과 함께 한 명씩 추가한다.
+ *
+ * 이전 버전은 배우자 Y/N · 자녀 몇 명 식의 카운트 퀴즈여서 (1) 누구 기준인지
+ * 헷갈리고 (2) 추상적인 "자녀 1, 자녀 2"만 남았다. 이름을 받으면 이후 상담에서
+ * "첫째분", "배우자분" 처럼 구체적으로 부를 수 있고, 사용자도 자기 가족을
+ * 그리는 감각이 생긴다.
  */
+type Phase = "spouse" | "children" | "parents";
+
+const ORDINAL = ["첫째", "둘째", "셋째", "넷째", "다섯째", "여섯째"];
+
 export function FamilyScreen() {
   const navigate = useNavigate();
-  const { familyGraphId, setFamilyGraphId, familyGraph, setFamilyGraph, axis } = useApp();
+  const { familyGraphId, setFamilyGraphId, familyGraph, setFamilyGraph, axis } =
+    useApp();
 
-  const done = () => navigate(axis === "pre_need" ? "/home" : "/chat");
+  const isPreNeed = axis === "pre_need";
+  const done = () => navigate(isPreNeed ? "/home" : "/chat");
 
-  const refetch = async () => {
-    if (!familyGraphId) return;
-    const res = await getFamilyGraph(familyGraphId);
-    if (res.ok && res.data) setFamilyGraph(res.data);
-  };
+  const [centerName, setCenterName] = useState("");
+  const [phase, setPhase] = useState<Phase>("spouse");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const intake = useIntake({
-    familyGraphId,
-    onFamilyGraphIdChange: (id) => setFamilyGraphId(id),
-    onGraphRefetched: () => void refetch(),
-    onComplete: done,
-  });
+  const [personName, setPersonName] = useState(""); // 배우자·부모 이름 입력
+  const [childName, setChildName] = useState("");
+  const [childMinor, setChildMinor] = useState(false);
 
   const members = familyGraph?.members ?? [];
-  const centerLabel =
-    axis === "pre_need" ? "나" : axis === "post_death" ? "고인" : "기준이 되는 분";
-  const heading =
-    axis === "pre_need"
-      ? "나를 기준으로 가족을 알려주세요"
-      : axis === "post_death"
-        ? "고인을 기준으로 가족을 알려주세요"
-        : "가족을 알려주세요";
-  const resume =
-    intake.history.length === 0 && intake.phase !== "optin" && intake.phase !== "spouse"
-      ? resumeIntroLine(intake.phase, intake.answers)
-      : null;
+  const spouse = members.find((m) => m.relation === "spouse");
+  const children = members.filter((m) => m.relation === "child");
+  const parents = members.filter((m) => m.relation === "parent");
+
+  const centerLabel = centerName.trim() || (isPreNeed ? "나" : "고인");
+  const centerNoun = isPreNeed ? "나" : "고인";
+
+  function defaultName(rel: RelationType): string {
+    if (rel === "spouse") return "배우자";
+    if (rel === "parent") return `${centerNoun}의 부모님`;
+    return `${ORDINAL[children.length] ?? `${children.length + 1}번째`} 자녀`;
+  }
+
+  async function ensureGraph(): Promise<string | null> {
+    if (familyGraphId) return familyGraphId;
+    const res = await ensureFamilyGraph();
+    if (!res.ok || !res.data) {
+      setError(res.errorMessage ?? "가족관계 정보를 저장하지 못했어요.");
+      return null;
+    }
+    setFamilyGraphId(res.data.id);
+    setFamilyGraph(res.data);
+    return res.data.id;
+  }
+
+  async function refetch(id: string) {
+    const res = await getFamilyGraph(id);
+    if (res.ok && res.data) setFamilyGraph(res.data);
+  }
+
+  async function add(
+    relation: RelationType,
+    name: string,
+    is_minor = false,
+  ): Promise<boolean> {
+    setBusy(true);
+    setError(null);
+    const id = await ensureGraph();
+    if (!id) {
+      setBusy(false);
+      return false;
+    }
+    const res = await addFamilyMember(id, {
+      name: name.trim() || defaultName(relation),
+      relation,
+      is_alive: true,
+      is_minor,
+    });
+    if (!res.ok) {
+      setError(res.errorMessage ?? "저장에 실패했어요. 다시 시도해 주세요.");
+      setBusy(false);
+      return false;
+    }
+    await refetch(id);
+    setBusy(false);
+    return true;
+  }
+
+  async function removeMember(memberId: number) {
+    if (!familyGraphId) return;
+    setBusy(true);
+    await deleteFamilyMember(familyGraphId, memberId);
+    await refetch(familyGraphId);
+    setBusy(false);
+  }
+
+  const heading = isPreNeed
+    ? "내 가족을 알려주세요"
+    : "고인의 가족을 알려주세요";
 
   return (
     <div className="onboarding-screen family-screen">
@@ -54,94 +119,233 @@ export function FamilyScreen() {
         <GoldRule />
         <h1>{heading}</h1>
         <p className="onboarding-lede">
-          가족관계증명서를 보며 옮겨 적으셔도 됩니다. 실명은 쓰지 않아도 돼요. 한 번
-          적어 두면 이후 상속세·절차 상담에서 같은 질문을 반복하지 않습니다.
+          아래에 적는 가족은 모두 <strong>{centerNoun} 기준</strong>입니다 —
+          {centerNoun}의 배우자·자녀·부모. 실명 대신 "첫째"처럼 적어도 됩니다.
         </p>
 
+        {/* ── 기준 인물 앵커 ── */}
+        <div className="family-anchor">
+          <label className="family-anchor-label" htmlFor="centerName">
+            {isPreNeed ? "기준: 나" : "누구의 상속인가요?"}
+          </label>
+          <input
+            id="centerName"
+            className="family-anchor-input"
+            value={centerName}
+            onChange={(e) => setCenterName(e.target.value)}
+            placeholder={
+              isPreNeed ? "내 이름 (선택)" : "고인 성함 (선택, 예: 김O수)"
+            }
+          />
+          <p className="family-anchor-hint">
+            {isPreNeed
+              ? "내가 세상을 떠났을 때를 기준으로 준비합니다."
+              : "이분이 상속의 기준입니다. 아래 가족은 이분의 배우자·자녀·부모."}
+          </p>
+        </div>
+
         <div className="family-consent">
-          절차 안내를 위해 가족관계 정보를 받아요. 원문은 저장하지 않고, 주민번호 같은
-          민감정보는 자동으로 지웁니다.
+          절차 안내를 위해 가족관계 정보를 받아요. 원문은 저장하지 않고, 주민번호
+          같은 민감정보는 자동으로 지웁니다.
         </div>
 
         <FamilyTree members={members} centerLabel={centerLabel} />
 
+        {error && (
+          <p className="auth-error" role="alert">
+            ⚠ {error}
+          </p>
+        )}
+
         <div className="intake-panel">
-          {intake.error && (
-            <p className="auth-error" role="alert">
-              ⚠ {intake.error} 다시 시도해 주세요.
-            </p>
+          {/* 1) 배우자 */}
+          {phase === "spouse" && (
+            <>
+              <p className="intake-question">
+                {centerNoun === "나" ? "배우자가 있으세요?" : `${centerNoun}의 배우자가 생존해 계신가요?`}
+              </p>
+              {!spouse ? (
+                <div className="family-add-row">
+                  <input
+                    className="family-name-input"
+                    value={personName}
+                    onChange={(e) => setPersonName(e.target.value)}
+                    placeholder="배우자 성함 (선택)"
+                    disabled={busy}
+                  />
+                  <Button
+                    disabled={busy}
+                    onClick={async () => {
+                      if (await add("spouse", personName)) {
+                        setPersonName("");
+                        setPhase("children");
+                      }
+                    }}
+                  >
+                    배우자 추가
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => {
+                      setPersonName("");
+                      setPhase("children");
+                    }}
+                  >
+                    배우자 없음
+                  </Button>
+                </div>
+              ) : (
+                <div className="family-added-line">
+                  <span>
+                    배우자 · <strong>{spouse.name}</strong>
+                  </span>
+                  <button
+                    type="button"
+                    className="family-remove"
+                    disabled={busy}
+                    onClick={() => removeMember(spouse.id)}
+                  >
+                    삭제
+                  </button>
+                  <Button disabled={busy} onClick={() => setPhase("children")}>
+                    다음
+                  </Button>
+                </div>
+              )}
+            </>
           )}
 
-          {resume && <p className="intake-resume">{resume}</p>}
-
-          {intake.phase === "optin" && (
+          {/* 2) 자녀 */}
+          {phase === "children" && (
             <>
-              <p className="intake-question">가족 구성원을 지금 알려주시겠어요?</p>
-              <div className="intake-actions">
-                <Button onClick={intake.begin}>지금 알려드릴게요</Button>
-                <Button variant="ghost" onClick={intake.decline}>
-                  나중에 할게요
+              <p className="intake-question">자녀를 한 분씩 추가해 주세요</p>
+              {children.length > 0 && (
+                <ul className="family-list">
+                  {children.map((c, i) => (
+                    <li key={c.id}>
+                      <span>
+                        {ORDINAL[i] ?? `${i + 1}번째`} · <strong>{c.name}</strong>
+                        {c.is_minor && (
+                          <span className="family-tag">미성년</span>
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        className="family-remove"
+                        disabled={busy}
+                        onClick={() => removeMember(c.id)}
+                      >
+                        삭제
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="family-add-row">
+                <input
+                  className="family-name-input"
+                  value={childName}
+                  onChange={(e) => setChildName(e.target.value)}
+                  placeholder={`${ORDINAL[children.length] ?? `${children.length + 1}번째`} 자녀 성함 (선택)`}
+                  disabled={busy}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                      void (async () => {
+                        if (await add("child", childName, childMinor)) {
+                          setChildName("");
+                          setChildMinor(false);
+                        }
+                      })();
+                    }
+                  }}
+                />
+                <label className="family-minor-check">
+                  <input
+                    type="checkbox"
+                    checked={childMinor}
+                    onChange={(e) => setChildMinor(e.target.checked)}
+                    disabled={busy}
+                  />
+                  미성년
+                </label>
+                <Button
+                  disabled={busy}
+                  onClick={async () => {
+                    if (await add("child", childName, childMinor)) {
+                      setChildName("");
+                      setChildMinor(false);
+                    }
+                  }}
+                >
+                  자녀 추가
                 </Button>
+              </div>
+              <div className="intake-actions">
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() =>
+                    setPhase(children.length === 0 ? "parents" : "children")
+                  }
+                >
+                  {children.length === 0 ? "자녀 없음" : "자녀 다 입력했어요"}
+                </Button>
+                {children.length > 0 && (
+                  <Button disabled={busy} onClick={done}>
+                    완료하고 상담 시작
+                  </Button>
+                )}
               </div>
             </>
           )}
 
-          {intake.phase === "spouse" && (
+          {/* 3) 부모 (자녀가 없을 때만 상속 순위상 의미가 있음) */}
+          {phase === "parents" && (
             <>
-              <p className="intake-question">{intake.question}</p>
-              <YesNo onSelect={intake.answerSpouse} disabled={intake.busy} />
+              <p className="intake-question">
+                {centerNoun === "나" ? "부모님이 생존해 계세요?" : `${centerNoun}의 부모님이 생존해 계신가요?`}
+              </p>
+              {parents.length === 0 ? (
+                <div className="family-add-row">
+                  <input
+                    className="family-name-input"
+                    value={personName}
+                    onChange={(e) => setPersonName(e.target.value)}
+                    placeholder="부모님 성함 (선택)"
+                    disabled={busy}
+                  />
+                  <Button
+                    disabled={busy}
+                    onClick={async () => {
+                      if (await add("parent", personName)) {
+                        setPersonName("");
+                        done();
+                      }
+                    }}
+                  >
+                    부모님 추가
+                  </Button>
+                  <Button variant="ghost" disabled={busy} onClick={done}>
+                    안 계세요
+                  </Button>
+                </div>
+              ) : (
+                <div className="family-added-line">
+                  <span>
+                    부모 · <strong>{parents[0].name}</strong>
+                  </span>
+                  <Button disabled={busy} onClick={done}>
+                    완료하고 상담 시작
+                  </Button>
+                </div>
+              )}
             </>
-          )}
-
-          {intake.phase === "children_count" && (
-            <>
-              <p className="intake-question">{intake.question}</p>
-              <ChoiceGroup<number>
-                options={CHILDREN_COUNT_OPTIONS.map((n) => ({
-                  label: childrenCountOptionLabel(n),
-                  value: n,
-                }))}
-                onSelect={intake.answerChildrenCount}
-                disabled={intake.busy}
-              />
-            </>
-          )}
-
-          {intake.phase === "children_minor" && (
-            <>
-              <p className="intake-question">{intake.question}</p>
-              <ChoiceGroup<number>
-                options={Array.from(
-                  { length: (intake.answers.childrenCount ?? 0) + 1 },
-                  (_, i) => ({ label: `${i}명`, value: i }),
-                )}
-                onSelect={intake.answerChildrenMinor}
-                disabled={intake.busy}
-              />
-            </>
-          )}
-
-          {intake.phase === "parents" && (
-            <>
-              <p className="intake-question">{intake.question}</p>
-              <YesNo onSelect={intake.answerParents} disabled={intake.busy} />
-            </>
-          )}
-
-          {intake.history.length > 0 && (
-            <ul className="intake-history">
-              {intake.history.map((h, i) => (
-                <li key={i}>
-                  <span>{h.question}</span>
-                  <strong>{h.answer}</strong>
-                </li>
-              ))}
-            </ul>
           )}
         </div>
 
         <button type="button" className="onboarding-skip" onClick={done}>
-          건너뛰고 상담 시작
+          나중에 하고 상담 먼저 시작
         </button>
       </div>
     </div>
