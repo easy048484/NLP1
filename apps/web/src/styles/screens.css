@@ -205,6 +205,7 @@
   display: flex;
   gap: var(--sp-2);
   flex-wrap: wrap;
+  margin-top: var(--sp-3);
 }
 .intake-history {
   list-style: none;

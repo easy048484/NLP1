@@ -282,16 +282,15 @@ export function FamilyScreen() {
                 </Button>
               </div>
               <div className="intake-actions">
-                <Button
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() =>
-                    setPhase(children.length === 0 ? "parents" : "children")
-                  }
-                >
-                  {children.length === 0 ? "자녀 없음" : "자녀 다 입력했어요"}
-                </Button>
-                {children.length > 0 && (
+                {children.length === 0 ? (
+                  <Button
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => setPhase("parents")}
+                  >
+                    자녀 없음
+                  </Button>
+                ) : (
                   <Button disabled={busy} onClick={done}>
                     완료하고 상담 시작
                   </Button>
@@ -345,7 +344,7 @@ export function FamilyScreen() {
         </div>
 
         <button type="button" className="onboarding-skip" onClick={done}>
-          나중에 하고 상담 먼저 시작
+          건너뛰고 상담 시작하기
         </button>
       </div>
     </div>
