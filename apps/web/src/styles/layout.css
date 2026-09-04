@@ -61,10 +61,6 @@
   background: var(--surface-sunken);
   color: var(--ink);
 }
-.app-header-btn.dev-toggle.on {
-  background: var(--brand-navy);
-  color: var(--ink-inverse);
-}
 
 /* ===== 본문 3-zone ===== */
 .app-body {

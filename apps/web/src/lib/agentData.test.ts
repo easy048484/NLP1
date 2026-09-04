@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  hasAssetAmountRequest,
   hasPendingQuestions,
+  parseAssetAmountRequest,
   parsePendingQuestions,
   parseShares,
   parseSignals,
@@ -249,5 +251,62 @@ describe("parseTaxResult / parseShares — 다른 agent namespace 오염 방지"
       },
     };
     expect(parseTaxResult(data)?.final_amount).toBe(100);
+  });
+});
+
+/**
+ * asset_organizer가 특정 카테고리 금액을 되묻는 중인지(state.pending_amounts)
+ * 확인하는 파서. 금액 입력 위젯(AmountInputCard)을 언제 보여줄지 결정한다.
+ */
+describe("parseAssetAmountRequest / hasAssetAmountRequest", () => {
+  it("pending_amounts 첫 항목이 asset_value면 유형 라벨을 돌려준다", () => {
+    const data = {
+      asset_organizer: {
+        pending_amounts: [
+          { kind: "asset_value", asset_type: "예금", segment: "예금", reason: "예금 금액이 언급되지 않음" },
+        ],
+      },
+    };
+    expect(parseAssetAmountRequest(data, "asset_organizer")).toEqual({
+      kind: "asset_value",
+      label: "예금",
+    });
+    expect(hasAssetAmountRequest(data, "asset_organizer")).toBe(true);
+  });
+
+  it("liability_value면 liability_type을 라벨로 쓴다", () => {
+    const data = {
+      asset_organizer: {
+        pending_amounts: [
+          { kind: "liability_value", liability_type: "대출", segment: "대출", reason: "대출 금액이 언급되지 않음" },
+        ],
+      },
+    };
+    expect(parseAssetAmountRequest(data, "asset_organizer")).toEqual({
+      kind: "liability_value",
+      label: "대출",
+    });
+  });
+
+  it("pending_amounts가 비어 있으면 null", () => {
+    const data = { asset_organizer: { pending_amounts: [] } };
+    expect(parseAssetAmountRequest(data, "asset_organizer")).toBeNull();
+    expect(hasAssetAmountRequest(data, "asset_organizer")).toBe(false);
+  });
+
+  it("agentKey가 없으면(legacy 호출) null — 다른 agent namespace로 새지 않는다", () => {
+    const data = {
+      asset_organizer: {
+        pending_amounts: [{ kind: "asset_value", asset_type: "예금" }],
+      },
+    };
+    expect(parseAssetAmountRequest(data)).toBeNull();
+  });
+
+  it("다른 agent의 namespace에 pending_amounts가 있어도 자기 것이 아니면 안 읽는다", () => {
+    const data = {
+      asset_organizer: { pending_amounts: [{ kind: "asset_value", asset_type: "예금" }] },
+    };
+    expect(parseAssetAmountRequest(data, "tax_calculator")).toBeNull();
   });
 });

@@ -118,8 +118,8 @@
   --motion-slow: 320ms ease;
 
   /* ---- 레이아웃 ---- */
-  --chat-measure: 42em; /* 대화 말풍선 가독 줄길이 상한 */
-  --shell-max: 1440px;
+  --chat-measure: 48em; /* 대화 말풍선 가독 줄길이 상한 */
+  --shell-max: 1600px;
   --context-panel-w: 340px;
   --schedule-panel-w: 320px;
 }

@@ -154,7 +154,19 @@ _INSURANCE_KEYWORDS = ("보험",)
 # "있고"는 콤마 없이 자산·부채를 나열할 때 흔한 연결어("예금 1억 있고 대출
 # 3천만원 있어요") — 안 자르면 한 세그먼트에 숫자가 두 개 이상 섞여
 # _parse_amount가 둘을 합산해버리는 실측 버그가 있었다.
-_SEGMENT_SPLIT_RE = re.compile(r"(?<!\d)[.](?!\d)|(?<!\d),(?!\d)|、|그리고|또한|있고")
+# "(?<=없)고"는 "주식은 없고 펀드는 1000만원"처럼 "없고"로 이어지는 문장을
+# 나눈다 — "있고"와 달리 "고" 앞의 "없"까지 통째로 지우면 그 세그먼트의
+# 부정 신호(_SEGMENT_NEGATION_RE가 찾는 "없")가 함께 사라져 뒤의
+# asset_absent 판정이 불가능해진다. lookbehind로 "고" 한 글자만 구분자로
+# 삼아 "없"은 앞 세그먼트에 남긴다(D-01).
+_SEGMENT_SPLIT_RE = re.compile(
+    r"(?<!\d)[.](?!\d)|(?<!\d),(?!\d)|、|그리고|또한|있고|(?<=없)고"
+)
+#: 순수 조사만 남았는지 확인 — "주식,"처럼 콤마로 나열된 세그먼트가 키워드
+#: 자체 그대로("주식")이거나 조사만 붙었으면("자동차는") 서술어 없는 "맨
+#: 명사" 나열로 보고, 뒤에 나오는 부정 표현이 이 나열 전체에 걸리는지
+#: 판단하는 데 쓴다(D-01, _regex_extract의 bare_buffer 참고).
+_PARTICLE_ONLY_RE = re.compile(r"^[은는이가도\s]*$")
 
 
 def _match_asset_type(segment: str) -> Optional[AssetType]:
@@ -162,6 +174,32 @@ def _match_asset_type(segment: str) -> Optional[AssetType]:
         if any(keyword in segment for keyword in keywords):
             return asset_type
     return None
+
+
+def _match_all_asset_types(segment: str) -> list[tuple[AssetType, str]]:
+    """세그먼트 안에서 매칭되는 모든 자산 유형을 (유형, 실제 매칭된 키워드)
+    쌍으로 돌려준다. "주식과 펀드는 없어요"처럼 부정 표현 하나가 콤마 없이
+    유형 두 개를 한 세그먼트 안에서 함께 가리키는 경우, 기존
+    _match_asset_type(첫 매칭만 반환)로는 두 번째 유형을 통째로 놓친다
+    (D-01)."""
+    matches: list[tuple[AssetType, str]] = []
+    for asset_type, keywords in _ASSET_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in segment:
+                matches.append((asset_type, keyword))
+                break
+    return matches
+
+
+def _is_bare_type_segment(segment: str, keyword: str) -> bool:
+    """세그먼트가 서술어 없이 유형 이름(+조사)만 있는 "맨 명사" 나열인지
+    판단한다. "주식, 펀드, 자동차, 퇴직연금, 보험은 없어요."처럼 쉼표로
+    나열된 항목들은 각자 분리된 세그먼트("주식", "펀드", ...)가 되지만
+    자신은 부정 표현을 담고 있지 않다 — 나열 맨 끝에 오는 서술어(마지막
+    항목의 "~은 없어요")가 전체 나열에 걸리는지 판단하려면 먼저 이런 맨
+    명사 세그먼트를 구분해야 한다(D-01)."""
+    residual = segment.replace(keyword, "", 1)
+    return bool(_PARTICLE_ONLY_RE.fullmatch(residual))
 
 
 def _regex_extract(text: str) -> tuple[ExtractionResult, list[str]]:
@@ -174,8 +212,44 @@ def _regex_extract(text: str) -> tuple[ExtractionResult, list[str]]:
     missing: list[dict[str, Any]] = []
     unresolved: list[str] = []
 
+    # "주식, 펀드, 자동차, 퇴직연금, 보험은 없어요."처럼 쉼표로 나열된 맨
+    # 명사 세그먼트("주식", "펀드", ...)는 그 자체로는 부정 표현이 없어
+    # asset_absent로 즉시 판단할 수 없다 — 나열 끝에 오는 서술어("보험은
+    # 없어요")가 나와야만 앞선 나열 전체가 부정된 것인지 알 수 있다. 그래서
+    # 판단을 뒤로 미루고 bare_buffer에 쌓아 둔다(D-01). 중간에 금액이 있는
+    # 세그먼트나 유형을 못 알아본 세그먼트가 끼면 나열이 끊긴 것이므로,
+    # 그 시점까지 쌓인 항목은 부정될 기회를 잃은 것으로 보고 기존처럼
+    # "금액 미확인" 재질문 대상으로 되돌린다(flush_as_missing) — 조용한
+    # 실패 금지 원칙을 유지하면서 나열 해석에서만 예외를 둔다.
+    bare_buffer: list[tuple[str, AssetType]] = []
+
+    def flush_as_missing() -> None:
+        for seg, atype in bare_buffer:
+            missing.append(
+                {
+                    "kind": "asset_value",
+                    "asset_type": atype,
+                    "segment": seg,
+                    "reason": f"{atype} 금액이 언급되지 않음",
+                }
+            )
+        bare_buffer.clear()
+
+    def flush_as_absent() -> None:
+        for seg, atype in bare_buffer:
+            missing.append(
+                {"kind": "asset_absent", "asset_type": atype, "segment": seg}
+            )
+        bare_buffer.clear()
+
     for segment in segments:
+        is_negated = bool(_SEGMENT_NEGATION_RE.search(segment))
+
         if any(keyword in segment for keyword in _INSURANCE_KEYWORDS):
+            if is_negated:
+                flush_as_absent()
+            else:
+                flush_as_missing()
             amount = _parse_amount(segment)
             insurance_tags.append(
                 InsuranceTag(
@@ -186,18 +260,28 @@ def _regex_extract(text: str) -> tuple[ExtractionResult, list[str]]:
             )
             continue
 
-        asset_type = _match_asset_type(segment)
-        if asset_type is None:
+        matched_types = _match_all_asset_types(segment)
+        if not matched_types:
+            flush_as_missing()
             unresolved.append(segment)
             continue
 
         amount = _parse_amount(segment)
-        if amount is None:
-            if _SEGMENT_NEGATION_RE.search(segment):
-                # "예금은 없어요" — 유형은 있는데 금액을 모르는 게 아니라
-                # 그 유형 자체가 없다는 확정 답변이다. missing(금액 재질문
-                # 대상)으로 보내면 방금 "없다"고 답한 유형의 금액을 되묻는
-                # 모순이 생긴다 — absent로 표시해 카테고리만 확인 처리한다.
+        if amount is not None:
+            # 금액이 있는 세그먼트가 나오면 그 전까지 쌓인 맨 명사 나열은
+            # 부정으로 끝나지 못한 것 — 기존처럼 금액 재질문 대상으로 되돌린다.
+            flush_as_missing()
+            asset_type = matched_types[0][0]
+            assets.append(Asset(type=asset_type, value=amount))
+            continue
+
+        if is_negated:
+            # "주식과 펀드는 없어요"(한 세그먼트에 유형 2개) 또는 나열 끝의
+            # "보험은 없어요" 같은 서술어 세그먼트 — 여기서 발견된 부정은
+            # 이 세그먼트가 가리키는 유형(들)뿐 아니라, 서술어 없이 먼저
+            # 나열됐던 bare_buffer 항목 전체에도 적용된다.
+            flush_as_absent()
+            for asset_type, _keyword in matched_types:
                 missing.append(
                     {
                         "kind": "asset_absent",
@@ -205,22 +289,35 @@ def _regex_extract(text: str) -> tuple[ExtractionResult, list[str]]:
                         "segment": segment,
                     }
                 )
-                continue
-            # 유형은 확인됐지만 금액이 없다. Asset.value는 engine.simulate()의
-            # 잔액 계산에 직접 쓰이므로, InsuranceTag와 달리 값을 지어내면
-            # 시뮬레이션 결과가 조용히 틀려진다 — 그래서 Asset을 만들지 않고
-            # 후속 질문 대상으로만 남긴다.
-            missing.append(
-                {
-                    "kind": "asset_value",
-                    "asset_type": asset_type,
-                    "segment": segment,
-                    "reason": f"{asset_type} 금액이 언급되지 않음",
-                }
-            )
             continue
 
-        assets.append(Asset(type=asset_type, value=amount))
+        if len(matched_types) == 1 and _is_bare_type_segment(
+            segment, matched_types[0][1]
+        ):
+            # 서술어 없는 맨 명사 세그먼트 — 뒤에 부정 표현이 나올 때까지
+            # 판단을 미룬다.
+            bare_buffer.append((segment, matched_types[0][0]))
+            continue
+
+        # 유형은 확인됐지만 금액이 없고, 부정도 아니고, 맨 명사 나열도
+        # 아니다(예: "집 한 채 있어요"). Asset.value는 engine.simulate()의
+        # 잔액 계산에 직접 쓰이므로, InsuranceTag와 달리 값을 지어내면
+        # 시뮬레이션 결과가 조용히 틀려진다 — 그래서 Asset을 만들지 않고
+        # 후속 질문 대상으로만 남긴다.
+        flush_as_missing()
+        asset_type = matched_types[0][0]
+        missing.append(
+            {
+                "kind": "asset_value",
+                "asset_type": asset_type,
+                "segment": segment,
+                "reason": f"{asset_type} 금액이 언급되지 않음",
+            }
+        )
+
+    # 나열이 부정으로 끝나지 못하고 문장이 끝났다("주식, 펀드" 뒤에 아무
+    # 서술어도 안 옴) — 기존처럼 개별 금액 재질문 대상으로 처리한다.
+    flush_as_missing()
 
     status: Literal["ok", "needs_clarification"] = (
         "needs_clarification" if missing or unresolved else "ok"
