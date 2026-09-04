@@ -139,6 +139,15 @@ _PARSE_FAILED_REPLY = (
     "말씀해주신 내용을 정확히 분류하지 못했어요. 어떤 자산·부채인지, 금액까지 "
     "확인되는지 아니면 존재만 확인되는지 다시 한번 말씀해주시겠어요?"
 )
+#: "자산 정리하고 싶어요"처럼 시작 의사만 있고 구체적인 자산 항목이 없는
+#: 첫 턴 — 정규식·LLM 둘 다 유형 자체를 못 알아본 게 당연하다(애초에 유형을
+#: 말하지 않았으니까). 이 경우까지 _PARSE_FAILED_REPLY로 "다시 말씀해주세요"
+#: 재질문하면 진입 UX가 막힌다 — 대신 카테고리 선택 UI로 바로 보낸다.
+#: `awaiting_category_selection`은 이번 턴 응답에만 실어 보내는 신호이지
+#: 저장되는 상태가 아니다(_empty_state()의 키 목록에 없어 다음 턴
+#: _load_state()가 그대로 걸러낸다) — 프론트가 카테고리를 선택해 보내는
+#: 다음 턴은 실제 유형 키워드가 담긴 문장이라 이 분기를 다시 타지 않는다.
+_CATEGORY_SELECT_PROMPT = "가지고 계신 자산을 선택해주세요. 여러 개 선택할 수 있어요."
 #: 일부는 구조화됐지만 나머지는 이해 못한 경우(부분 성공) — 이미 반영된
 #: 항목은 그대로 두고, 다음 안내에 짧은 안내만 덧붙인다. 전체를 재질문
 #: 상태로 되돌리면 이미 확인된 항목까지 다시 물어보는 것처럼 보여
@@ -978,6 +987,9 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
         # 것처럼 넘어가지 않고 실패를 명시적으로 알린다.
         if not found_new_items and has_unresolved_remainder:
             state["pending_categories"] = []
+            if is_first_turn:
+                state["awaiting_category_selection"] = True
+                return _output(state, _CATEGORY_SELECT_PROMPT)
             return _output(state, _PARSE_FAILED_REPLY)
 
     state["pending_categories"] = []

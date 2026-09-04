@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   hasAssetAmountRequest,
+  hasCategorySelectionRequest,
   hasPendingQuestions,
   parseAssetAmountRequest,
   parsePendingQuestions,
+  parseRemainingCategoriesPrompt,
   parseShares,
   parseSignals,
   parseTaxResult,
@@ -308,5 +310,55 @@ describe("parseAssetAmountRequest / hasAssetAmountRequest", () => {
       asset_organizer: { pending_amounts: [{ kind: "asset_value", asset_type: "예금" }] },
     };
     expect(parseAssetAmountRequest(data, "tax_calculator")).toBeNull();
+  });
+});
+
+/**
+ * "자산 정리하고 싶어요"처럼 시작 의사만 있고 구체적 항목이 없을 때
+ * (agent.py의 state.awaiting_category_selection) 카테고리 선택 UI를
+ * 보여줄지 판단하는 파서.
+ */
+describe("hasCategorySelectionRequest", () => {
+  it("awaiting_category_selection이 true면 true", () => {
+    const data = { asset_organizer: { awaiting_category_selection: true } };
+    expect(hasCategorySelectionRequest(data, "asset_organizer")).toBe(true);
+  });
+
+  it("플래그가 없거나 false면 false", () => {
+    expect(hasCategorySelectionRequest({ asset_organizer: {} }, "asset_organizer")).toBe(false);
+    expect(
+      hasCategorySelectionRequest(
+        { asset_organizer: { awaiting_category_selection: false } },
+        "asset_organizer",
+      ),
+    ).toBe(false);
+  });
+
+  it("agentKey가 없으면 false", () => {
+    expect(
+      hasCategorySelectionRequest({ asset_organizer: { awaiting_category_selection: true } }),
+    ).toBe(false);
+  });
+});
+
+/**
+ * 선택 항목 입력 완료 후 남은 미확인 카테고리 일괄 확인
+ * (agent.py의 state.pending_categories) — "네 모두 없어요"/"더 있어요"
+ * 두 버튼 위젯(RemainingCategoriesPrompt)이 쓴다.
+ */
+describe("parseRemainingCategoriesPrompt", () => {
+  it("pending_categories가 있으면 그대로 돌려준다", () => {
+    const data = {
+      asset_organizer: { pending_categories: ["주식", "펀드", "자동차", "퇴직연금", "보험"] },
+    };
+    expect(parseRemainingCategoriesPrompt(data, "asset_organizer")).toEqual({
+      categories: ["주식", "펀드", "자동차", "퇴직연금", "보험"],
+    });
+  });
+
+  it("비어 있으면 null", () => {
+    expect(
+      parseRemainingCategoriesPrompt({ asset_organizer: { pending_categories: [] } }, "asset_organizer"),
+    ).toBeNull();
   });
 });

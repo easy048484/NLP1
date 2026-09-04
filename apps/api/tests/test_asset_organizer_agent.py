@@ -1226,42 +1226,85 @@ def test_post_death_full_parse_failure_returns_explicit_reask_without_silent_dro
     LLM 둘 다 이 문장에서 아무 자산 유형도 못 알아보면 — Round 11까지는
     이 상태가 조용히 다음 체크리스트 질문으로 넘어가면서 사용자가 방금 한
     답이 아무 흔적 없이 사라졌다. Round 12 fail-safe: 성공한 것처럼
-    넘어가지 않고 명시적으로 재질문한다."""
+    넘어가지 않고 명시적으로 재질문한다.
+
+    ⚠️ 첫 턴이 아니어야 한다 — 첫 턴의 전체 파싱 실패는 이제 카테고리
+    선택 UX(is_first_turn 분기)로 간다(아래
+    test_first_turn_full_parse_failure_offers_category_selection 참고).
+    이 테스트는 Round 12 재질문 자체(대화 도중의 파싱 실패)를 검증하는
+    것이라 먼저 한 카테고리를 확정해 첫 턴이 아니게 만든다."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
-    output = agent.run(
+    state = agent.run(
         AgentInput(
             session_id="fs1",
-            user_message="OO은행에서 안내받은 내용이 있는데 정확히는 잘 모르겠어요",
+            user_message="예금 3천만원 있어요",
             context={"mode": "post_death"},
+        )
+    ).data[STATE_KEY]
+
+    output = agent.run(
+        _continue(
+            "fs1",
+            "OO은행에서 안내받은 내용이 있는데 정확히는 잘 모르겠어요",
+            state,
         )
     )
 
     assert output.reply == agent._PARSE_FAILED_REPLY
+    new_state = output.data[STATE_KEY]
+    # 이미 확정된 예금은 그대로 유지되고, 이번 턴에 이해 못한 내용이
+    # 조용히 "없음"으로 둔갑하지 않는다.
+    assert any(a["type"] == "예금" for a in new_state["assets"])
+    assert new_state["status"] == "collecting"
+
+
+def test_first_turn_full_parse_failure_offers_category_selection(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """자산정리 진입 UX 개선: "자산 정리하고 싶어요"처럼 시작 의사만 있고
+    구체적인 자산 항목이 없으면(정규식·LLM 둘 다 유형을 못 알아봄), 첫
+    턴에 한해 _PARSE_FAILED_REPLY로 재질문하지 않고 카테고리 선택 UI로
+    바로 보낸다 — awaiting_category_selection 플래그가 프론트에 이번
+    턴에만 실리는 신호다(다음 턴에는 다시 나타나지 않아야 한다)."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    output = agent.run(
+        AgentInput(session_id="cs1", user_message="자산 정리하고 싶어요")
+    )
+
+    assert output.reply == agent._CATEGORY_SELECT_PROMPT
     state = output.data[STATE_KEY]
-    # 아무 항목도 조용히 확정되지 않았어야 한다 — "이해 못함"을 "없음"으로
-    # 둔갑시키지 않는다.
+    assert state.get("awaiting_category_selection") is True
     assert state["assets"] == []
     assert state["checked_categories"] == []
     assert state["status"] == "collecting"
+
+    # 다음 턴(선택 완료 후 자연어로 제출)에는 이 신호가 다시 뜨면 안 된다.
+    output2 = agent.run(_continue("cs1", "예금·적금을 정리할게요.", state))
+    assert output2.data[STATE_KEY].get("awaiting_category_selection") is None
 
 
 def test_pre_need_full_parse_failure_also_gets_explicit_reask(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """같은 조용한 실패 방어는 사후 모드 전용이 아니다 — _merge_extraction()
-    자체의 수정이라 생전 모드(기본 모드)에서도 동일하게 적용돼야 한다."""
+    자체의 수정이라 생전 모드(기본 모드)에서도 동일하게 적용돼야 한다.
+    (첫 턴이 아니어야 한다 — 첫 턴은 카테고리 선택 UX로 간다.)"""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
+    state = agent.run(
+        AgentInput(session_id="fs2", user_message="예금 3천만원 있어요")
+    ).data[STATE_KEY]
+
     output = agent.run(
-        AgentInput(
-            session_id="fs2",
-            user_message="음... 그게 좀 애매한데 뭐라고 말씀드려야 할지 모르겠네요",
+        _continue(
+            "fs2", "음... 그게 좀 애매한데 뭐라고 말씀드려야 할지 모르겠네요", state
         )
     )
 
     assert output.reply == agent._PARSE_FAILED_REPLY
-    assert output.data[STATE_KEY]["assets"] == []
+    assert any(a["type"] == "예금" for a in output.data[STATE_KEY]["assets"])
 
 
 def test_post_death_llm_unavailable_but_regex_understands_message_normally(
@@ -1348,19 +1391,29 @@ def test_post_death_disclosure_llm_exception_and_general_extractor_also_fails(
 ):
     """우선순위 C 재확인: extract_disclosures()가 예외로 실패하고, 폴백한
     일반 추출기의 자체 LLM 호출도(같은 장애로) 실패하면서 정규식도 이
-    문장에서 유형을 못 알아보면 — 명시적 재질문으로 수렴해야 한다."""
+    문장에서 유형을 못 알아보면 — 명시적 재질문으로 수렴해야 한다.
+    (첫 턴이 아니어야 한다 — 첫 턴은 카테고리 선택 UX로 간다. 예금
+    확정은 정규식만으로 되므로 fake LLM exception과 무관하다.)"""
     _install_fake_llm(monkeypatch, exc=TimeoutError("network timeout"))
 
-    output = agent.run(
+    state = agent.run(
         AgentInput(
             session_id="fs6",
-            user_message="OO은행에서 안내받은 내용이 있는데 정확히는 잘 모르겠어요",
+            user_message="예금 3천만원 있어요",
             context={"mode": "post_death"},
+        )
+    ).data[STATE_KEY]
+
+    output = agent.run(
+        _continue(
+            "fs6",
+            "OO은행에서 안내받은 내용이 있는데 정확히는 잘 모르겠어요",
+            state,
         )
     )
 
     assert output.reply == agent._PARSE_FAILED_REPLY
-    assert output.data[STATE_KEY]["assets"] == []
+    assert any(a["type"] == "예금" for a in output.data[STATE_KEY]["assets"])
 
 
 def test_parse_failure_does_not_mark_any_category_checked():

@@ -96,17 +96,66 @@ describe("AgentCards — asset_organizer 금액 입력 위젯", () => {
     expect(render("asset_organizer", data, "questions")).toContain("대출 금액");
   });
 
-  it("pending_amounts가 비어 있고 pending_categories만 있으면 기존 선택지 UI를 그대로 쓴다", () => {
+  it("pending_amounts가 비어 있고 pending_categories만 있으면 남은 카테고리 일괄 확인 위젯을 쓴다", () => {
     const data = {
       asset_organizer: { pending_amounts: [], pending_categories: ["주식", "펀드"] },
     };
     const html = render("asset_organizer", data, "questions");
     expect(html).toContain("주식, 펀드");
-    expect(html).toContain("나머지는 없어요");
+    expect(html).toContain("네, 모두 없어요");
+    expect(html).toContain("더 있어요");
     expect(html).not.toContain("이 금액으로 답하기");
   });
 
   it("아무 후속 질문도 없으면 빈 문자열이다", () => {
     expect(render("asset_organizer", { asset_organizer: {} }, "questions")).toBe("");
+  });
+});
+
+/**
+ * "자산 정리하고 싶어요"처럼 시작 의사만 있고 구체적 항목이 없을 때
+ * (awaiting_category_selection) 카테고리 다중 선택 UI를 렌더한다 —
+ * 파싱 실패 재질문 대신 진입 UX를 뚫어주는 게 목적이라 다른 후속
+ * 질문보다 먼저 확인해야 한다(단, pending_amounts가 있으면 그게 우선).
+ */
+describe("AgentCards — 자산정리 카테고리 선택 위젯", () => {
+  it("awaiting_category_selection이면 전체 카테고리(예금·적금~대출·기타 부채, 기타 포함) 선택 UI를 렌더한다", () => {
+    const data = { asset_organizer: { awaiting_category_selection: true } };
+    const html = render("asset_organizer", data, "questions");
+    expect(html).toContain("여러 개 선택할 수 있어요");
+    expect(html).toContain("예금·적금");
+    expect(html).toContain("주식");
+    expect(html).toContain("펀드");
+    expect(html).toContain("부동산");
+    expect(html).toContain("자동차");
+    expect(html).toContain("퇴직연금");
+    expect(html).toContain("보험");
+    expect(html).toContain("기타");
+    expect(html).toContain("대출·기타 부채");
+    expect(html).toContain("선택 완료");
+  });
+
+  it("pending_amounts가 있으면 카테고리 선택보다 금액 입력 위젯을 우선한다", () => {
+    const data = {
+      asset_organizer: {
+        awaiting_category_selection: true,
+        pending_amounts: [
+          { kind: "asset_value", asset_type: "예금", segment: "예금", reason: "예금 금액이 언급되지 않음" },
+        ],
+      },
+    };
+    const html = render("asset_organizer", data, "questions");
+    expect(html).toContain("이 금액으로 답하기");
+    expect(html).not.toContain("선택 완료");
+  });
+
+  it("더 있어요를 누르기 전에는 남은 카테고리로 좁힌 선택 UI가 안 보인다", () => {
+    const data = {
+      asset_organizer: { pending_categories: ["주식", "펀드", "자동차", "퇴직연금", "보험"] },
+    };
+    const html = render("asset_organizer", data, "questions");
+    // 초기 렌더는 두 버튼만 보여준다 — 선택 그리드는 "더 있어요" 클릭 후에만
+    // 나타난다(useState 초기값 검증, 클릭 시뮬레이션은 SSR로는 불가능).
+    expect(html).not.toContain("선택 완료");
   });
 });
