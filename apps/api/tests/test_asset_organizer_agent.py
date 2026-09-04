@@ -1315,6 +1315,30 @@ def test_first_turn_full_parse_failure_offers_category_selection(
     assert output2.data[STATE_KEY].get("awaiting_category_selection") is None
 
 
+def test_post_death_category_selection_uses_non_ownership_phrasing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """post_death 모드에서 자산정리 타일(FunctionRail)을 눌러 시작 의사만
+    있는 문장이 오면, "가지고 계신"(1인칭 소유 표현) 대신 남은 가족이
+    고인의 재산을 정리하는 상황에 맞는 문구로 카테고리 선택 UI에
+    진입해야 한다."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    output = agent.run(
+        AgentInput(
+            session_id="cs2",
+            user_message="돌아가신 가족의 재산과 부채를 정리하고 싶어요",
+            context={"mode": "post_death"},
+        )
+    )
+
+    assert output.reply == agent._POST_DEATH_CATEGORY_SELECT_PROMPT
+    assert "가지고 계신" not in output.reply
+    state = output.data[STATE_KEY]
+    assert state.get("awaiting_category_selection") is True
+    assert state["mode"] == "post_death"
+
+
 def test_pre_need_full_parse_failure_also_gets_explicit_reask(
     monkeypatch: pytest.MonkeyPatch,
 ):
