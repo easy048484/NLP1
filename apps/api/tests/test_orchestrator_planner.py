@@ -147,7 +147,9 @@ def test_full_pipeline_without_llm_takes_all_keyword_candidates():
 
 def test_llm_selection_narrows_candidates(monkeypatch):
     monkeypatch.setattr(
-        planner, "_llm_select", lambda msg, cands: [AgentName.TAX_CALCULATOR]
+        planner,
+        "_llm_select",
+        lambda msg, cands, **kwargs: [AgentName.TAX_CALCULATOR],
     )
     plan = planner.classify(
         "재산 정리하고 상속세도 궁금해요",
@@ -157,6 +159,273 @@ def test_llm_selection_narrows_candidates(monkeypatch):
     )
     assert plan.path == "standard"
     assert plan.layers == [[AgentName.TAX_CALCULATOR]]
+
+
+# --------------------------------------------------- LLM-first routing (신규)
+#
+# 2026-09-05: planner.classify()가 키워드 후보 개수와 무관하게 매번 LLM을
+# 부르도록 바뀌었다(_llm_select 호출부가 candidates 대신 eligible 전체를
+# 넘김). 여기서는 실제 Anthropic API를 타지 않도록 llm.claude.extract 또는
+# planner._llm_select 자체를 mock한다(conftest의 _no_real_llm_calls가
+# ANTHROPIC_API_KEY를 지우므로, llm_enabled() 게이트를 통과시키려면
+# monkeypatch.setenv로 키를 다시 채워야 한다).
+
+
+def test_llm_called_even_with_zero_keyword_candidates(monkeypatch):
+    calls = []
+
+    def _fake_llm_select(user_message, candidates, **kwargs):
+        calls.append((user_message, candidates))
+        return [AgentName.DECEDENT_ESTATE]
+
+    monkeypatch.setattr(planner, "_llm_select", _fake_llm_select)
+    message = "아버지가 손으로 남긴 문서가 있는데 이게 효력이 있는지 모르겠어요"
+    assert registry.match_keywords(message) == []  # 키워드 후보 0개 확인
+
+    plan = planner.classify(
+        message,
+        pending_handoff=None,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert len(calls) == 1
+    assert plan.path == "standard"
+    assert plan.layers == [[AgentName.DECEDENT_ESTATE]]
+
+
+def test_llm_called_even_with_one_keyword_candidate(monkeypatch):
+    calls = []
+
+    def _fake_llm_select(user_message, candidates, **kwargs):
+        calls.append((user_message, candidates))
+        return [AgentName.TAX_CALCULATOR]
+
+    monkeypatch.setattr(planner, "_llm_select", _fake_llm_select)
+    message = "상속세 얼마예요"
+    assert len(registry.match_keywords(message)) == 1  # 키워드 후보 1개 확인
+
+    plan = planner.classify(
+        message,
+        pending_handoff=None,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert len(calls) == 1
+    assert plan.layers == [[AgentName.TAX_CALCULATOR]]
+
+
+def test_llm_candidates_are_full_eligible_set_excluding_stubs(monkeypatch):
+    """키워드로 후보를 좁히지 않는다 — LLM에는 등록된 전체 에이전트(is_stub
+    제외)가 넘어간다. retirement_planner(is_stub=True, 2026-08-30 데모 제외
+    결정)는 절대 후보에 들어가면 안 된다."""
+    captured = {}
+
+    def _fake_llm_select(user_message, candidates, **kwargs):
+        captured["candidates"] = candidates
+        return [AgentName.HEIR_NAVIGATOR]
+
+    monkeypatch.setattr(planner, "_llm_select", _fake_llm_select)
+    planner.classify(
+        "아무 키워드도 없는 문장입니다",
+        pending_handoff=None,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    eligible = set(captured["candidates"])
+    all_specs = registry.all_specs()
+    assert eligible == {n for n, s in all_specs.items() if not s.is_stub}
+    assert AgentName.RETIREMENT_PLANNER not in eligible
+
+
+def test_classify_prompt_includes_all_eligible_agent_specs():
+    """_classify_prompt 에 전체 eligible 에이전트의 name/description/
+    example_utterances(앞 3개)가 빠짐없이 들어간다."""
+    eligible = [name for name, spec in registry.all_specs().items() if not spec.is_stub]
+    prompt = planner._classify_prompt(eligible)
+    specs = registry.all_specs()
+    for name in eligible:
+        spec = specs[name]
+        assert name.value in prompt
+        assert spec.description in prompt
+        for utterance in spec.example_utterances[:3]:
+            assert utterance in prompt
+
+
+def test_classify_prompt_includes_last_agent_continuation_hint():
+    """#126/#127 F/G 회귀 — last_agent가 있으면 LLM 프롬프트에 "이어가는 것이
+    자연스럽다" 힌트가 들어간다(그렇다고 last_agent가 하드 필터는 아니다 —
+    실제로 다른 주제를 물으면 다른 에이전트를 고르라는 문구도 함께 준다)."""
+    eligible = [AgentName.DECEDENT_ESTATE, AgentName.HEIR_NAVIGATOR]
+    prompt = planner._classify_prompt(eligible, last_agent=AgentName.DECEDENT_ESTATE)
+    assert "decedent_estate" in prompt
+    assert "다른 주제" in prompt
+
+    # last_agent가 후보 목록에 없으면(예: 없거나 stub) 힌트를 넣지 않는다.
+    prompt_without_hint = planner._classify_prompt(eligible, last_agent=None)
+    assert "직전 턴에 답변한 에이전트" not in prompt_without_hint
+
+
+def test_llm_select_receives_last_agent_hint(monkeypatch):
+    """classify()가 last_agent를 _llm_select까지 그대로 전달한다."""
+    captured = {}
+
+    def _fake_llm_select(user_message, candidates, *, last_agent=None):
+        captured["last_agent"] = last_agent
+        return [AgentName.DECEDENT_ESTATE]
+
+    monkeypatch.setattr(planner, "_llm_select", _fake_llm_select)
+    planner.classify(
+        "그럼 요건은 일단 다 맞는 건가?",
+        pending_handoff=None,
+        last_agent=AgentName.DECEDENT_ESTATE,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert captured["last_agent"] == AgentName.DECEDENT_ESTATE
+
+
+def test_llm_select_returns_single_agent(monkeypatch):
+    from llm import claude
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(
+        claude, "extract", lambda **kwargs: {"agents": ["heir_navigator"]}
+    )
+    result = planner._llm_select(
+        "아버지가 돌아가셨는데 뭘 해야 하나요",
+        [AgentName.DECEDENT_ESTATE, AgentName.HEIR_NAVIGATOR],
+    )
+    assert result == [AgentName.HEIR_NAVIGATOR]
+
+
+def test_llm_select_returns_multiple_agents(monkeypatch):
+    from llm import claude
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(
+        claude,
+        "extract",
+        lambda **kwargs: {"agents": ["decedent_estate", "heir_navigator"]},
+    )
+    result = planner._llm_select(
+        "유언장 효력도 확인하고 상속 절차도 알고 싶어",
+        [
+            AgentName.DECEDENT_ESTATE,
+            AgentName.HEIR_NAVIGATOR,
+            AgentName.TAX_CALCULATOR,
+        ],
+    )
+    assert result == [AgentName.DECEDENT_ESTATE, AgentName.HEIR_NAVIGATOR]
+
+
+def test_llm_select_invalid_result_falls_back_to_none(monkeypatch):
+    """후보 밖 이름만 돌려주면(registry에 없거나 이번 후보가 아님) 빈 선택으로
+    간주해 None(호출부 폴백 신호)을 돌려준다."""
+    from llm import claude
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(
+        claude, "extract", lambda **kwargs: {"agents": ["not_a_real_agent"]}
+    )
+    result = planner._llm_select(
+        "아무 말이나", [AgentName.DECEDENT_ESTATE, AgentName.HEIR_NAVIGATOR]
+    )
+    assert result is None
+
+
+def test_llm_select_exception_falls_back_to_none(monkeypatch):
+    from llm import claude
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    def _boom(**kwargs):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(claude, "extract", _boom)
+    result = planner._llm_select(
+        "아무 말이나", [AgentName.DECEDENT_ESTATE, AgentName.HEIR_NAVIGATOR]
+    )
+    assert result is None
+
+
+def test_pending_handoff_never_calls_llm(monkeypatch):
+    def _boom(*args, **kwargs):
+        raise AssertionError("pending_handoff 상태에서는 LLM을 호출하면 안 된다")
+
+    monkeypatch.setattr(planner, "_llm_select", _boom)
+    plan = planner.classify(
+        "아무 말이나",
+        pending_handoff=AgentName.DECEDENT_ESTATE,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert plan.path == "fast"
+    assert plan.layers == [[AgentName.DECEDENT_ESTATE]]
+
+
+def test_pending_reply_agent_never_calls_llm(monkeypatch):
+    def _boom(*args, **kwargs):
+        raise AssertionError("pending_reply_agent 상태에서는 LLM을 호출하면 안 된다")
+
+    monkeypatch.setattr(planner, "_llm_select", _boom)
+    plan = planner.classify(
+        "아무 말이나",
+        pending_handoff=None,
+        pending_reply_agent=AgentName.DECEDENT_ESTATE,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert plan.path == "standard"
+    assert plan.layers == [[AgentName.DECEDENT_ESTATE]]
+
+
+def test_regression_scenarios_route_via_llm_when_available(monkeypatch):
+    """핵심 routing regression 9-C/D/E — LLM-first 배관이 LLM 판단 결과를 그대로
+    Plan에 반영하는지 확인한다. 실제 LLM의 판단 품질(정말 올바른 에이전트를
+    고르는지)은 production smoke로 확인하고, 여기서는 mock으로 파이프라인
+    자체(단일/복수 선택 → Standard/Full 전환, build_plan)만 검증한다."""
+
+    def _select(expected_agents):
+        def _fake(user_message, candidates, **kwargs):
+            return expected_agents
+
+        return _fake
+
+    # C. 자산 정리 — 단일 선택.
+    monkeypatch.setattr(planner, "_llm_select", _select([AgentName.ASSET_ORGANIZER]))
+    plan = planner.classify(
+        "내 재산이 아파트랑 예금이 있는데 한 번 정리하고 싶어",
+        pending_handoff=None,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert plan.path == "standard"
+    assert plan.layers == [[AgentName.ASSET_ORGANIZER]]
+
+    # D. 상속 절차 — 단일 선택.
+    monkeypatch.setattr(planner, "_llm_select", _select([AgentName.HEIR_NAVIGATOR]))
+    plan = planner.classify(
+        "아버지가 돌아가셨는데 이제 뭘 해야 해?",
+        pending_handoff=None,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert plan.path == "standard"
+    assert plan.layers == [[AgentName.HEIR_NAVIGATOR]]
+
+    # E. 복합 질문 — 복수 선택 시 Full Pipeline(build_plan)으로 정상 전환.
+    monkeypatch.setattr(
+        planner,
+        "_llm_select",
+        _select([AgentName.DECEDENT_ESTATE, AgentName.HEIR_NAVIGATOR]),
+    )
+    plan = planner.classify(
+        "유언장 효력도 확인하고 상속 절차도 알고 싶어",
+        pending_handoff=None,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert plan.path == "full"
+    assert set(plan.agents) == {AgentName.DECEDENT_ESTATE, AgentName.HEIR_NAVIGATOR}
 
 
 def test_decedent_estate_routing_scenarios():
