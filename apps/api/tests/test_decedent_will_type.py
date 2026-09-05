@@ -215,6 +215,85 @@ def test_explicit_context_will_type_still_wins_over_message_inference() -> None:
     )  # notarial 은 판정 파이프라인 자체를 안 돈다
 
 
+# ---------------------------------------------------------------------------
+# recording(§1067) 자연어 will_type 추론 (2026-09-05)
+#
+# 실측 재현: "휴대폰을 정리하다가 재산 얘기를 남긴 음성메모를 발견했어요"처럼
+# 이미 명백히 녹음임을 밝혔는데도 방식 선택 질문을 다시 했다.
+# handwritten과 동일 원칙 — 최소·명백한 표현만 deterministic하게 매칭하고
+# LLM은 쓰지 않는다. "메모"/"파일"/"영상"/"말"/"기록" 같은 단어 하나만으로는
+# 추론하지 않는다.
+# ---------------------------------------------------------------------------
+
+
+def test_voice_memo_message_is_inferred_as_recording_without_reasking() -> None:
+    """정확한 production 재현 — 첫 턴부터 recording으로 자동 확정되고, 방식
+    선택 질문 없이 곧장 대본 요청(transcript intake)으로 넘어가야 한다."""
+    payload = AgentInput(
+        session_id="s1",
+        user_message=(
+            "어머니가 돌아가신 뒤 휴대폰을 정리하다가 재산 얘기를 남긴 음성메모를 "
+            "발견했어요. 이런 것도 유언으로 효력이 있는지 확인할 수 있나요?"
+        ),
+    )
+
+    output = decedent_estate.run(payload)
+
+    assert "어떤 형태의 유언인가요?" not in output.reply
+    assert output.data["will_type"] == "recording"
+    assert "requirements" not in output.data  # 아직 대본이 없어 판정을 안 돈다
+    assert output.next_action == NEXT_ACTION_AWAIT_USER
+    assert output.reply.startswith("📼 녹음하신 내용을 그대로 적어주세요")
+
+
+def test_recorded_will_phrase_is_inferred_as_recording() -> None:
+    payload = AgentInput(session_id="s1", user_message="녹음으로 남긴 유언이 있어요")
+
+    output = decedent_estate.run(payload)
+
+    assert "어떤 형태의 유언인가요?" not in output.reply
+    assert output.data["will_type"] == "recording"
+
+
+def test_bare_memo_word_does_not_trigger_recording_inference() -> None:
+    """ "메모"라는 단어 하나만으로는 recording을 추론하지 않는다 — 여전히 방식
+    선택 질문을 유지해야 한다."""
+    payload = AgentInput(session_id="s1", user_message="메모를 발견했어요")
+
+    output = decedent_estate.run(payload)
+
+    assert "어떤 형태의 유언인가요?" in output.reply
+    assert "requirements" not in output.data
+
+
+def test_bare_file_word_does_not_trigger_recording_inference() -> None:
+    """ "파일"이라는 단어 하나만으로는 recording을 추론하지 않는다."""
+    payload = AgentInput(session_id="s1", user_message="파일이 있어요")
+
+    output = decedent_estate.run(payload)
+
+    assert "어떤 형태의 유언인가요?" in output.reply
+    assert "requirements" not in output.data
+
+
+def test_explicit_handwritten_wins_over_voice_memo_phrase_in_message() -> None:
+    """context에 will_type=handwritten이 이미 명시돼 있으면, 문장에 "음성메모"
+    같은 recording 표현이 섞여 있어도 명시값이 우선해야 한다(우선순위 A)."""
+    payload = AgentInput(
+        session_id="s1",
+        user_message="음성메모도 하나 있긴 한데, 이 손으로 쓴 유언장부터 봐주세요.",
+        context={
+            "will_type": "handwritten",
+            "handwriting_answer": "yes",
+            "seal_answer": "seal_or_fingerprint",
+        },
+    )
+
+    output = decedent_estate.run(payload)
+
+    assert output.data["will_type"] == "handwritten"
+
+
 def test_notarial_gives_guidance_and_handoff_without_verification() -> None:
     payload = AgentInput(
         session_id="s1",

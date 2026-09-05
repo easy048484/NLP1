@@ -46,11 +46,15 @@ from .image_reader import PHOTO_FIELD_IDS, extract_will_photo_fields
 from .recording_checker import (
     FORMAL_RECORDING_REQUIREMENT_IDS,
     check_recording_requirements,
+    extract_content as extract_recording_content,
+    extract_witness_accuracy,
+    extract_witness_name,
     validate_recording_confirm_answers,
 )
 from .requirement_checker import (
     RequirementResult,
     check_requirements,
+    extract_name,
     photo_confirm_templates,
     validate_confirm_answers,
 )
@@ -95,10 +99,30 @@ _NO_WILL_TYPE = "none"
 # LLM 분류는 쓰지 않는다. "직접 작성"처럼 애매한 표현은 의도적으로 제외했다.
 _HANDWRITTEN_MESSAGE_MARKERS = ("자필", "직접 손으로 쓴", "손으로 직접 쓴")
 
+# recording(§1067)도 동일 원칙(2026-09-05) — 실측 재현: "휴대폰을 정리하다가
+# 재산 얘기를 남긴 음성메모를 발견했어요"처럼 이미 명백히 녹음임을 밝혔는데도
+# will_type을 다시 물었다. "메모"/"파일"/"영상"/"말"/"기록" 같은 단어 하나만으로는
+# 추론하지 않는다 — UI의 "녹음·영상" 선택값은 구조화 context.will_type 경로
+# (explicit, 아래 우선순위 A)로 이미 처리되므로 자연어 추론을 넓혀서 해결할
+# 대상이 아니다.
+_RECORDING_MESSAGE_MARKERS = (
+    "음성메모",
+    "음성 메모",
+    "녹음 유언",
+    "녹음으로 남긴",
+    "녹음해 둔",
+    "녹음해둔",
+)
+
 
 def _infer_will_type_from_message(user_message: str) -> Optional[str]:
+    """자연어에서 명백한 will_type만 추론한다 (우선순위 C — 이 함수는
+    _run_pipeline에서 state.will_type이 이미 None일 때만, 즉 이번 턴 explicit
+    context.will_type(A)도 저장된 값(B)도 없을 때만 호출된다)."""
     if any(marker in user_message for marker in _HANDWRITTEN_MESSAGE_MARKERS):
         return _HANDWRITTEN_WILL_TYPE
+    if any(marker in user_message for marker in _RECORDING_MESSAGE_MARKERS):
+        return _RECORDING_WILL_TYPE
     return None
 
 
@@ -845,20 +869,43 @@ def _requirement_result_from_stored(stored: dict[str, Any]) -> RequirementResult
     )
 
 
+#: recording의 text-derived 5요건 — handwritten의 date/address/name과 동일한
+#: "이번 턴에 못 찾았다고 이전 판정을 잃지 않는다" 병합이 필요하다(2026-09-05).
+#: 실측 확인: transcript intake gate를 지나 review가 시작된 뒤 증인 참여/결격
+#: 답변만 담긴 짧은 메시지가 오면, 이 5개를 그 메시지만으로 다시 판정해 이미
+#: GREEN이었던 결과가 전부 RED/absent로 되돌아갔다. rec_witness_present/
+#: rec_witness_eligible은 answer 파라미터로만 정해지므로(텍스트를 스캔하지
+#: 않음) 매 턴 다시 계산해도 안전해 이 목록에 없다.
+_RECORDING_TEXT_DERIVED_REQUIREMENT_IDS = (
+    "rec_content",
+    "rec_testator_name",
+    "rec_date",
+    "rec_witness_accuracy",
+    "rec_witness_name",
+)
+
+
 def _preserve_established_requirements(
-    results: dict[str, RequirementResult], stored_requirements: dict[str, Any]
+    results: dict[str, RequirementResult],
+    stored_requirements: dict[str, Any],
+    text_derived_ids: tuple[str, ...] = _TEXT_DERIVED_REQUIREMENT_IDS,
 ) -> dict[str, RequirementResult]:
     """review가 이미 진행 중일 때, 이번 턴 자연어 답변이 "유언장 본문"이 아니라서
-    date/address/name을 못 찾더라도 이전에 이미 확정된 판정을 잃지 않게 한다.
+    text_derived_ids를 못 찾더라도 이전에 이미 확정된 판정을 잃지 않게 한다.
 
     "주소는 본문에 적혀 있습니다" 같은 확인 답변은 실제 주소 값을 담고 있지
     않으므로 이번 턴만 보면 absent다 — 그렇다고 이전 턴에 이미 판정한 결과를
     absent로 되돌리면 review가 처음부터 다시 시작된 것처럼 보인다. 반대로
     이번 턴에 실제 새 값이 오면(예: 실제 주소 문자열) 그 값을 우선한다 — 오직
     "이번 턴에도 못 찾았고, 이전엔 찾았다"일 때만 이전 결과를 보존한다.
+
+    text_derived_ids: 기본값은 handwritten의 date/address/name. recording은
+    _RECORDING_TEXT_DERIVED_REQUIREMENT_IDS(5개)를 넘겨 동일 로직을 공유한다
+    (_requirement_is_unresolved의 else 분기가 이미 "absent면 미해결"이라는
+    같은 판정을 하므로 recording 전용 분기를 새로 만들 필요가 없다).
     """
     merged = dict(results)
-    for rid in _TEXT_DERIVED_REQUIREMENT_IDS:
+    for rid in text_derived_ids:
         new_result = results[rid]
         if not _requirement_is_unresolved(rid, new_result):
             continue  # 이번 턴에 실제 근거를 새로 찾았다 — rule engine의 새 판정을 쓴다.
@@ -990,10 +1037,83 @@ def _run_handwritten_pipeline(
     )
 
 
+def _looks_like_recording_transcript(text: str) -> bool:
+    """실제 구술 대본으로 볼 근거가 있는지 최소 heuristic으로 판별한다.
+
+    handwritten의 _looks_like_draft()를 그대로 재사용하지 않는다 — 그쪽은
+    "유언장" 제목 줄 등 문서 형식 신호를 보는데, 녹음 대본은 구어체 전사문이라
+    그런 형식이 없다. 대신 recording_checker가 이미 갖고 있는 추출 함수를
+    그대로 재사용해(중복 regex 금지) 신호를 본다: 재산 처분 구술
+    (extract_recording_content), 유언자 성명 구술(extract_name), 날짜 구술
+    (parse_dates), 증인 정확함/성명 구술(extract_witness_accuracy/
+    extract_witness_name) 중 하나라도 있으면 실제 대본으로 본다.
+
+    "녹음·영상"(UI 방식 선택 문구), "녹음 유언이에요"(방식 설명 문장) 같은
+    것은 이 신호가 전혀 없어 대본으로 보지 않는다 — check_recording_requirements
+    전체를 먼저 돌려 판정한 뒤 intake 여부를 정하는 방식(대본 없이도 5개
+    text-derived 요건에 잘못된 RED/PENDING이 매겨지던 버그)은 쓰지 않는다.
+    """
+    if not text or not text.strip():
+        return False
+    if extract_recording_content(text).case != "absent":
+        return True
+    if extract_name(text).case != "absent":
+        return True
+    if parse_dates(text).case != "absent":
+        return True
+    if extract_witness_accuracy(text).case != "absent":
+        return True
+    if extract_witness_name(text).case != "absent":
+        return True
+    return False
+
+
+def _recording_intake_output(
+    state: DecedentState, *, intent: str = _REVIEW_INTENT
+) -> AgentOutput:
+    """recording review intake gate — 실제 대본이 없으면 요건 판정을 아예
+    돌리지 않고 대본을 요청한다 (2026-09-05).
+
+    handwritten의 _document_intake_output과 동일한 원칙: "녹음·영상"(UI 방식
+    선택 문구)이나 "녹음 유언이에요"(방식 설명 문장)가 user_message로 그대로
+    들어와도 실제 대본으로 오인해 5개 text-derived 요건에 잘못된 판정을
+    매기던 버그 수정. will_type/intent는 이미 확정된 값을 그대로 유지하고,
+    requirements/progress는 아예 내보내지 않는다(handwritten의 intake와
+    동일한 관례 — "판정 대상이 없다"는 뜻이지 빈 판정이 아니다).
+    """
+    return AgentOutput(
+        agent=AgentName.DECEDENT_ESTATE,
+        reply=_RECORDING_TRANSCRIPT_NOTICE,
+        next_action=NEXT_ACTION_AWAIT_USER,
+        data=_namespaced(
+            state,
+            {"will_type": _RECORDING_WILL_TYPE, "warnings": []},
+            will_type=_RECORDING_WILL_TYPE,
+            intent=intent,
+            pending_questions=[],
+        ),
+    )
+
+
 def _run_recording_pipeline(
     payload: AgentInput, state: DecedentState, *, intent: str = _REVIEW_INTENT
 ) -> AgentOutput:
-    """녹음 유언(§1067) 대본 요건 판정 파이프라인."""
+    """녹음 유언(§1067) 대본 요건 판정 파이프라인.
+
+    ⚠️ transcript intake gate (2026-09-05): 실제 대본으로 볼 근거가 없으면
+    (_looks_like_recording_transcript) check_recording_requirements를 아예
+    돌리지 않고 대본을 요청한다 — handwritten의 document intake gate와 동일한
+    원칙. review가 이미 시작된 뒤(review_already_started — state.requirements가
+    비어있지 않음)에는 이 게이트를 적용하지 않는다 — 그래야 증인 관련 확인
+    답변 턴마다 다시 intake로 되돌아가지 않는다(handwritten과 동일한
+    continuation 원칙, review_already_started 참고).
+    """
+    review_already_started = bool(state.requirements)
+    if not review_already_started and not _looks_like_recording_transcript(
+        payload.user_message
+    ):
+        return _recording_intake_output(state, intent=intent)
+
     rec_witness_present_answer = state.rec_witness_present_answer
     rec_witness_eligible_answer = state.rec_witness_eligible_answer
 
@@ -1002,6 +1122,10 @@ def _run_recording_pipeline(
         rec_witness_present_answer=rec_witness_present_answer,
         rec_witness_eligible_answer=rec_witness_eligible_answer,
     )
+    if review_already_started:
+        results = _preserve_established_requirements(
+            results, state.requirements, _RECORDING_TEXT_DERIVED_REQUIREMENT_IDS
+        )
 
     next_action = _next_action_recording(results)
 
