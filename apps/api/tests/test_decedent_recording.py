@@ -10,7 +10,10 @@ import pytest
 
 from agents import decedent_estate
 from agents.decedent_estate import recording_checker
-from agents.decedent_estate.agent import NEXT_ACTION_AWAIT_USER
+from agents.decedent_estate.agent import (
+    NEXT_ACTION_AWAIT_USER,
+    _looks_like_recording_transcript,
+)
 from schemas import AgentInput
 
 _TESTATOR_LINE = "유언자: 홍길동"
@@ -48,6 +51,227 @@ def _run_namespaced(text: str, **context: str):
         context={"decedent_estate": {"will_type": "recording", **context}},
     )
     return decedent_estate.run(payload)
+
+
+# ---------------------------------------------------------------------------
+# transcript intake gate (2026-09-05)
+#
+# 실측 재현: will_type=recording이 확정된 직후 "녹음·영상"(UI 방식 선택
+# 문구)이 user_message로 그대로 들어와도 check_recording_requirements가
+# 실행돼, 아직 대본을 입력하지 않았는데 "2가지만 직접 확인해주세요...
+# (5/7 확인됨)"과 증인 참여/결격 질문부터 노출됐다. 실제 대본이 들어오기
+# 전에는 checker를 아예 돌리지 않아야 한다.
+# ---------------------------------------------------------------------------
+
+
+def test_voice_memo_first_turn_goes_straight_to_transcript_intake() -> None:
+    """정확한 production 재현 3턴 중 1턴 — will_type=recording 자연어 자동
+    확정 + transcript intake gate가 함께 작동해야 한다(테스트 A)."""
+    output = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message=(
+                "어머니가 돌아가신 뒤 휴대폰을 정리하다가 재산 얘기를 남긴 음성메모를 "
+                "발견했어요. 이런 것도 유언으로 효력이 있는지 확인할 수 있나요?"
+            ),
+        )
+    )
+
+    assert output.agent.value == "decedent_estate"
+    assert output.data["decedent_estate"]["will_type"] == "recording"
+    assert "어떤 형태의 유언인가요?" not in output.reply
+    assert output.reply == (
+        "📼 녹음하신 내용을 그대로 적어주세요. 아직 녹음 전이라면, 예정된 대본으로 "
+        "미리 점검할 수도 있습니다."
+    )
+    assert "requirements" not in output.data
+    assert output.data["decedent_estate"]["requirements"] == {}
+    assert output.data["decedent_estate"]["pending_questions"] == []
+    assert "5/7" not in output.reply
+    assert "증인" not in output.reply
+
+
+def test_ui_will_type_selection_phrase_is_not_treated_as_transcript() -> None:
+    """테스트 B — 기존 UI 방식 선택 경로. 모호한 첫 턴 → 방식 선택 질문 →
+    "녹음·영상" 버튼 선택. 실제 버튼 클릭은 라벨 텍스트(user_message)와 함께
+    구조화 필드(context.will_type)도 명시적으로 보낸다 — 그 선택 문구 자체가
+    user_message로 들어와도 대본으로 오인해 checker를 돌리면 안 된다."""
+    ambiguous = decedent_estate.run(
+        AgentInput(session_id="s1", user_message="유언장이 있는데 효력이 있나요?")
+    )
+    assert "어떤 형태의 유언인가요?" in ambiguous.reply
+
+    selected = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="녹음·영상",
+            context={
+                "will_type": "recording",
+                "decedent_estate": ambiguous.data["decedent_estate"],
+            },
+        )
+    )
+
+    assert selected.data["decedent_estate"]["will_type"] == "recording"
+    assert selected.reply == (
+        "📼 녹음하신 내용을 그대로 적어주세요. 아직 녹음 전이라면, 예정된 대본으로 "
+        "미리 점검할 수도 있습니다."
+    )
+    assert "requirements" not in selected.data
+    assert "5/7" not in selected.reply
+    assert "증인" not in selected.reply
+
+
+def test_recording_description_sentence_does_not_trigger_checker() -> None:
+    """ "녹음 유언이에요" 같은 방식 설명 문장도 대본이 아니다."""
+    output = _run("녹음 유언이에요")
+
+    assert "requirements" not in output.data
+    assert output.reply.startswith("📼 녹음하신 내용을 그대로 적어주세요")
+
+
+def test_actual_transcript_after_intake_runs_checker_normally() -> None:
+    """intake 턴 다음에 실제 대본이 오면 그때 처음 checker가 돌아야 한다
+    (테스트 C 앞부분 — 나머지 5/7·증인 질문 구조는 기존
+    test_pending_case_lists_both_confirm_questions_with_options로 이미
+    확인됨)."""
+    intake = _run("녹음·영상")
+    assert "requirements" not in intake.data
+
+    reviewed = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message=_COMPLETE_TRANSCRIPT,
+            context={"decedent_estate": intake.data["decedent_estate"]},
+        )
+    )
+
+    reqs = reviewed.data["requirements"]
+    for rid in (
+        "rec_content",
+        "rec_testator_name",
+        "rec_date",
+        "rec_witness_accuracy",
+        "rec_witness_name",
+    ):
+        assert reqs[rid]["grade"] in ("GREEN", "RED", "YELLOW"), rid  # PENDING 아님
+    assert reqs["rec_witness_present"]["grade"] == "PENDING"
+    assert reqs["rec_witness_eligible"]["grade"] == "PENDING"
+    assert reviewed.data["progress"] == {"checked": 5, "total": 7}
+
+
+def test_witness_answer_turn_does_not_reset_transcript_derived_grades() -> None:
+    """테스트 D — continuation. 대본을 한 번 입력해 5개 text-derived 요건이
+    판정된 뒤, 증인 참여/결격만 답하는 짧은 후속 턴이 와도(대본을 다시 보내지
+    않음) 그 5개 판정이 absent/RED로 되돌아가면 안 된다 — intake gate로도
+    돌아가면 안 된다(2026-09-05, _preserve_established_requirements를
+    recording의 5개 text-derived 요건에도 적용)."""
+    transcript_turn = _run(_COMPLETE_TRANSCRIPT)
+    before = transcript_turn.data["requirements"]
+
+    witness_turn = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="네, 실제로 참여했고 결격 사유는 없습니다",
+            context={"decedent_estate": transcript_turn.data["decedent_estate"]},
+        )
+    )
+
+    # 두 번째 턴은 답변만 담겨 있고 대본을 다시 보내지 않았지만, intake gate로
+    # 돌아가지 않고(대본 재요청 없음) review가 계속된다.
+    assert witness_turn.reply != (
+        "📼 녹음하신 내용을 그대로 적어주세요. 아직 녹음 전이라면, 예정된 대본으로 "
+        "미리 점검할 수도 있습니다."
+    )
+    after = witness_turn.data["requirements"]
+    for rid in (
+        "rec_content",
+        "rec_testator_name",
+        "rec_date",
+        "rec_witness_accuracy",
+        "rec_witness_name",
+    ):
+        assert after[rid]["grade"] == before[rid]["grade"], rid
+
+
+def test_witness_structured_answers_after_transcript_yield_final_seven() -> None:
+    """구조화 답변(버튼 클릭 방식, context 필드)으로 증인 참여/결격을 확정하면
+    최종 7개 요건이 모두 판정된다."""
+    payload = AgentInput(
+        session_id="s1",
+        user_message="",
+        context={
+            "decedent_estate": {
+                "will_type": "recording",
+                "requirements": {
+                    rid: {
+                        "id": rid,
+                        "name": rid,
+                        "grade": "GREEN",
+                        "condition_id": "present",
+                    }
+                    for rid in (
+                        "rec_content",
+                        "rec_testator_name",
+                        "rec_date",
+                        "rec_witness_accuracy",
+                        "rec_witness_name",
+                    )
+                },
+                "rec_witness_present_answer": "yes",
+                "rec_witness_eligible_answer": "not_disqualified",
+            }
+        },
+    )
+    output = decedent_estate.run(payload)
+
+    reqs = output.data["requirements"]
+    assert reqs["rec_witness_present"]["grade"] == "GREEN"
+    assert reqs["rec_witness_eligible"]["grade"] == "GREEN"
+    for rid in (
+        "rec_content",
+        "rec_testator_name",
+        "rec_date",
+        "rec_witness_accuracy",
+        "rec_witness_name",
+    ):
+        assert reqs[rid]["grade"] == "GREEN", rid
+
+
+# ---------------------------------------------------------------------------
+# _looks_like_recording_transcript 단위 테스트
+# ---------------------------------------------------------------------------
+
+_NOT_TRANSCRIPT_MESSAGES = [
+    "녹음·영상",
+    "녹음 유언이에요",
+    "음성메모예요",
+    "녹음으로 유언 남기고 싶어요",
+    "",
+    "   ",
+]
+
+_TRANSCRIPT_MESSAGES = [
+    _COMPLETE_TRANSCRIPT,
+    "저의 전 재산을 배우자에게 상속한다.",  # 처분 의사 구술
+    "2026년 5월 3일",  # 날짜 구술
+    "증인: 김철수",  # 증인 성명 구술
+    "증인은 위 유언이 정확함을 확인합니다.",  # 증인 정확함 구술
+]
+
+
+@pytest.mark.parametrize("message", _NOT_TRANSCRIPT_MESSAGES)
+def test_message_without_transcript_signal_is_not_treated_as_transcript(
+    message: str,
+) -> None:
+    assert _looks_like_recording_transcript(message) is False
+
+
+@pytest.mark.parametrize("message", _TRANSCRIPT_MESSAGES)
+def test_message_with_transcript_signal_is_treated_as_transcript(
+    message: str,
+) -> None:
+    assert _looks_like_recording_transcript(message) is True
 
 
 def test_complete_transcript_all_green_does_not_auto_handoff() -> None:

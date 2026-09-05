@@ -287,12 +287,21 @@ def test_ambiguous_message_keeps_stored_intent() -> None:
 
 def test_recording_natural_language_prepare_intent() -> None:
     """intent resolver는 will_type과 무관하게 공유되므로, recording도 같은
-    원칙으로 자연어 prepare 전환이 적용된다(#132/#133과 무관, 최소 확인)."""
+    원칙으로 자연어 prepare 전환이 적용된다(#132/#133과 무관, 최소 확인).
+
+    transcript intake gate(2026-09-05, agent.py의 _looks_like_recording_transcript)는
+    실제 초안이 있을 때만(_has_draft_text) 개입한다 — "아직 녹음 전인데..."는
+    초안으로 안 보이므로(has_draft=False) review 파이프라인 자체가 호출되지
+    않고, intake gate가 끼어들 여지가 없다."""
     output = _run("아직 녹음 전인데 어떤 조건이 필요해?", will_type="recording")
 
     assert output.data["decedent_estate"]["intent"] == "prepare"
     assert "**녹음 유언 작성 가이드입니다.**" in output.reply
     assert set(output.data["guide"].keys()) == set(FORMAL_RECORDING_REQUIREMENT_IDS)
+    # intake gate 문구(대본 요청 안내)가 끼어들지 않는다 — 가이드 뒤에는
+    # 초안 제출 안내만 붙는다.
+    assert "📼 녹음하신 내용을 그대로 적어주세요" not in output.reply
+    assert "review" not in output.data
 
 
 # ---------------------------------------------------------------------------
