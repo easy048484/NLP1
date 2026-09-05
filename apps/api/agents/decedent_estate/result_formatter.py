@@ -242,6 +242,33 @@ def term_note(requirement_id: str) -> Optional[str]:
     return None
 
 
+def _condition_display_note(
+    requirement_id: str, condition_id: Optional[str], result: RequirementResult
+) -> Optional[str]:
+    """요건 id + condition id 조합에만 적용되는 조건 전용 설명 (conditions[].display_note).
+
+    term_note는 요건 id 단위라 같은 요건의 서로 다른 condition(예: 주소의
+    RED city_district_only와 YELLOW building_number_only)이 같은 문구를
+    공유한다. building_number_only는 실제로 도로명·건물번호까지 정상 인식된
+    상태인데 city_district_only용 term_note("구·동까지만 적으면 무효")를
+    그대로 보여주면 판정 상태와 화면 설명이 어긋난다 — 이 조건에서만
+    display_note로 실제 상태를 반영한 문구를 쓴다. {value} 자리에는 추출된
+    주소 원문을 "(추출값)" 형태로 채운다(없으면 빈 문자열).
+    """
+    if condition_id is None:
+        return None
+    rules = _load_rules()
+    for req in rules["requirements"]:
+        if req["id"] != requirement_id:
+            continue
+        for cond in req.get("conditions", []):
+            if cond.get("id") == condition_id and cond.get("display_note"):
+                value = _extracted_display_value(result)
+                suffix = f" ({value})" if value else ""
+                return cond["display_note"].format(value=suffix)
+    return None
+
+
 # GREEN 패턴의 "(+ 추출값 표시)" 부분에서 값을 어떻게 뽑아 보여줄지 요건 id별로 분기.
 _DATE_LIKE_REQUIREMENT_IDS = {"date", "rec_date"}
 _RAW_TEXT_DISPLAY_REQUIREMENT_IDS = {
@@ -308,15 +335,22 @@ def format_requirement_line(
         return "\n".join(lines)
 
     if result.grade == "YELLOW":
-        lines = [f"⚠️ {name}: {name}{_josa_i_ga(name)} {_YELLOW_VERB_PHRASE}"]
+        display_note = _condition_display_note(
+            result.requirement_id, result.condition_id, result
+        )
+        if display_note:
+            lines = [f"⚠️ {name}: {display_note}"]
+        else:
+            lines = [f"⚠️ {name}: {name}{_josa_i_ga(name)} {_YELLOW_VERB_PHRASE}"]
         if include_precedent_cards:
             for precedent_id in result.precedent_ids:
                 card_line = _precedent_card_line(precedent_id)
                 if card_line:
                     lines.append(card_line)
-        note = term_note(result.requirement_id)
-        if note:
-            lines.append(f"   ℹ️ {note}")
+        if not display_note:
+            note = term_note(result.requirement_id)
+            if note:
+                lines.append(f"   ℹ️ {note}")
         lines.append(_YELLOW_CTA)
         # 아직 열린 후속 질문이 있으면(예: 주소 building_number_only — 동·호수
         # 불명확) 함께 안내한다. 이미 답이 끝난 YELLOW(예: 봉투확인 승격)는

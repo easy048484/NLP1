@@ -140,6 +140,106 @@ def test_case_c_yellow_only_summary_and_two_cards() -> None:
     assert _citation("date_specifiable_valid") == "(대한법률구조공단 해설)"
 
 
+def test_address_building_number_only_yellow_uses_condition_specific_wording() -> None:
+    """building_number_only(도로명·건물번호까지만 기재) YELLOW는 city_district_only
+    (RED)용 term_note("구·동까지만 적으면 무효")를 그대로 재사용하면 실제로는
+    도로명·건물번호까지 정상 인식됐는데도 "주소를 못 찾았다"는 인상을 준다
+    (2026-09-05 버그 수정). display_note로 실제 판정 상태를 반영한 문구를
+    보여주고, 추출된 주소 원문도 함께 노출한다."""
+    text = _will_text(
+        _NAME_LINE,
+        "주소도 유언장 본문에 서울특별시 강남구 테헤란로 123이라고 적혀 있어요.",
+        _DATE_LINE,
+    )
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
+    address = results["address"]
+    assert address.grade == "YELLOW"
+    assert address.condition_id == "building_number_only"
+
+    # _extracted_display_value(address)는 기존 GREEN 패턴과 동일하게 추출된
+    # raw_text를 그대로 보여준다(정규식이 줄 전체를 매칭) — 별도 정제는 이번
+    # 작업 범위 밖이라 손대지 않는다.
+    raw_text = address.extracted["raw_text"]
+    assert (
+        raw_text
+        == "주소도 유언장 본문에 서울특별시 강남구 테헤란로 123이라고 적혀 있어요."
+    )
+
+    line = format_requirement_line(address)
+    assert line == "\n".join(
+        [
+            f"⚠️ 주소: 도로명과 건물번호까지는 확인되었습니다 ({raw_text}). "
+            "다만 유언장에 동·호수 등 더 상세한 주소가 있는지 추가 확인이 필요합니다. "
+            "건물번호만으로 유언자의 거주지를 충분히 특정할 수 있는지는 사실관계에 따라 "
+            "달라질 수 있습니다.",
+            "→ 개별 판단이 필요합니다. 법률 상담을 권합니다",
+            "   ❓ 유언장에 동·호수 등 더 상세한 주소도 적혀 있나요?",
+        ]
+    )
+    # city_district_only(RED)용 term_note가 잘못 섞여 들어가면 안 된다.
+    assert "서울 강남구" not in line
+    assert "구·동까지만" not in line
+    assert term_note("address") not in line
+
+
+def test_address_yellow_wording_fix_does_not_regress_other_address_states() -> None:
+    """building_number_only 문구만 바꿨다 — 나머지 주소 상태(RED/GREEN/봉투 후속
+    질문)의 판정·문구는 이번 변경 전과 동일해야 한다(2026-09-05)."""
+    # RED — city_district_only: 기존 term_note(구·동까지만 적으면 무효)가 그대로 붙는다.
+    red_results = check_requirements(
+        _will_text(_NAME_LINE, "주소: 서울 강남구", _DATE_LINE),
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+    )
+    red_address = red_results["address"]
+    assert red_address.grade == "RED"
+    assert red_address.condition_id == "city_district_only"
+    red_line = format_requirement_line(red_address)
+    assert red_line == "\n".join(
+        [
+            "❌ 주소: 유언자 주소가 확인되지 않습니다",
+            f"{_one_liner('address_missing_invalid')} {_citation('address_missing_invalid')}",
+            f"   ℹ️ {term_note('address')}",
+        ]
+    )
+
+    # GREEN — 상세주소(동·호수)까지 있으면 기존처럼 GREEN, 후속 질문 없음.
+    green_results = check_requirements(
+        _will_text(
+            _NAME_LINE, "주소: 서울특별시 강남구 테헤란로 123, 101동 1203호", _DATE_LINE
+        ),
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+    )
+    green_address = green_results["address"]
+    assert green_address.grade == "GREEN"
+    assert green_address.condition_id == "full_address"
+    assert green_address.followup_question is None
+    green_line = format_requirement_line(green_address)
+    assert green_line == (
+        "✅ 주소: 기재 확인 (주소: 서울특별시 강남구 테헤란로 123, 101동 1203호)"
+    )
+
+    # 주소 없음 — 기존 봉투 확인 followup 그대로.
+    absent_results = check_requirements(
+        _will_text(_NAME_LINE, _DATE_LINE),
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+    )
+    absent_address = absent_results["address"]
+    assert absent_address.grade == "PENDING"
+    questions = pending_questions(absent_results)
+    address_question = next(
+        q for q in questions if q["field"] == "address_envelope_answer"
+    )
+    assert (
+        address_question["question"]
+        == "주소가 유언장 본문이 아니라 봉투에 적혀 있나요?"
+    )
+
+
 def test_case_d_pending_summary_lists_question() -> None:
     text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
     results = check_requirements(
