@@ -357,3 +357,15 @@ downstream(tax_calculator 등)에 아직 넘기지 않는다. `AgentOutput.hando
   PR #98에서 이미 좁힌 것)와는 별개 계층 — 여긴 이미 asset_organizer로
   라우팅된 뒤, 텍스트 안에서 "부채가 실제로 있다"를 판정하는 정규식
   1차 추출(extract_liabilities) 내부 문제였다.
+- **최종 확정 요약에 보험 합계 제외 이유 명시** — review 화면
+  (AssetReviewCard, 프론트 전용 변경)에는 왜 보험이 합계에서 빠지는지
+  안내가 있었는데, `_finalize()`가 만드는 최종 텍스트 요약(`_format_summary`)
+  에는 [보험] 항목만 보이고 그 설명이 사라져 "2,500만원이 있는데 왜
+  순자산에 안 잡히지?"를 계산 오류로 오해할 수 있었다(실측 피드백).
+  `_format_summary`의 [보험] 섹션 아래에 confirmed/unknown_amount 구분
+  없이(둘 다 항상 총액 제외 대상이므로) 안내 문구를 한 번만 덧붙이고,
+  순자산 줄 바로 아래에도 "제외된 항목이 있다"는 짧은 표시를 추가했다
+  (금액 미확인 자산·부채 또는 보험이 하나라도 있을 때만) — 문구를
+  반복하지 않고 위 안내를 가리키기만 한다. 집계 로직(`_to_shared_profile`/
+  `total_assets`/`total_liabilities` 계산)은 전혀 건드리지 않았다 — 순수
+  표시 문구 추가.
