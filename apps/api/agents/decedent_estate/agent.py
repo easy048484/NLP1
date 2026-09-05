@@ -253,6 +253,16 @@ _DRAFT_BARE_GIVE_VERB_RE = re.compile(
 _DRAFT_RECIPIENT_OR_PROPERTY_RE = re.compile(
     r"에게|한테|재산|통장|부동산|예금|주식|아파트|건물|집|땅|토지|돈"
 )
+# "주고"(연결형)는 _DRAFT_BARE_GIVE_VERB_RE에 그냥 추가하면 안 된다 — "확인해
+# 주고 싶어요"/"설명해 주고 싶어요"처럼 "-아/어 주다" 보조동사로도 흔히 쓰여서,
+# 문장 어디에 재산 명사가 하나만 있어도(예: "아파트 관련해서 설명해 주고
+# 싶어요") _DRAFT_RECIPIENT_OR_PROPERTY_RE 와 맞물려 오탐이 난다(실측 확인:
+# "손으로 직접 쓴 유언장을 발견했어요" → intake 요청 이후 실제 유언장 본문
+# "...장남 김민수에게 주고, 은행 예금은..."을 초안으로 못 알아채던 버그).
+# 그래서 "에게"/"한테" 수신자 표시 바로 뒤에 붙은 "주고"만 처분 의사로
+# 인정한다 — 이 형태는 항상 명사+조사 뒤에 오지, "-아/어 주다" 보조동사처럼
+# 다른 동사의 활용형 뒤에 오지 않는다(구조적으로 겹치지 않아 안전).
+_DRAFT_GIVE_TO_RECIPIENT_RE = re.compile(r"(?:에게|한테)\s*주고")
 
 # 3) "유언장"/"유언" 만으로 이루어진 제목 줄 (그 아래에 내용이 더 있어야 초안).
 #    "유언장을 준비하려고요"처럼 문장 속에 들어간 경우는 제목이 아니라 요청이다.
@@ -274,6 +284,9 @@ def _looks_like_draft(text: str) -> bool:
         return False
 
     if _DRAFT_DISPOSITION_VERB_RE.search(text):
+        return True
+
+    if _DRAFT_GIVE_TO_RECIPIENT_RE.search(text):
         return True
 
     if _DRAFT_BARE_GIVE_VERB_RE.search(text) and _DRAFT_RECIPIENT_OR_PROPERTY_RE.search(
