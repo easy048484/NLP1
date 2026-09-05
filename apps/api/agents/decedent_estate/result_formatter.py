@@ -216,6 +216,21 @@ def _precedent_card_line(precedent_id: str) -> Optional[str]:
     return f"{card['one_liner']} {_precedent_citation(card)}"
 
 
+def _is_legal_requirement(requirement_id: str) -> bool:
+    """요건 id → rules/requirements.json 의 is_legal_requirement (기본값 True).
+
+    간인(interseal)처럼 명시적으로 false인 항목은 법정 형식요건 5개와 같은
+    자리(순서대로 나열되는 요건 목록)에 섞이면 안 된다 — format_result 의
+    기본 ordered_ids 계산과 _supplemental_section 이 이 값을 단일 출처로
+    쓴다. 필드가 아예 없는 요건(대다수)은 그냥 형식요건이므로 True.
+    """
+    rules = _load_rules()
+    for req in rules["requirements"]:
+        if req["id"] == requirement_id:
+            return bool(req.get("is_legal_requirement", True))
+    return True
+
+
 def red_label(requirement_id: str) -> str:
     """요건 id → RED 문구용 축약 라벨 (rules/requirements.json 의 red_label 필드).
 
@@ -622,6 +637,29 @@ def cited_precedents(
     return precedents
 
 
+_SUPPLEMENTAL_HEADING = "추가 참고사항"
+
+
+def _supplemental_section(results: dict[str, RequirementResult]) -> Optional[str]:
+    """법정 형식요건 5개 목록과 시각적으로 분리해서 보여줄 참고 항목(현재는
+    간인뿐) — 있으면 "추가 참고사항" 소제목과 함께 별도 문단으로 반환한다.
+
+    간인은 is_legal_requirement: false라 위 ordered_ids 계산에서 이미
+    제외됐다 — 여기서는 그중 여러 장이 실제로 감지된 경우(WHITE)에만 그
+    사실을 알려주고, 근거가 없으면(single_page, grade=None) 아무것도 반환
+    하지 않는다. "필수 형식요건이 아니다"를 단정 문구로 오해하지 않도록
+    _INTERSEAL_REFERENCE_LINE 문구를 그대로 재사용한다 — 신호등(✅/❌/⚠️)
+    없이 "ℹ️ 참고:"로만 시작해 미실시가 무효라는 인상을 주지 않는다.
+    """
+    interseal = results.get("interseal")
+    if interseal is None or interseal.grade != "WHITE":
+        return None
+    line = format_requirement_line(interseal)
+    if not line:
+        return None
+    return f"{_SUPPLEMENTAL_HEADING}\n{line}"
+
+
 def format_result(
     results: dict[str, RequirementResult],
     *,
@@ -646,7 +684,7 @@ def format_result(
         ordered_ids = [
             req["id"]
             for req in sorted(rules["requirements"], key=lambda r: r["order"])
-            if req["id"] in results
+            if req["id"] in results and _is_legal_requirement(req["id"])
         ]
 
     sections = [summarize(results, formal_ids, messages)]
@@ -665,6 +703,10 @@ def format_result(
         )
         if line:
             sections.append(line)
+
+    supplemental = _supplemental_section(results)
+    if supplemental:
+        sections.append(supplemental)
 
     sections.append(_CONSULTATION_LINE)
     sections.append(_FOOTER_NOTICE)
