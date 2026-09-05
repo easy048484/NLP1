@@ -48,7 +48,17 @@ _ADDRESS_UNIT_RE = re.compile(
     # "테헤란로 123-4"(부번). 번지 표기와 달리 "번지" 같은 리터럴 단어가 없어
     # 별도 대안이 필요하다 (2026-08-26, 사진 판독 검증 중 발견 — 도로명주소가
     # 전부 city_district_only(RED)로 오판정되고 있었다).
-    r"|[가-힣]+(?:로|길)\s*(?:\d+\s*번길\s*)?\d+(?:-\d+)?(?=[\s,)\.]|$)"
+    #
+    # 건물번호 뒤 경계는 공백/쉼표/마침표/문자열 끝뿐 아니라, "테헤란로
+    # 123이라고 적혀 있어요"/"...123에 살았습니다"처럼 건물번호에 조사가 바로
+    # 붙는 자연스러운 서술문도 허용한다(2026-09-05, review 자연어 확인 답변에서
+    # 발견 — "...123이라고"가 이 경계에 안 걸려 도로명주소 전체가
+    # city_district_only로 축소 판정되고 있었다). "로/길" 토큰 문맥 제한은
+    # 그대로 유지해 숫자 뒤 한글을 전부 허용하지는 않는다 — 금액("123만원")·
+    # 수량("123주")·기간 등은 애초에 "로/길" 토큰이 앞에 없어 이 대안 자체에
+    # 도달하지 않는다.
+    r"|[가-힣]+(?:로|길)\s*(?:\d+\s*번길\s*)?\d+(?:-\d+)?"
+    r"(?=[\s,)\.]|$|이라고|라고|에|으로|입니다)"
     # 라벨(번지) 없는 지번: "역삼동 123-45", "우동 1234". "동/읍/면/리로 끝나는
     # 토큰 바로 뒤의 숫자"로 문맥을 제한해 유언 내용의 금액·수량(예: "5000만원",
     # "3개월")과 섞이지 않게 한다 — 숫자 뒤에 공백/쉼표/마침표/문자열 끝이 와야
@@ -59,6 +69,13 @@ _ADDRESS_UNIT_RE = re.compile(
 _ADDRESS_DISTRICT_RE = re.compile(
     r"[가-힣]{2,8}(?:특별시|광역시|특별자치시|특별자치도|도|시)?\s+[가-힣]{2,6}(?:구|군|시|읍|면)"
 )
+# 도로명/지번 건물번호까지는 있어도 동·호수 등 세부 거주 단위(아파트 등
+# 공동주택 단위)가 없으면 장소 특정성이 사실관계에 따라 달라질 수 있다 —
+# 무효로 단정하지 않고 building_number_only(YELLOW)로 분류한다(2026-09-05).
+# 이 패턴이 candidate line 안에 있으면(어느 위치든) "세부 단위까지 기재됨"으로
+# 본다.
+_ADDRESS_DETAIL_RE = re.compile(r"\d+\s*동\s*\d+\s*호")
+_ADDRESS_DETAIL_QUESTION = "유언장에 동·호수 등 더 상세한 주소도 적혀 있나요?"
 # 유언자 본인 주소가 아니라 상속·증여 대상 부동산 소재지를 설명하는 문장은
 # 주소 요건 판정에서 제외한다 (예: "내가 소유한 OO 아파트를 ~에게 상속한다").
 _ADDRESS_PROPERTY_CONTEXT_RE = re.compile(
@@ -193,17 +210,43 @@ def _build_address_result(
     extraction_method는 extract_address_with_fallback 이 정리한 "regex"|"llm"|
     "none" 을 그대로 받아 extracted 에 실어준다. base.extracted 에 넣어두면
     아래 followup 분기들이 **base.extracted 로 그대로 이어받는다.
+
+    "full_address"(본문에 건물번호까지 있음)라도 동·호수 등 세부 거주 단위가
+    없으면(_ADDRESS_DETAIL_RE) building_number_only(YELLOW)로 낮춘다 — 장소
+    특정성이 사실관계에 따라 달라질 수 있어 무효로 단정하지 않는다
+    (2026-09-05). 이 경우 별도 확인 버튼(confirm_field)을 새로 만들지 않고
+    followup_question만 붙여 "동·호수도 있나요?"를 안내한다 — 사용자가 다음
+    턴에 실제 상세주소를 자연어로 답하면 review continuation(#116)이 그 턴의
+    텍스트를 다시 추출해 자동으로 재판정(GREEN)한다.
     """
     req = _find_requirement(rules, "address")
+
+    condition_id = address_result.case
+    if condition_id == "full_address" and not _ADDRESS_DETAIL_RE.search(
+        address_result.raw_text or ""
+    ):
+        condition_id = "building_number_only"
+
     base = _build_result(
         rules,
         "address",
-        address_result.case,
+        condition_id,
         extracted={
             "raw_text": address_result.raw_text,
             "extraction_method": extraction_method,
         },
     )
+
+    if condition_id == "building_number_only":
+        return RequirementResult(
+            requirement_id="address",
+            name=req["name"],
+            condition_id=base.condition_id,
+            grade=base.grade,
+            precedent_ids=base.precedent_ids,
+            extracted=base.extracted,
+            followup_question=_ADDRESS_DETAIL_QUESTION,
+        )
 
     followup = req.get("followup")
     if not followup or base.condition_id not in followup.get("trigger_conditions", []):

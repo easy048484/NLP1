@@ -28,6 +28,11 @@ _WILL_TEXT_ADDRESS_MISSING = (
     "유언장\n유언자: 홍길동\n2026년 5월 3일\n\n나의 전 재산을 배우자에게 상속한다."
 )
 
+_WILL_TEXT_ADDRESS_NO_UNIT_DETAIL = (
+    "유언장\n유언자: 홍길동\n주소: 서울특별시 강남구 테헤란로 123\n2026년 5월 3일\n\n"
+    "나의 전 재산을 배우자에게 상속한다."
+)
+
 
 def _ctx(**extra: str) -> dict[str, str]:
     """평면 키 context (전환기 폴백 경로). 기존 테스트는 이 경로를 계속 검증한다."""
@@ -103,6 +108,28 @@ def test_run_red_address_blocks_handoff_even_when_others_green() -> None:
     assert reqs["handwriting"]["grade"] == "GREEN"
     assert reqs["seal"]["grade"] == "GREEN"
     assert output.data["pending_questions"] == []  # PENDING 없음 — 버그의 핵심 조건
+
+    assert output.next_action != NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    assert output.next_action == NEXT_ACTION_AWAIT_USER
+
+
+def test_run_yellow_address_without_unit_detail_blocks_handoff_and_asks_detail() -> (
+    None
+):
+    """도로명 건물번호까지만 있고 동·호수가 불명확하면 무효로 단정하지 않고
+    YELLOW(building_number_only)로 확정하되, 아직 열린 후속 질문이 있으므로
+    heir_navigator로 handoff하면 안 된다(2026-09-05)."""
+    payload = AgentInput(
+        session_id="s1",
+        user_message=_WILL_TEXT_ADDRESS_NO_UNIT_DETAIL,
+        context=_ctx(handwriting_answer="yes", seal_answer="seal_or_fingerprint"),
+    )
+    output = decedent_estate.run(payload)
+
+    address = output.data["requirements"]["address"]
+    assert address["grade"] == "YELLOW"
+    assert address["condition_id"] == "building_number_only"
+    assert "동·호수" in output.reply
 
     assert output.next_action != NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
     assert output.next_action == NEXT_ACTION_AWAIT_USER
