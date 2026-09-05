@@ -634,6 +634,66 @@ def test_yellow_address_detail_question_keeps_pending_reply_agent():
     assert turn2.data["requirements"]["address"]["grade"] == "GREEN"
 
 
+def test_completed_review_does_not_auto_handoff_and_keeps_followup_with_decedent():
+    """실측 재현 버그 — 형식요건 점검이 전부 종결(GREEN)되면 decedent_estate가
+    next_action=handoff:heir_navigator를 반환해 session.pending_handoff가
+    세워졌다. "그럼 요건은 일단 다 맞는 건가?"처럼 순수 결과 후속 질문에도
+    다음 턴 라우팅이 pending_handoff(최우선)를 따라 heir_navigator로 가버려,
+    "돌아가신 날짜가 언제인가요?" 같은 엉뚱한 절차 안내가 나왔다.
+
+    수정 후: 종결돼도 pending_handoff가 서지 않고(next_action=None),
+    keyword가 없는 후속 질문은 router의 기존 last_agent continuation으로
+    decedent_estate가 계속 받는다. 사용자가 실제로 다른 주제("절차")를
+    물으면 기존 keyword routing으로 heir_navigator가 정상 선택된다(실제
+    decedent_estate/heir_navigator 에이전트로 실행, fake 아님)."""
+    turn1 = router.route(
+        AgentInput(
+            session_id="no-auto-handoff-1",
+            user_message=(
+                "유언장\n유언자: 홍길동\n주소: 서울특별시 강남구 테헤란로 123, 45동 678호\n"
+                "2026년 5월 3일\n\n나의 전 재산을 배우자에게 상속한다."
+            ),
+            context={
+                "decedent_estate": {
+                    "will_type": "handwritten",
+                    "handwriting_answer": "yes",
+                    "seal_answer": "seal_or_fingerprint",
+                }
+            },
+        )
+    )
+    assert turn1.agent == AgentName.DECEDENT_ESTATE
+    for rid in ("date", "address", "name", "handwriting", "seal"):
+        assert turn1.data["requirements"][rid]["grade"] == "GREEN"
+    assert turn1.next_action is None
+
+    stored = router.default_store.load("no-auto-handoff-1")
+    assert stored.pending_handoff is None
+    assert stored.pending_reply_agent is None
+    assert stored.last_agent == AgentName.DECEDENT_ESTATE
+
+    # A) 결과 후속 질문 — 키워드가 없으므로 last_agent continuation을 타야 한다.
+    turn2 = router.route(
+        AgentInput(
+            session_id="no-auto-handoff-1",
+            user_message="그럼 요건은 일단 다 맞는 건가?",
+        )
+    )
+    assert turn2.agents == [AgentName.DECEDENT_ESTATE]
+    assert "requirements" in turn2.data
+    # 상속 절차 안내(heir_navigator)로 새지 않았다 — 사망일 질문이 나오면 안 된다.
+    assert "돌아가신 날짜" not in turn2.reply
+
+    # B) 실제로 다른 주제를 물으면 기존 keyword routing으로 heir_navigator가 선택된다.
+    turn3 = router.route(
+        AgentInput(
+            session_id="no-auto-handoff-1",
+            user_message="그럼 상속 절차는 어떻게 해야 해?",
+        )
+    )
+    assert turn3.agents == [AgentName.HEIR_NAVIGATOR]
+
+
 # ------------------------------------------------------- compose / verify
 
 
