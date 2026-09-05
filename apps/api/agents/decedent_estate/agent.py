@@ -102,6 +102,72 @@ def _infer_will_type_from_message(user_message: str) -> Optional[str]:
     return None
 
 
+# intent가 명시되지 않았을 때 review로 기본 동작하던 것과 별개로, 자연어로
+# 명백한 "아직 작성/녹음 전" 의도가 있으면 review 기본값(또는 이전에 저장된
+# review 상태)보다 그 의도를 우선한다(2026-09-05 버그 수정 — 실측 재현:
+# document intake가 한 번 review로 저장된 뒤에는 사용자가 "아직 안 썼어요"라고
+# 분명히 말해도 계속 본문/사진을 요구했다). will_type 추론과 동일한 원칙 —
+# 최소·명백한 표현만 deterministic하게 매칭하고 LLM은 쓰지 않는다. "유언"/
+# "자필"/"조건" 같은 단어 하나만으로는 추론하지 않는다 — 오탐이 review 흐름을
+# 깨뜨리는 게 더 위험하다(예: review 진행 중인 사용자가 "이 조건을 맞춰야
+# 하나요?"라고 물어도 review를 유지해야 한다).
+#
+# 상태가 그 자체로 명백한 표현 — 단독으로 prepare 인정.
+_PREPARE_NOT_YET_DONE_MARKERS = (
+    "아직 쓰지 않았",
+    "아직 쓰진 않았",
+    "아직 안 썼",
+    "아직 안 쓴",
+    "아직 작성 전",
+    "아직 작성하지 않았",
+    "아직 작성하지 않",
+    "아직 녹음 전",
+    "아직 녹음하지 않았",
+    "아직 안 녹음",
+)
+# "작성/녹음하겠다"는 의도 자체가 명백한 표현 — 단독으로 prepare 인정.
+_PREPARE_CREATE_INTENT_MARKERS = (
+    "유언장을 쓰려고",
+    "유언장 쓰려고",
+    "유언장을 작성하려고",
+    "유언장 작성하려고",
+    "유언장을 쓰고 싶",
+    "유언장 쓰고 싶",
+    "유언장을 작성하고 싶",
+    "유언장 작성하고 싶",
+    "작성 요건",
+    "녹음하려고",
+    "녹음하고 싶",
+)
+
+
+def _infer_intent_from_message(user_message: str) -> Optional[str]:
+    """자연어에서 명백한 prepare(아직 작성/녹음 전) 의도만 잡는다. 그 외는
+    None — 저장된 state.intent 나 기본값(review)을 그대로 쓰라는 뜻이다."""
+    if any(marker in user_message for marker in _PREPARE_NOT_YET_DONE_MARKERS):
+        return _PREPARE_INTENT
+    if any(marker in user_message for marker in _PREPARE_CREATE_INTENT_MARKERS):
+        return _PREPARE_INTENT
+    return None
+
+
+def _explicit_intent_this_turn(context: Optional[dict[str, Any]]) -> Optional[str]:
+    """이번 턴에 클라이언트가 명시적으로 보낸 intent(평면 최상위 키)만 본다.
+
+    state.py의 평면 폴백 정의(_flat_overrides)와 정확히 같은 판정 기준(None/빈
+    문자열은 미지정)이다. 네임스페이스(context["decedent_estate"]["intent"])는
+    "지난 턴에 저장된 값"이라 여기서는 보지 않는다 — 그래야 자연어 추론이 저장된
+    값보다 먼저 개입할 수 있다 (우선순위: 이번 턴 explicit > 이번 턴 자연어 추론
+    > 저장된 state.intent > 기본값 review). 이 함수는 그 첫 번째 우선순위만
+    담당한다.
+    """
+    context = context or {}
+    value = context.get("intent")
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
 # intent(이용 목적): "review"(기본, 이미 있는 유언장/대본 점검) | "prepare"(아직
 # 작성 전, 준비 가이드). full 지원 방식(handwritten/unknown/recording)에서만 의미가
 # 있다 — notarial/secret/oral은 애초에 review/prepare 구분 없이 안내만 한다.
@@ -166,17 +232,39 @@ def _namespaced(
 
 def _resolve_intent(
     state: DecedentState,
+    context: Optional[dict[str, Any]],
+    user_message: str,
 ) -> tuple[Optional[str], list[dict[str, Any]]]:
     """상태의 intent 를 review/prepare 로 정리한다.
 
-    will_type 게이트와 같은 패턴을 쓰되(잘못된 값이면 재질문), "미지정"의 취급만
-    다르다 — will_type은 기본값이 없어 None이면 무조건 되묻지만, intent는
-    review라는 합리적인 기본값이 있어서 값이 아예 없으면(context에 키 자체가
-    없거나 None) 조용히 review로 판정한다(기존 호출부 하위 호환 — intent를 아직
-    모르는 옛 클라이언트도 그대로 review 파이프라인을 탄다). 값이 있는데
-    화이트리스트 밖이면(오타 등) will_type과 동일하게 None을 돌려줘 호출부가
-    재질문(_intent_question_output)하게 한다.
+    우선순위(2026-09-05 자연어 prepare 전환 버그 수정 — A > B > C > D):
+      A. 이번 턴 explicit 평면 context.intent — 최우선. 화이트리스트 밖이면
+         (오타 등) will_type 게이트와 동일하게 None을 돌려줘 재질문하게 한다.
+      B. 이번 턴 자연어에 명백한 prepare 의도(_infer_intent_from_message)가
+         있으면 저장된 state.intent(지난 턴 값, review 기본값 포함)보다
+         우선한다 — "이미 review로 저장돼 있다"는 이유만으로 "아직 안
+         썼어요" 같은 명백한 발화를 무시하면 안 된다(실측 재현 버그: 문서
+         intake가 한 번 review로 저장된 뒤에는 사용자가 아무리 명확하게
+         "아직 안 썼다"고 말해도 계속 본문/사진을 요구했다).
+      C. 저장된 state.intent(지난 턴 값).
+      D. 미지정이면 review 기본값(기존 호출부 하위 호환).
     """
+    explicit = _explicit_intent_this_turn(context)
+    if explicit is not None:
+        if explicit not in _INTENT_VALUES:
+            return None, [
+                {
+                    "field": "intent",
+                    "invalid_value": explicit,
+                    "allowed": list(_INTENT_VALUES),
+                }
+            ]
+        return explicit, []
+
+    inferred = _infer_intent_from_message(user_message)
+    if inferred is not None:
+        return inferred, []
+
     intent = state.intent
     if intent is None:
         return _REVIEW_INTENT, []
@@ -1148,6 +1236,19 @@ def _run_pipeline(payload: AgentInput) -> AgentOutput:
     if will_type is None:
         inferred = _infer_will_type_from_message(payload.user_message)
         if inferred is None:
+            # will_type을 아직 몰라 방식 선택 질문으로 돌아가더라도, 이번 턴
+            # 메시지에 이미 명백한 prepare 의도가 있으면 잃지 않고 저장해둔다
+            # (2026-09-05) — 그래야 다음 턴에 will_type만 답해도(예: "직접
+            # 손으로 쓴 유언장") intent를 다시 물을 필요 없이 곧장 작성
+            # 가이드로 들어간다. 이미 explicit/저장된 intent가 있으면 덮지
+            # 않는다(명시값 우선 원칙 유지).
+            if (
+                state.intent is None
+                and _explicit_intent_this_turn(payload.context) is None
+            ):
+                inferred_intent = _infer_intent_from_message(payload.user_message)
+                if inferred_intent is not None:
+                    state.intent = inferred_intent
             return _will_type_question_output(state)
         # context/네임스페이스에 명시값이 없을 때만 여기 도달하므로, 추론값이
         # 기존 명시값을 덮어쓸 일은 없다(명시값 우선 원칙 유지).
@@ -1172,7 +1273,9 @@ def _run_pipeline(payload: AgentInput) -> AgentOutput:
         return _run_no_will_pipeline(state)
 
     if will_type in _FULL_SUPPORT_WILL_TYPES:
-        intent, intent_warnings = _resolve_intent(state)
+        intent, intent_warnings = _resolve_intent(
+            state, payload.context, payload.user_message
+        )
         if intent is None:  # 화이트리스트 밖 값 — will_type 게이트와 동일하게 재질문
             return _intent_question_output(state, will_type, warnings=intent_warnings)
 
