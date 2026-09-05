@@ -103,7 +103,8 @@ def test_handwritten_runs_existing_pipeline_unchanged() -> None:
 
     assert output.data["will_type"] == "handwritten"
     assert "requirements" in output.data
-    assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    # 종결돼도 더 이상 자동 handoff 없음(2026-09-05).
+    assert output.next_action is None
     assert "형식 요건상 문제가 발견되지 않았습니다" in output.reply
 
 
@@ -126,7 +127,8 @@ def test_unknown_defaults_to_handwritten_with_notice() -> None:
     )  # 파이프라인이 그대로 이어짐
     assert output.data["will_type"] == "handwritten"
     assert "requirements" in output.data
-    assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    # 종결돼도 더 이상 자동 handoff 없음(2026-09-05).
+    assert output.next_action is None
 
 
 def test_handwritten_mentioned_in_message_is_not_reasked() -> None:

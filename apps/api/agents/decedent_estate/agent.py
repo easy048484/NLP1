@@ -357,8 +357,7 @@ def _requirement_payload(result: RequirementResult) -> dict[str, Any]:
 
 
 def _next_action(results: dict[str, RequirementResult]) -> Optional[str]:
-    """PENDING이나 RED가 남아 있으면 review를 계속하고, 전부 확정(GREEN)+
-    자필증서로 확인되면 heir_navigator로 넘긴다.
+    """PENDING이나 RED가 남아 있으면 review를 계속한다.
 
     ⚠️ (버그 수정) 예전에는 PENDING만 확인하고 RED는 전혀 보지 않아서, 예를
     들어 주소만 RED고 나머지(날짜/성명/전문 자서/날인)가 GREEN이면 "PENDING
@@ -374,8 +373,21 @@ def _next_action(results: dict[str, RequirementResult]) -> Optional[str]:
     building_number_only — 도로명/지번 건물번호까지만 있고 동·호수가 불명확)도
     동일하게 미종결로 본다. grade 자체는 YELLOW로 확정해도(무효 단정 방지),
     followup_question이 남아있으면 아직 review가 끝난 게 아니다 — 이미 답이
-    끝난 봉투확인 YELLOW(followup_question 없음)는 그대로 handoff 가능 상태로
-    유지된다.
+    끝난 봉투확인 YELLOW(followup_question 없음)는 그대로 미종결이 아니다.
+
+    ⚠️ (2026-09-05) 모든 요건이 종결돼도 더 이상 자동으로
+    handoff:heir_navigator를 반환하지 않는다 — "형식요건 점검 완료"가 곧
+    "사용자가 유언장 상담을 끝냈다"는 뜻이 아니다. 실측 재현된 버그: 점검이
+    끝난 직후 사용자가 "그럼 요건은 일단 다 맞는 건가?"처럼 결과 후속
+    질문을 해도, 세션에 남은 pending_handoff가 다음 턴 라우팅 최우선이라
+    heir_navigator가 그 메시지를 대신 가로채 "돌아가신 날짜가 언제인가요?"
+    같은 엉뚱한 절차 안내를 시작했다. 이제 정상 종료 시 next_action=None을
+    반환한다 — router.classify()의 기존 last_agent continuation(다른
+    키워드가 없으면 직전 에이전트가 이어받는 표준 경로)을 그대로 타므로, 새
+    pending 상태나 decedent_estate 전용 routing 하드코딩을 추가하지 않고도
+    "그다음" 후속 질문은 decedent_estate가 계속 받고, 사용자가 실제로
+    "상속 절차는 어떻게 해?"처럼 다른 키워드를 말하면 기존 라우팅으로
+    heir_navigator가 자연스럽게 선택된다.
     """
     has_unresolved = any(
         results[rid].grade in ("PENDING", "RED") or results[rid].followup_question
@@ -384,22 +396,22 @@ def _next_action(results: dict[str, RequirementResult]) -> Optional[str]:
     if has_unresolved:
         return NEXT_ACTION_AWAIT_USER
 
-    if results["handwriting"].grade == "GREEN":
-        return NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
-
     return None
 
 
 def _next_action_recording(results: dict[str, RequirementResult]) -> Optional[str]:
-    """PENDING이 남아 있으면 되묻고, 전부 확정+증인 실제 참여가 확인되면 heir_navigator로 넘긴다."""
+    """PENDING이 남아 있으면 되묻는다.
+
+    ⚠️ (2026-09-05) _next_action과 동일한 원칙 — 모든 요건이 종결돼도 더 이상
+    자동으로 handoff:heir_navigator를 반환하지 않는다. 점검 완료 직후의 결과
+    후속 질문("증인 요건은 다 맞는 건가?" 등)이 heir_navigator에 가로채이던
+    문제를 handwritten과 동일하게 막는다.
+    """
     has_pending = any(
         results[rid].grade == "PENDING" for rid in FORMAL_RECORDING_REQUIREMENT_IDS
     )
     if has_pending:
         return NEXT_ACTION_AWAIT_USER
-
-    if results["rec_witness_present"].grade == "GREEN":
-        return NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
 
     return None
 
@@ -843,8 +855,6 @@ def _run_handwritten_pipeline(
             address_envelope_answer=address_envelope_answer,
         ),
     }
-    if next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR:
-        data["handoff_reason"] = "가정법원 검인 절차 안내 필요"
 
     reply = format_result(results)
     if prefix_notice:
@@ -896,8 +906,6 @@ def _run_recording_pipeline(
             rec_witness_eligible_answer=rec_witness_eligible_answer,
         ),
     }
-    if next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR:
-        data["handoff_reason"] = "가정법원 검인 절차 안내 필요"
 
     reply = format_result(
         results,

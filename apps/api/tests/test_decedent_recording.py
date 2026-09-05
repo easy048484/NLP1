@@ -10,10 +10,7 @@ import pytest
 
 from agents import decedent_estate
 from agents.decedent_estate import recording_checker
-from agents.decedent_estate.agent import (
-    NEXT_ACTION_AWAIT_USER,
-    NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR,
-)
+from agents.decedent_estate.agent import NEXT_ACTION_AWAIT_USER
 from schemas import AgentInput
 
 _TESTATOR_LINE = "유언자: 홍길동"
@@ -53,7 +50,10 @@ def _run_namespaced(text: str, **context: str):
     return decedent_estate.run(payload)
 
 
-def test_complete_transcript_all_green_and_handoff() -> None:
+def test_complete_transcript_all_green_does_not_auto_handoff() -> None:
+    """모든 요건이 GREEN으로 종결돼도 더 이상 자동으로 heir_navigator에
+    handoff하지 않는다(2026-09-05, handwritten과 동일 원칙) — 점검 완료
+    직후의 결과 후속 질문이 heir_navigator에 가로채이지 않도록 한다."""
     output = _run(
         _COMPLETE_TRANSCRIPT,
         rec_witness_present_answer="yes",
@@ -73,8 +73,8 @@ def test_complete_transcript_all_green_and_handoff() -> None:
     ):
         assert reqs[rid]["grade"] == "GREEN", rid
 
-    assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
-    assert output.data["handoff_reason"] == "가정법원 검인 절차 안내 필요"
+    assert output.next_action is None
+    assert "handoff_reason" not in output.data
     assert "형식 요건상 문제가 발견되지 않았습니다" in output.reply
     assert "녹음 유언의 7가지 요건" in output.reply
     # 대본 입력 안내가 항상 맨 앞에 붙는다.
@@ -253,7 +253,7 @@ def test_colloquial_transcript_all_five_green_via_llm_fallback(
     assert reqs["rec_date"]["extracted"]["extraction_method"] == "regex"
     assert reqs["rec_witness_accuracy"]["extracted"]["extraction_method"] == "regex"
 
-    assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    assert output.next_action is None  # 종결돼도 더 이상 자동 handoff 없음(2026-09-05)
     assert "형식 요건상 문제가 발견되지 않았습니다" in output.reply
 
 
