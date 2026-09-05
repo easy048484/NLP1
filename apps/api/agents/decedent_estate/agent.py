@@ -369,9 +369,17 @@ def _next_action(results: dict[str, RequirementResult]) -> Optional[str]:
     router._WAITING_NEXT_ACTIONS 계약(#110/#111)에 그대로 올라타므로, 다음 턴
     키워드 라우팅보다 decedent_estate가 우선하는 기존 continuation 메커니즘을
     별도 구현 없이 재사용한다.
+
+    ⚠️ (2026-09-05) YELLOW인데 아직 열린 후속 질문이 있는 경우(예: 주소가
+    building_number_only — 도로명/지번 건물번호까지만 있고 동·호수가 불명확)도
+    동일하게 미종결로 본다. grade 자체는 YELLOW로 확정해도(무효 단정 방지),
+    followup_question이 남아있으면 아직 review가 끝난 게 아니다 — 이미 답이
+    끝난 봉투확인 YELLOW(followup_question 없음)는 그대로 handoff 가능 상태로
+    유지된다.
     """
     has_unresolved = any(
-        results[rid].grade in ("PENDING", "RED") for rid in _FORMAL_REQUIREMENT_IDS
+        results[rid].grade in ("PENDING", "RED") or results[rid].followup_question
+        for rid in _FORMAL_REQUIREMENT_IDS
     )
     if has_unresolved:
         return NEXT_ACTION_AWAIT_USER

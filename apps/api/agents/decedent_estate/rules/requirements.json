@@ -78,8 +78,14 @@
       "conditions": [
         {
           "id": "full_address",
-          "description": "번지/동·호수까지 기재",
+          "description": "도로명/지번 건물번호에 더해 동·호수 등 세부 거주 단위까지 기재",
           "grade": "GREEN",
+          "precedent_ids": []
+        },
+        {
+          "id": "building_number_only",
+          "description": "도로명/지번 건물번호까지는 기재됐으나 동·호수 등 세부 거주 단위는 불명확 — 장소 특정성은 사실관계에 따라 달라질 수 있어 무효로 단정하지 않는다",
+          "grade": "YELLOW",
           "precedent_ids": []
         },
         {

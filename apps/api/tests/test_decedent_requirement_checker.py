@@ -445,3 +445,105 @@ def test_property_location_road_address_still_excluded_by_context() -> None:
 
     assert results["address"].condition_id == "absent"
     assert results["address"].grade == "RED"
+
+
+# ---------------------------------------------------------------------------
+# 도로명주소 건물번호 뒤 한국어 조사 경계 (2026-09-05)
+#
+# _ADDRESS_UNIT_RE의 도로명주소 대안이 건물번호 뒤에 공백/쉼표/마침표/문자열
+# 끝만 허용해서, "테헤란로 123이라고 적혀 있어요"처럼 review 자연어 확인
+# 답변에서 건물번호에 조사가 바로 붙는 문장은 도로명주소를 통째로 놓치고
+# city_district_only(RED)로 오판정됐다. "로/길" 토큰 문맥 제한은 그대로 두고
+# 건물번호 뒤 경계에 명시적 조사 화이트리스트(이라고/라고/에/으로/입니다)만
+# 추가했다 — 숫자 뒤 한글을 전부 허용하지 않는다.
+# ---------------------------------------------------------------------------
+
+
+def test_address_road_name_with_narrative_particle_ida_go() -> None:
+    result = extract_address(
+        "주소는 서울특별시 강남구 테헤란로 123이라고 적혀 있습니다."
+    )
+    assert result.case == "full_address"
+
+
+def test_address_road_name_with_narrative_particle_e() -> None:
+    result = extract_address("서울특별시 강남구 테헤란로 123에 살았습니다.")
+    assert result.case == "full_address"
+
+
+def test_address_road_name_with_narrative_particle_eseo() -> None:
+    result = extract_address("서울특별시 강남구 테헤란로 123에서 작성했습니다.")
+    assert result.case == "full_address"
+
+
+def test_address_road_name_with_narrative_particle_euro() -> None:
+    result = extract_address("서울특별시 강남구 테헤란로 123으로 이사했습니다.")
+    assert result.case == "full_address"
+
+
+def test_address_road_name_with_narrative_particle_ipnida() -> None:
+    result = extract_address("주소는 서울특별시 강남구 테헤란로 123입니다.")
+    assert result.case == "full_address"
+
+
+def test_address_road_name_with_detail_and_narrative_particle() -> None:
+    """상세주소(동/호)까지 포함해 서술형으로 끝나는 문장 — 기존 상세주소 판정과
+    새 조사 경계가 함께 정상 동작해야 한다."""
+    result = extract_address(
+        "주소는 서울특별시 강남구 테헤란로 123, 101동 1203호라고 적혀 있습니다."
+    )
+    assert result.case == "full_address"
+
+
+def test_address_road_name_narrative_particles_do_not_regress_existing_cases() -> None:
+    """조사 경계를 넓히기 전 기존 표기(공백/쉼표/부번/복합 도로명)는 그대로
+    통과해야 한다 — 회귀 확인용."""
+    for text, expected_case in (
+        ("주소: 서울특별시 강남구 테헤란로 123", "full_address"),
+        ("주소: 서울특별시 강남구 테헤란로 123-4", "full_address"),
+        ("주소: 경기도 성남시 분당구 판교로 256번길 12", "full_address"),
+        ("주소: 서울특별시 강남구 테헤란로 123, 45동 678호", "full_address"),
+    ):
+        result = extract_address(text)
+        assert result.case == expected_case, f"{text!r} -> {result.case}"
+
+
+def test_address_road_name_without_detail_is_yellow_with_detail_question() -> None:
+    """도로명 건물번호까지는 있지만 동·호수 등 세부 거주 단위가 없으면 무효로
+    단정하지 않고 YELLOW(building_number_only) + 후속 질문으로 처리한다
+    (2026-09-05)."""
+    results = check_requirements(
+        "주소는 서울특별시 강남구 테헤란로 123이라고 적혀 있습니다."
+    )
+    address = results["address"]
+    assert address.grade == "YELLOW"
+    assert address.condition_id == "building_number_only"
+    assert (
+        address.followup_question == "유언장에 동·호수 등 더 상세한 주소도 적혀 있나요?"
+    )
+
+
+def test_address_road_name_with_detail_is_green_via_check_requirements() -> None:
+    """세부 거주 단위(동·호수)까지 있으면 기존처럼 GREEN — 후속 질문 없음."""
+    results = check_requirements(
+        "주소는 서울특별시 강남구 테헤란로 123, 101동 1203호라고 적혀 있습니다."
+    )
+    address = results["address"]
+    assert address.grade == "GREEN"
+    assert address.condition_id == "full_address"
+    assert address.followup_question is None
+
+
+def test_address_narrative_particle_boundary_does_not_widen_false_positives() -> None:
+    """조사 화이트리스트를 추가해도 '로/길' 토큰이 없는 금액·수량·기간·날짜
+    표현은 여전히 주소로 오인되면 안 된다 — 오탐 증가 없음 확인."""
+    for text in (
+        "예금 123만원",
+        "3개월",
+        "2026년",
+        "주식 123주",
+        "빚이 123만원 있습니다.",
+        "이 유언장은 2026년입니다.",
+    ):
+        result = extract_address(text)
+        assert result.case == "absent", f"오탐: {text!r} -> {result.case}"
