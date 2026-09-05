@@ -3,16 +3,31 @@
 
 classify
 --------
-키워드 우선, 애매할 때만 LLM.
+LLM-first (2026-09-05 개편). registry.all_specs()의 모든 등록 에이전트(is_stub
+제외) 중 실제로 필요한 것을 LLM이 매 턴 직접 고릅니다 — 예전처럼 "키워드
+후보가 2개 이상일 때만" LLM을 부르지 않습니다. name/description/
+example_utterances가 키워드 매칭의 보조가 아니라 라우팅의 주된 판단 근거가
+되게 하려는 목적입니다(키워드만으로는 "아버지가 손으로 남긴 문서가 있는데
+효력이 있는지 모르겠어요"처럼 등록된 키워드를 전혀 안 쓴 발화를 못 잡음).
 
   등급           조건                                    처리
-  Fast Path      직전 턴 핸드오프 대상이 있음             build_plan 생략, 그 에이전트 1개
-  Standard Path  키워드 후보 0~1개                        후보 1개(없으면 직전 에이전트→기본)
-  Full Pipeline  키워드 후보 2개 이상                     LLM 이 후보 중 실제 필요한 것만 고름
-                                                          → DAG → 병렬/순차 → compose
+  Fast Path      직전 턴 핸드오프 대상이 있음             build_plan 생략, 그 에이전트 1개(LLM 미호출)
+  Standard Path  직전 턴 응답 대기(pending_reply_agent)   그 에이전트 1개(LLM 미호출)
+  Standard/Full  그 외 전부                               LLM이 전체 eligible 후보 중 선택
+                                                          → 1개면 Standard, 2개 이상이면
+                                                          DAG → 병렬/순차 → compose
 
-LLM 을 못 쓰는 환경(ANTHROPIC_API_KEY 없음, 호출 실패, 거절)에서는 키워드 후보
-전부를 그대로 계획에 넣습니다 — 개발 원칙 2 "항상 실행 가능".
+pending_handoff/pending_reply_agent는 여전히 결정론적 최우선이라 LLM을 아예
+부르지 않습니다(#110/#111, #118/#119, #126/#127 continuation 계약 유지) —
+이미 자료를 요청했거나 명시적으로 다음 에이전트를 지정해둔 상태에서 LLM의
+판단이 그걸 뒤집으면 안 되기 때문입니다.
+
+LLM 을 못 쓰는 환경(ANTHROPIC_API_KEY 없음, 호출 실패, 응답 파싱 실패)에서만
+기존 키워드 기반 결정론적 폴백을 씁니다 — 개발 원칙 2 "항상 실행 가능".
+키워드 정보(registry.match_keywords)는 삭제하지 않고 이 폴백 전용으로
+남깁니다: 키워드 후보 1개 → 그 에이전트, 후보 0개 → 직전 에이전트→axis
+기본→전체 기본, 후보 2개 이상 → 전부 실행(예전 "LLM 실패 시 후보 전부"와
+동일).
 
 build_plan
 ----------
@@ -80,16 +95,38 @@ class Plan:
 _CLASSIFY_TOOL_NAME = "select_agents"
 
 
-def _classify_prompt(candidates: list[AgentName]) -> str:
+def _eligible_agents() -> list[AgentName]:
+    """LLM 라우팅 후보 전체 — is_stub 은 하드 제외한다.
+
+    retirement_planner 처럼 "데모 범위 제외" 결정으로 껍데기 취급되는
+    에이전트는 예전에도 keywords=[] 로 후보에 아예 안 들어왔다(실측 확인,
+    agents/retirement_planner/spec.py 참고). LLM-first 로 바꾸면서 후보를
+    "키워드 매칭 결과"가 아니라 "등록된 전체 에이전트"로 넓히더라도, 이
+    제품 의도(준비 중 에이전트는 일반 라우팅에서 선택되지 않음)는 그대로
+    지켜야 하므로 is_stub 인 에이전트는 후보 자체에서 뺀다.
+    """
+    return [name for name, spec in registry.all_specs().items() if not spec.is_stub]
+
+
+def _classify_prompt(
+    candidates: list[AgentName], *, last_agent: Optional[AgentName] = None
+) -> str:
     specs = registry.all_specs()
     lines = [
         "당신은 가족 자산·상속 상담 서비스의 라우터입니다. 사용자 메시지를 읽고 아래 "
         "후보 에이전트 중 이번 답변에 실제로 필요한 것만 고르세요. 여러 주제를 한 번에 "
         "물었으면 여러 개를 고르고, 하나만 물었으면 하나만 고르세요. 후보 밖의 이름은 "
         "절대 쓰지 마세요.",
-        "",
-        "후보:",
     ]
+    if last_agent is not None and last_agent in candidates:
+        lines.append(
+            f'참고: 직전 턴에 답변한 에이전트는 "{last_agent.value}"입니다. 사용자의 '
+            '메시지가 새 주제를 지목하지 않는 순수 후속 질문(예: "그럼 ~된 건가요?", '
+            '"그거 맞아요?")이면 보통 같은 에이전트가 이어서 답하는 것이 자연스럽습니다. '
+            "다만 실제로 다른 주제(예: 상속 절차, 자산 정리 등)를 물었다면 그 주제에 "
+            "맞는 에이전트를 고르세요."
+        )
+    lines += ["", "후보:"]
     for name in candidates:
         spec = specs[name]
         stub = (
@@ -104,7 +141,10 @@ def _classify_prompt(candidates: list[AgentName]) -> str:
 
 
 def _llm_select(
-    user_message: str, candidates: list[AgentName]
+    user_message: str,
+    candidates: list[AgentName],
+    *,
+    last_agent: Optional[AgentName] = None,
 ) -> Optional[list[AgentName]]:
     """후보 중 필요한 에이전트를 LLM 이 고릅니다. 실패하면 None (호출부가 폴백)."""
     if not llm_enabled():
@@ -131,7 +171,7 @@ def _llm_select(
             },
         }
         result = claude.extract(
-            system=_classify_prompt(candidates),
+            system=_classify_prompt(candidates, last_agent=last_agent),
             user_text=user_message,
             tool=tool,
             max_tokens=1024,
@@ -140,7 +180,7 @@ def _llm_select(
     except Exception:  # noqa: BLE001 — LLMUnavailable 포함, 어떤 실패든 폴백
         if llm_required():
             raise
-        logger.warning("라우팅 LLM 분류 실패 — 키워드 후보 전부로 폴백", exc_info=True)
+        logger.warning("라우팅 LLM 분류 실패 — 키워드 기반 폴백", exc_info=True)
         return None
 
     picked: list[AgentName] = []
@@ -185,51 +225,58 @@ def classify(
 ) -> Plan:
     """이번 턴에 실행할 에이전트와 경로 등급을 정합니다 (계획의 층 구성은 build_plan).
 
-    axis(생전 준비 / 사후 절차)는 키워드 후보가 하나도 없을 때만 개입합니다 —
-    직전 에이전트가 있으면 그 대화를 이어가고, 없으면 axis 에 맞는 기본 에이전트
-    (사후→heir_navigator, 생전→asset_organizer)로 시작합니다.
+    LLM-first: pending_handoff/pending_reply_agent 두 결정론적 경우가 아니면
+    등록된 전체 에이전트(is_stub 제외) 중 LLM이 직접 고른다. axis(생전 준비 /
+    사후 절차)는 하드 필터가 아니라 LLM 없이 폴백할 때만(키워드 후보가 하나도
+    없을 때) 개입한다 — 직전 에이전트가 있으면 그 대화를 이어가고, 없으면
+    axis에 맞는 기본 에이전트(사후→heir_navigator, 생전→asset_organizer)로
+    시작한다.
 
     pending_reply_agent: 직전 턴 응답이 "사용자 답변을 기다리는 중"이었던
     에이전트(router._WAITING_NEXT_ACTIONS 참고 — 특정 에이전트 이름을
-    하드코딩하지 않고 next_action 값 계약만 본다). 키워드 후보보다 우선한다 —
-    이미 자료를 요청해놓고 다음 턴에 그 답을 다른 후보 에이전트로 흘려보내면
+    하드코딩하지 않고 next_action 값 계약만 본다). LLM 판단보다 우선한다 —
+    이미 자료를 요청해놓고 다음 턴에 그 답을 LLM이 다른 에이전트로 흘려보내면
     안 되기 때문. pending_handoff보다는 낮은 우선순위.
     """
-    # (1) 직전 턴 핸드오프가 최우선 — 기존 라우터와 동일. Fast Path.
+    # (1) 직전 턴 핸드오프가 최우선 — 기존 라우터와 동일. Fast Path. LLM 미호출.
     if (
         pending_handoff is not None
         and registry.get_optional(pending_handoff) is not None
     ):
         return Plan(path=PATH_FAST, layers=[[pending_handoff]])
 
-    # (2) 직전 턴에 답변을 기다리던 에이전트가 있으면 키워드 후보보다 우선한다.
+    # (2) 직전 턴에 답변을 기다리던 에이전트가 있으면 LLM 판단보다 우선한다.
+    #     LLM 미호출.
     if (
         pending_reply_agent is not None
         and registry.get_optional(pending_reply_agent) is not None
     ):
         return Plan(path=PATH_STANDARD, layers=[[pending_reply_agent]])
 
+    # (3) 그 외 전부 — LLM이 전체 eligible 후보를 보고 고른다(키워드 개수와
+    #     무관). 키워드 매칭은 LLM 불가/실패 시 폴백 전용으로만 쓴다(아래).
     candidates = registry.match_keywords(user_message)
-
-    # (3) 키워드 후보 1개 → Standard. (4) 없으면 직전 에이전트 → (5) axis 기본 → (6) 기본.
-    if len(candidates) == 1:
-        return Plan(path=PATH_STANDARD, layers=[[candidates[0]]])
-    if not candidates:
-        if last_agent is not None and registry.get_optional(last_agent) is not None:
-            target = last_agent
-        else:
-            target = _axis_default_agent(axis, default_agent)
-        if registry.get_optional(target) is None:
-            target = default_agent
-        return Plan(path=PATH_STANDARD, layers=[[target]])
-
-    # (7) 후보 2개 이상 → Full Pipeline. LLM 이 고르고, 못 고르면 전부.
-    selected = _llm_select(user_message, candidates)
+    eligible = _eligible_agents()
+    selected = _llm_select(user_message, eligible, last_agent=last_agent)
     llm_used = selected is not None
+
     if selected is None:
+        # ---- LLM 불가/실패 — 기존 키워드 기반 결정론적 폴백 그대로 ----
+        if len(candidates) == 1:
+            return Plan(path=PATH_STANDARD, layers=[[candidates[0]]])
+        if not candidates:
+            if last_agent is not None and registry.get_optional(last_agent) is not None:
+                target = last_agent
+            else:
+                target = _axis_default_agent(axis, default_agent)
+            if registry.get_optional(target) is None:
+                target = default_agent
+            return Plan(path=PATH_STANDARD, layers=[[target]])
+        # 후보 2개 이상, LLM 못 씀 — 예전처럼 후보 전부 실행.
         selected = candidates
+
     if len(selected) == 1:
-        # LLM 이 하나로 좁혔으면 굳이 합성할 것이 없다 — Standard 로 내린다.
+        # 하나로 좁혀졌으면 굳이 합성할 것이 없다 — Standard 로 내린다.
         return Plan(path=PATH_STANDARD, layers=[[selected[0]]], llm_used=llm_used)
     plan = build_plan(selected)
     plan.llm_used = llm_used
