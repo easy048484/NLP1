@@ -365,11 +365,46 @@ _LIABILITY_KEYWORDS: dict[_LiabilityLabel, tuple[str, ...]] = {
     "임대보증금반환채무": ("임대보증금", "보증금반환", "보증금 반환"),
 }
 
+#: "재산이랑 빚을 정리해두려고 해요"/"자산과 부채를 확인하고 싶어요"처럼
+#: 자산·부채를 뭉뚱그려 "정리/확인하겠다"는 포괄적 상담 의도 표현. "빚"만
+#: 문제가 된다 — "대출"/"융자"/"카드론"/"전세자금대출"/"임대보증금"은
+#: 이런 포괄 의도 문장에 자연스럽게 등장하지 않는 구체적 금융상품
+#: 명사라 이 가드가 필요 없다(실측: "빚"만 일상어라 "부채"의 대용으로도
+#: 흔히 쓰임). "정리"/"확인" + 의향형 어미(-려고/-고 싶/-줄래 등)가 함께
+#: 있어야만 좁게 잡는다 — 이미 완료된 사실 진술("정리했어요")은 이 어미가
+#: 없어 안 걸린다.
+_ORGANIZE_INTENT_RE = re.compile(
+    r"(정리|확인)(하|해)\S{0,6}(려고|고\s*싶|줄래|주세요|볼까)"
+)
+#: 위 포괄 의도 표현이라도 "빚이 있는데"/"빚이 남아"처럼 존재를 실제로
+#: 진술하는 구절이 같은 세그먼트에 있으면 억제하지 않는다 — "빚이 좀
+#: 있는데 정리하고 싶어요"는 실제 부채 존재 확인이 우선이다. "없|아니"
+#: (부정)와 대칭으로 짧은 로컬 조각 매칭 관례(_NEGATIVE_ANSWER_RE 등)를
+#: 그대로 따른다.
+_EXISTENCE_VERB_RE = re.compile(r"있|남")
+
+
+def _is_generic_liability_intent(segment: str, keyword: str) -> bool:
+    """실측 재현된 버그: 사후 모드 첫 턴에서 "재산이랑 빚을 정리해두려고
+    해요"라고만 말해도 "빚" 키워드가 잡혀 대출 존재가 확정되고 곧바로
+    대출 금액을 되물었다 — 구체적 보유 항목이 없으므로 category selection
+    으로 가야 했다. "빚" 키워드가 매칭됐고, 포괄적 정리/확인 의도
+    표현이면서, 존재를 실제로 진술하는 구절이 없을 때만 이 키워드
+    매칭을 무시한다."""
+    if keyword != "빚":
+        return False
+    if not _ORGANIZE_INTENT_RE.search(segment):
+        return False
+    return not _EXISTENCE_VERB_RE.search(segment)
+
 
 def _match_liability_type(segment: str) -> Optional[_LiabilityLabel]:
     for liability_type, keywords in _LIABILITY_KEYWORDS.items():
-        if any(keyword in segment for keyword in keywords):
-            return liability_type
+        for keyword in keywords:
+            if keyword in segment and not _is_generic_liability_intent(
+                segment, keyword
+            ):
+                return liability_type
     return None
 
 

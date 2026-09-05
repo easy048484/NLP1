@@ -1517,6 +1517,33 @@ def test_post_death_category_selection_uses_non_ownership_phrasing(
     assert state["mode"] == "post_death"
 
 
+def test_post_death_generic_bit_intent_offers_category_selection_not_liability_question(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """실측 재현된 버그: 사후 모드 첫 턴에서 "어머니가 돌아가셔서 재산이랑
+    빚을 한번 정리해두려고 해요."라고만 말해도 "빚" 키워드가 대출 존재로
+    잡혀 곧바로 대출 금액을 되물었다 — 구체적 보유 항목이 없으므로
+    category selection으로 가야 한다(extractor._is_generic_liability_intent
+    참고)."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    output = agent.run(
+        AgentInput(
+            session_id="cs3",
+            user_message="어머니가 돌아가셔서 재산이랑 빚을 한번 정리해두려고 해요.",
+            context={"mode": "post_death"},
+        )
+    )
+
+    assert output.reply == agent._POST_DEATH_CATEGORY_SELECT_PROMPT
+    assert "대출" not in output.reply
+    state = output.data[STATE_KEY]
+    assert state.get("awaiting_category_selection") is True
+    assert state["liabilities"] == []
+    assert state["pending_amounts"] == []
+    assert state["checked_categories"] == []
+
+
 def test_pre_need_full_parse_failure_also_gets_explicit_reask(
     monkeypatch: pytest.MonkeyPatch,
 ):
