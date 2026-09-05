@@ -268,6 +268,15 @@ _DRAFT_GIVE_TO_RECIPIENT_RE = re.compile(r"(?:에게|한테)\s*주고")
 #    "유언장을 준비하려고요"처럼 문장 속에 들어간 경우는 제목이 아니라 요청이다.
 _DRAFT_TITLE_LINE_RE = re.compile(r"^\s*(?:유언장|유언)\s*$")
 
+# review 진행 중 자연어 확인 답변 — handwriting_answer/seal_answer는 원래
+# ChoiceGroup 버튼 클릭이 구조화 context(예: context.handwriting_answer="yes")로
+# 보내주는 값이지만, 사용자가 버튼 대신 자연어로 "직접 손으로 쓰셨고, 도장도
+# 찍혀 있습니다"처럼 답할 수도 있다. 명백한 표현만 deterministic하게 인정하고
+# (LLM 분류 없음), 모호한 표현은 추측하지 않는다 — 기존 미확인(PENDING) 상태를
+# 그대로 유지한다.
+_HANDWRITING_CONFIRMED_RE = re.compile(r"직접\s*손으로\s*(?:쓰|썼|쓰신|쓰셨)")
+_SEAL_CONFIRMED_RE = re.compile(r"(?:도장|지장|손도장)\S{0,3}\s*찍(?:혀|혔)")
+
 
 def _looks_like_draft(text: str) -> bool:
     """유언장 초안(또는 녹음 대본)으로 볼 만한 신호가 있는지 판별한다.
@@ -654,6 +663,71 @@ def _document_intake_output(
     )
 
 
+#: date/name/address 는 텍스트에서 아무 근거도 못 찾으면 이 condition_id로
+#: 떨어진다(rules/requirements.json). review가 진행 중인 뒤 이 세 요건만
+#: "이전 턴에 실제 근거를 찾았는데 이번 턴에 못 찾았다고 되돌리지 않는다"
+#: 병합 대상이다 — handwriting/seal은 answer 파라미터로만 정해지므로(텍스트를
+#: 스캔하지 않음) 매 턴 다시 계산해도 안전하고, interseal은 이번 버그의
+#: 범위 밖이다.
+_TEXT_DERIVED_REQUIREMENT_IDS = ("date", "address", "name")
+
+
+def _requirement_is_unresolved(requirement_id: str, result: RequirementResult) -> bool:
+    """이번 턴 text에서 이 요건의 실제 근거를 못 찾았는지.
+
+    address는 본문에 아무 근거가 없으면(_build_address_result) 봉투 확인
+    followup으로 넘어가면서 겉보기 condition_id가 바뀐다 — 그래서
+    extracted["underlying_case"](followup 진입 전 본문 판정)도 함께 본다.
+    """
+    if requirement_id == "address":
+        return result.condition_id == "absent" or (
+            result.extracted.get("underlying_case") == "absent"
+        )
+    return result.condition_id == "absent"
+
+
+def _requirement_result_from_stored(stored: dict[str, Any]) -> RequirementResult:
+    """세션에 저장된 _requirement_payload() 결과(dict)를 RequirementResult로
+    되돌린다 — 유언장 원문이 아니라 이미 판정까지 끝난 구조화 값만 쓰므로
+    새 PII 저장 없이 이전 판정을 그대로 재사용할 수 있다."""
+    return RequirementResult(
+        requirement_id=stored["id"],
+        name=stored["name"],
+        condition_id=stored.get("condition_id"),
+        grade=stored.get("grade"),
+        precedent_ids=list(stored.get("precedent_ids") or []),
+        extracted=dict(stored.get("extracted") or {}),
+        followup_question=stored.get("followup_question"),
+    )
+
+
+def _preserve_established_requirements(
+    results: dict[str, RequirementResult], stored_requirements: dict[str, Any]
+) -> dict[str, RequirementResult]:
+    """review가 이미 진행 중일 때, 이번 턴 자연어 답변이 "유언장 본문"이 아니라서
+    date/address/name을 못 찾더라도 이전에 이미 확정된 판정을 잃지 않게 한다.
+
+    "주소는 본문에 적혀 있습니다" 같은 확인 답변은 실제 주소 값을 담고 있지
+    않으므로 이번 턴만 보면 absent다 — 그렇다고 이전 턴에 이미 판정한 결과를
+    absent로 되돌리면 review가 처음부터 다시 시작된 것처럼 보인다. 반대로
+    이번 턴에 실제 새 값이 오면(예: 실제 주소 문자열) 그 값을 우선한다 — 오직
+    "이번 턴에도 못 찾았고, 이전엔 찾았다"일 때만 이전 결과를 보존한다.
+    """
+    merged = dict(results)
+    for rid in _TEXT_DERIVED_REQUIREMENT_IDS:
+        new_result = results[rid]
+        if not _requirement_is_unresolved(rid, new_result):
+            continue  # 이번 턴에 실제 근거를 새로 찾았다 — rule engine의 새 판정을 쓴다.
+        stored = stored_requirements.get(rid)
+        if not stored:
+            continue  # 이전에 판정한 적이 없다 — absent 그대로.
+        old_result = _requirement_result_from_stored(stored)
+        if _requirement_is_unresolved(rid, old_result):
+            continue  # 이전에도 근거가 없었다 — 보존할 것이 없다.
+        merged[rid] = old_result
+    return merged
+
+
 def _run_handwritten_pipeline(
     payload: AgentInput,
     state: DecedentState,
@@ -679,17 +753,45 @@ def _run_handwritten_pipeline(
     있나요?" 같은 상담 요청 문장을 본문으로 오인해 날짜/주소/성명에 RED를
     매기던 버그 수정 — had_photo 는 _resolve_photo_intake 가 photo_draft 를
     소비하기 전에 미리 캡쳐해둔다.
+
+    ⚠️ review continuation: 위 게이트는 review가 "이미 시작된 뒤"에는 적용하지
+    않는다(review_already_started — state.requirements 가 비어있지 않음, 즉
+    최소 한 번은 실제 본문으로 check_requirements 를 돌린 적이 있다는 뜻). 안
+    그러면 "주소는 본문에 적혀 있습니다, 도장도 찍혀 있어요" 같은 확인 답변
+    턴마다 _looks_like_draft 가 False를 반환해 매번 처음 intake 안내로
+    되돌아간다(실측 확인된 버그). 새 boolean 상태를 추가하지 않고 기존
+    state.requirements 유무만으로 판단한다.
     """
     had_photo = bool(payload.image_base64) or bool(state.photo_draft)
     photo_output, text, state = _resolve_photo_intake(payload, state)
     if photo_output is not None:
         return photo_output
 
-    if not had_photo and not _looks_like_draft(text):
+    review_already_started = bool(state.requirements)
+    if not had_photo and not _looks_like_draft(text) and not review_already_started:
         return _document_intake_output(state, intent=intent)
 
+    # handwriting_answer/seal_answer 는 원래 ChoiceGroup 버튼 클릭이 구조화
+    # context로 보내주지만, review 진행 중 자연어로도 명백히 확인되면
+    # deterministic하게 반영한다(모호하면 그대로 미확인으로 둔다) — 위
+    # _HANDWRITING_CONFIRMED_RE/_SEAL_CONFIRMED_RE 참고. 이미 답변이 있으면
+    # (버튼이든 이전 자연어든) 덮어쓰지 않는다.
     handwriting_answer = state.handwriting_answer
+    if handwriting_answer is None and _HANDWRITING_CONFIRMED_RE.search(text):
+        handwriting_answer = "yes"
     seal_answer = state.seal_answer
+    if seal_answer is None and _SEAL_CONFIRMED_RE.search(text):
+        seal_answer = "seal_or_fingerprint"
+    if (
+        handwriting_answer != state.handwriting_answer
+        or seal_answer != state.seal_answer
+    ):
+        state = state.model_copy(
+            update={
+                "handwriting_answer": handwriting_answer,
+                "seal_answer": seal_answer,
+            }
+        )
     address_envelope_answer = state.address_envelope_answer
 
     results = check_requirements(
@@ -698,6 +800,8 @@ def _run_handwritten_pipeline(
         seal_answer=seal_answer,
         address_envelope_answer=address_envelope_answer,
     )
+    if review_already_started:
+        results = _preserve_established_requirements(results, state.requirements)
 
     next_action = _next_action(results)
 
