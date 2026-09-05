@@ -79,7 +79,6 @@ from .will_types import (
 )
 
 _FORMAL_REQUIREMENT_IDS = ("date", "address", "name", "handwriting", "seal")
-_ALL_REQUIREMENT_IDS = (*_FORMAL_REQUIREMENT_IDS, "interseal")
 
 _UNKNOWN_WILL_TYPE = "unknown"
 _HANDWRITTEN_WILL_TYPE = "handwritten"
@@ -353,6 +352,31 @@ def _requirement_payload(result: RequirementResult) -> dict[str, Any]:
         "precedents": cited_precedents_for_requirement(result),
         "extracted": result.extracted,
         "followup_question": result.followup_question,
+    }
+
+
+def _supplemental_payload(
+    results: dict[str, RequirementResult],
+) -> Optional[dict[str, Any]]:
+    """법정 형식요건 5개와 같은 자리에 두면 안 되는 참고 항목(현재는 간인뿐).
+
+    간인(interseal)은 rules/requirements.json에서 is_legal_requirement: false로
+    명시된 유일한 항목이다 — 예전에는 results["interseal"]이 그대로
+    requirements 딕셔너리에 나머지 5개와 나란히 들어가, single_page(근거
+    없음, grade=None)여도 빈 카드가, multiple_pages(WHITE)여도 신호등처럼
+    보이는 카드가 붙어 프론트에 "6번째 요건"으로 보였다(실측 확인, UX
+    버그). 여러 장이 실제로 감지된 경우(WHITE)에만 별도 필드로 노출하고,
+    근거가 없으면 아예 내보내지 않는다 — "여러 장인가요?"라는 새 필수
+    질문을 추가하지 않는다는 원칙 그대로, 기존 _MULTI_PAGE_RE 감지 결과만
+    쓴다.
+    """
+    interseal = results.get("interseal")
+    if interseal is None or interseal.grade != "WHITE":
+        return None
+    return {
+        "id": interseal.requirement_id,
+        "name": interseal.name,
+        "note": format_requirement_line(interseal) or "",
     }
 
 
@@ -838,8 +862,9 @@ def _run_handwritten_pipeline(
     next_action = _next_action(results)
 
     requirements = {
-        rid: _requirement_payload(results[rid]) for rid in _ALL_REQUIREMENT_IDS
+        rid: _requirement_payload(results[rid]) for rid in _FORMAL_REQUIREMENT_IDS
     }
+    supplemental = _supplemental_payload(results)
     pending = pending_questions(results)
 
     data: dict[str, Any] = {
@@ -855,6 +880,8 @@ def _run_handwritten_pipeline(
             address_envelope_answer=address_envelope_answer,
         ),
     }
+    if supplemental:
+        data["supplemental"] = supplemental
 
     reply = format_result(results)
     if prefix_notice:
