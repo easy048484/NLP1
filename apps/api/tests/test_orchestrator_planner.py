@@ -590,6 +590,50 @@ def test_red_requirement_keeps_pending_reply_agent_for_correction_turn():
     assert turn2.data["requirements"]["address"]["grade"] == "GREEN"
 
 
+def test_yellow_address_detail_question_keeps_pending_reply_agent():
+    """주소가 도로명 건물번호까지만 있고 동·호수가 불명확해 YELLOW +
+    후속 질문으로 열려 있으면(2026-09-05), grade가 RED가 아니라 YELLOW여도
+    pending_reply_agent가 decedent_estate에 남아야 한다 — 다음 턴 상세주소
+    입력이 다른 에이전트로 새지 않는다(실제 decedent_estate 에이전트로 실행,
+    fake 아님)."""
+    turn1 = router.route(
+        AgentInput(
+            session_id="yellow-detail-1",
+            user_message=(
+                "유언장\n유언자: 홍길동\n주소: 서울특별시 강남구 테헤란로 123\n"
+                "2026년 5월 3일\n\n나의 전 재산을 배우자에게 상속한다."
+            ),
+            context={
+                "decedent_estate": {
+                    "will_type": "handwritten",
+                    "handwriting_answer": "yes",
+                    "seal_answer": "seal_or_fingerprint",
+                }
+            },
+        )
+    )
+    assert turn1.agent == AgentName.DECEDENT_ESTATE
+    assert turn1.data["requirements"]["address"]["grade"] == "YELLOW"
+    assert (
+        turn1.data["requirements"]["address"]["condition_id"] == "building_number_only"
+    )
+    assert turn1.next_action != "handoff:heir_navigator"
+
+    stored = router.default_store.load("yellow-detail-1")
+    assert stored.pending_reply_agent == AgentName.DECEDENT_ESTATE
+
+    turn2 = router.route(
+        AgentInput(
+            session_id="yellow-detail-1",
+            user_message=(
+                "주소는 서울특별시 강남구 테헤란로 123, 101동 1203호라고 적혀 있습니다."
+            ),
+        )
+    )
+    assert turn2.agents == [AgentName.DECEDENT_ESTATE]
+    assert turn2.data["requirements"]["address"]["grade"] == "GREEN"
+
+
 # ------------------------------------------------------- compose / verify
 
 

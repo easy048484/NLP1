@@ -318,6 +318,11 @@ def format_requirement_line(
         if note:
             lines.append(f"   ℹ️ {note}")
         lines.append(_YELLOW_CTA)
+        # 아직 열린 후속 질문이 있으면(예: 주소 building_number_only — 동·호수
+        # 불명확) 함께 안내한다. 이미 답이 끝난 YELLOW(예: 봉투확인 승격)는
+        # followup_question이 없어 이 줄이 붙지 않는다.
+        if result.followup_question:
+            lines.append(f"   ❓ {result.followup_question}")
         return "\n".join(lines)
 
     if result.grade == "WHITE":
