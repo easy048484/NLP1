@@ -92,12 +92,13 @@ def _classify_prompt(candidates: list[AgentName]) -> str:
     ]
     for name in candidates:
         spec = specs[name]
+        axes = ", ".join(axis.value for axis in spec.axes)
         stub = (
             " (준비 중 — 사용자가 명시적으로 그 주제를 물었을 때만)"
             if spec.is_stub
             else ""
         )
-        lines.append(f"- {name.value} [{spec.axis.value}]: {spec.description}{stub}")
+        lines.append(f"- {name.value} [{axes}]: {spec.description}{stub}")
         for utterance in spec.example_utterances[:3]:
             lines.append(f'    예) "{utterance}"')
     return "\n".join(lines)

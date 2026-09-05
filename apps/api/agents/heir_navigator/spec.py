@@ -7,7 +7,7 @@ from .agent import run
 
 SPEC = AgentSpec(
     name=AgentName.HEIR_NAVIGATOR,
-    axis=AgentAxis.POST_DEATH,
+    axes=[AgentAxis.POST_DEATH],
     description="사망 이후 상속인이 밟아야 할 절차(사망신고·상속포기/한정승인·신고기한)를 단계별로 안내",
     example_utterances=[
         "아버지가 어제 돌아가셨어요. 뭐부터 해야 하나요?",

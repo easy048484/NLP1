@@ -7,13 +7,7 @@ from .agent import run
 
 SPEC = AgentSpec(
     name=AgentName.ASSET_ORGANIZER,
-    # AgentAxis에 pre_need/post_death 겸용을 표현할 값이 없고(tax_calculator도
-    # 같은 이유로 양쪽 기능을 PRE_NEED 기본축 하나로 선언해둔 전례가 있다),
-    # 이 필드는 "키워드 후보 0개일 때만" 개입하는 라우팅 폴백 힌트일 뿐이라
-    # (orchestrator/planner.py._axis_default_agent 참고) 실제 사후 모드
-    # 진입은 이 값과 무관하게 keywords/mode로 이미 정상 동작한다 — shared
-    # schema/orchestrator 확장은 이번 작업 범위 밖.
-    axis=AgentAxis.PRE_NEED,
+    axes=[AgentAxis.PRE_NEED, AgentAxis.POST_DEATH],
     description=(
         "생전 본인 또는 사후 고인의 재산·부채를 목록화하고, 확인되지 않은"
         " 항목과 금액을 정리. 상속포기·한정승인·절차 판단 자체는 담당하지 않음"

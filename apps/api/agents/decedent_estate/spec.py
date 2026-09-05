@@ -7,7 +7,7 @@ from .agent import run
 
 SPEC = AgentSpec(
     name=AgentName.DECEDENT_ESTATE,
-    axis=AgentAxis.POST_DEATH,
+    axes=[AgentAxis.POST_DEATH],
     description="유언장의 종류·법적 요건·효력을 점검 (자산 목록 정리는 asset_organizer 담당)",
     # planner._classify_prompt() 는 example_utterances[:3] 만 LLM few-shot 으로
     # 쓴다 — 새 예시는 반드시 앞 3개 자리에 넣어야 효과가 있다. 기존 3개는
