@@ -96,6 +96,20 @@ describe("AgentCards — asset_organizer 금액 입력 위젯", () => {
     expect(render("asset_organizer", data, "questions")).toContain("대출 금액");
   });
 
+  it("insurance_value면 보험 금액 입력 위젯을 렌더한다(AmountInputCard 재사용)", () => {
+    const data = {
+      asset_organizer: {
+        pending_amounts: [
+          { kind: "insurance_value", asset_type: "보험", segment: "보험", reason: "보험 금액이 언급되지 않음" },
+        ],
+      },
+    };
+    const html = render("asset_organizer", data, "questions");
+    expect(html).toContain("보험 금액");
+    expect(html).toContain("이 금액으로 답하기");
+    expect(html).toContain("금액을 몰라요");
+  });
+
   it("pending_amounts가 비어 있고 pending_categories만 있으면 남은 카테고리 일괄 확인 위젯을 쓴다", () => {
     const data = {
       asset_organizer: { pending_amounts: [], pending_categories: ["주식", "펀드"] },
