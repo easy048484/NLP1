@@ -39,6 +39,21 @@ def test_save_then_load_round_trips_state(with_db):
     assert loaded.context_for(AgentName.HEIR_NAVIGATOR) == {"turns": 1}
 
 
+def test_save_then_load_round_trips_pending_reply_agent(with_db):
+    """pending_reply_agent는 DB 컬럼이 아니라 per_agent_context의 "_shared" JSON
+    아래에 직렬화되지만, PostgresSessionStore를 거친 실제 왕복에서도 유지돼야
+    한다."""
+    store = PostgresSessionStore()
+    state = SessionState()
+    state.remember(AgentName.DECEDENT_ESTATE, context={}, pending_handoff=None)
+    state.pending_reply_agent = AgentName.DECEDENT_ESTATE
+
+    store.save("session-pending-reply", state)
+    loaded = store.load("session-pending-reply")
+
+    assert loaded.pending_reply_agent == AgentName.DECEDENT_ESTATE
+
+
 def test_save_silently_drops_unknown_family_graph_id(with_db):
     """존재하지 않는 family_graph_id를 세션에 저장하려 하면, 요청을 죽이는
     대신 조용히 비우고 저장합니다 (sessions.family_graph_id FK 보호)."""
