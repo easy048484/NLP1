@@ -3,12 +3,14 @@ import { useApp } from "../../lib/appState";
 import {
   hasCategorySelectionRequest,
   parseAssetAmountRequest,
+  parseAssetReview,
   parsePendingQuestions,
   parseRemainingCategoriesPrompt,
   parseShares,
   parseShareWarnings,
   parseSignals,
   parseTaxResult,
+  type AssetReviewItem,
 } from "../../lib/agentData";
 import { composeCategorySelectionMessage } from "../../lib/assetCategories";
 import { Markdown } from "../../lib/markdown";
@@ -16,6 +18,7 @@ import { formatWonExact } from "../../lib/format";
 import type { AgentOutput } from "../../types";
 import { AmountInputCard } from "./AmountInputCard";
 import { AssetCategorySelectCard } from "./AssetCategorySelectCard";
+import { AssetReviewCard } from "./AssetReviewCard";
 import { RemainingCategoriesPrompt } from "./RemainingCategoriesPrompt";
 import {
   AmountDisplay,
@@ -45,6 +48,7 @@ export function AgentCards({
 
   const signals = parseSignals(data, contribution.agent);
   const amountRequest = parseAssetAmountRequest(data, contribution.agent);
+  const review = parseAssetReview(data, contribution.agent);
   const categorySelectionRequested = hasCategorySelectionRequest(data, contribution.agent);
   const remainingCategories = parseRemainingCategoriesPrompt(data, contribution.agent);
   const pending = parsePendingQuestions(data, contribution.agent);
@@ -79,6 +83,31 @@ export function AgentCards({
           label={amountRequest.label}
           onConfirm={(amountWon) => void send(`${amountWon}원`)}
           onUnknown={() => void send("몰라요")}
+          disabled={loading}
+        />,
+      );
+      return <div className="agent-cards">{cards}</div>;
+    }
+    // 수집이 끝나면(status==="reviewing") 곧바로 finalized로 넘어가지
+    // 않고 이 화면에서 항목별 확인/수정을 거친다. [수정]은 항목의
+    // target(구조화 식별자)을 그대로 context.edit_target으로 보내고,
+    // [이대로 확정]은 context.confirm_review로만 판단한다 — 둘 다
+    // 텍스트 추론에 의존하지 않는다(agent.py._build_review_items 참고).
+    if (review) {
+      const handleEdit = (item: AssetReviewItem) => {
+        void send(`${item.label} 수정할게요`, {
+          context: { edit_target: item.target },
+        });
+      };
+      const handleConfirm = () => {
+        void send("이대로 확정할게요", { context: { confirm_review: true } });
+      };
+      cards.push(
+        <AssetReviewCard
+          key="asset-review"
+          items={review.items}
+          onEdit={handleEdit}
+          onConfirm={handleConfirm}
           disabled={loading}
         />,
       );

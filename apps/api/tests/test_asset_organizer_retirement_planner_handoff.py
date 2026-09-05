@@ -56,11 +56,24 @@ def test_checklist_completion_no_longer_hands_off_and_ends_at_asset_organizer():
 
     # 대출은 remaining_balance만 확인되면 수집 완료다(상환 정보 후속질문
     # 없음) — 나머지 카테고리도 이번 턴에 다 확인됐으니 "없어요" 한 번으로
-    # 바로 마무리된다.
+    # 체크리스트는 끝나지만, 이제는 바로 finalized가 아니라 review로
+    # 넘어간다("수집 종료 != 최종 확정" 원칙).
     output = router.route(AgentInput(session_id=session, user_message="없어요"))
     assert output.agent == AgentName.ASSET_ORGANIZER
-    assert output.data[AgentName.ASSET_ORGANIZER.value]["status"] == "done"
+    assert output.data[AgentName.ASSET_ORGANIZER.value]["status"] == "reviewing"
     assert output.handoffs == []  # 예전엔 여기서 retirement_planner 핸드오프가 걸렸다
+
+    # review 화면에서 [이대로 확정]을 눌러야 finalized로 넘어간다.
+    output = router.route(
+        AgentInput(
+            session_id=session,
+            user_message="이대로 확정할게요",
+            context={"confirm_review": True},
+        )
+    )
+    assert output.agent == AgentName.ASSET_ORGANIZER
+    assert output.data[AgentName.ASSET_ORGANIZER.value]["status"] == "finalized"
+    assert output.handoffs == []
     assert "순자산" in output.reply
 
     # 키워드 없는 평범한 발화를 보내도 retirement_planner로 튕기면 안 된다

@@ -136,4 +136,48 @@ describe("MessageList — 최신 assistant 턴만 interactive(stale follow-up �
     expect(html).toContain("몇 가지만 더 확인할게요");
     expect(html).toContain("부동산 금액을 알려주세요.");
   });
+
+  it("과거 asset_organizer review 카드(수정/이대로 확정)는 최신 턴이 아니면 재클릭 불가", () => {
+    const reviewResponse: ChatResponse = {
+      reply: "재산·부채를 확인해주세요.",
+      needs_review: false,
+      agents: ["asset_organizer"],
+      path: "standard",
+      verification: null,
+      contributions: [
+        {
+          agent: "asset_organizer",
+          reply: "재산·부채를 확인해주세요.",
+          data: {
+            asset_organizer: {
+              status: "reviewing",
+              review_items: [
+                {
+                  kind: "asset_value",
+                  type: "주식",
+                  label: "주식",
+                  value: 15_000_000,
+                  confidence: "confirmed",
+                  target: { kind: "asset_value", asset_type: "주식" },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    } as unknown as ChatResponse;
+
+    const turns: Turn[] = [
+      { id: "a1", role: "assistant", response: reviewResponse },
+      { id: "u2", role: "user", text: "예금 수정할게요" },
+      { id: "a2", role: "assistant", response: pendingAmountResponse("예금") },
+    ];
+    const html = render(turns);
+
+    // 과거 review 카드의 [수정]/[이대로 확정] 버튼은 사라지고, 본문만 남는다.
+    expect(html).not.toContain("이대로 확정");
+    expect(html).toContain("재산·부채를 확인해주세요.");
+    // 최신 턴(수정 답변용 AmountInputCard)만 활성화된다.
+    expect(html).toContain("이 금액으로 답하기");
+  });
 });

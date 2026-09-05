@@ -77,6 +77,32 @@ def _continue(
     )
 
 
+def _confirm(session_id: str, state: dict) -> AgentInput:
+    """review 화면에서 [이대로 확정]을 누른 턴 — 체크리스트가 끝나도 바로
+    finalized(및 financial_profile emit)로 넘어가지 않으므로, financial_profile
+    을 확인하는 기존 테스트들은 이 헬퍼로 review -> finalized 전환을 명시적으로
+    거쳐야 한다. confirm_review는 텍스트가 아니라 구조화 context로만 판단한다
+    (agent.py의 요구사항 4번과 동일 원칙 — [수정]도 마찬가지로 context.edit_target
+    을 쓴다)."""
+    return AgentInput(
+        session_id=session_id,
+        user_message="이대로 확정할게요",
+        context={STATE_KEY: state, "confirm_review": True},
+    )
+
+
+def _edit(session_id: str, message: str, state: dict, target: dict) -> AgentInput:
+    """review 화면에서 [수정]을 누르고 새 값을 답하는 두 턴 중 첫 턴(클릭) —
+    실제로는 [수정] 클릭과 답변이 별개 턴이라 이 헬퍼는 클릭 턴만 만든다.
+    target은 review_items의 target을 그대로 흉내낸 구조(예:
+    {"kind": "asset_value", "asset_type": "예금"})."""
+    return AgentInput(
+        session_id=session_id,
+        user_message=message,
+        context={STATE_KEY: state, "edit_target": target},
+    )
+
+
 def test_local_format_krw_matches_retirement_planner_copy():
     """extractor.py의 TODO와 같은 이유로 의도적으로 복제된 함수 — 두 복제본이
     갈라지지 않았는지 직접 대조한다."""
@@ -185,7 +211,7 @@ def test_negated_asset_mention_completes_category_without_asking_amount():
     assert "예금" not in output.reply
 
 
-def test_comma_listed_categories_all_negated_by_trailing_predicate_reach_done():
+def test_comma_listed_categories_all_negated_by_trailing_predicate_reach_review():
     """실측 재현된 버그(D-01): 사후 모드에서 안심상속 조회 결과로 예금·부동산·
     부채가 확정된 뒤 "주식, 펀드, 자동차, 퇴직연금, 보험은 없어요."라고
     답하면, 쉼표로 나열된 앞 4개 유형이 각자 "유형은 확인, 금액만 모름"으로
@@ -223,7 +249,7 @@ def test_comma_listed_categories_all_negated_by_trailing_predicate_reach_done():
     # 이번 버그와 무관한 후속질문이 하나 더 있을 뿐, 다시 카테고리를
     # 재질문하지 않는다.
     output2 = agent.run(_continue(session_id, "몰라요", state2))
-    assert output2.data[STATE_KEY]["status"] == "done"
+    assert output2.data[STATE_KEY]["status"] == "reviewing"
 
 
 def test_liability_without_amount_asks_then_resolves_via_bare_number():
@@ -257,7 +283,12 @@ def test_full_checklist_exports_flat_financial_profile_with_extra_detail():
     # 부채는 remaining_balance만 확인되면 바로 수집 완료다 — 상환 정보
     # (monthly_payment/end_age) 후속질문을 더 이상 먼저 묻지 않는다.
 
-    assert state["status"] == "done"
+    assert state["status"] == "reviewing"
+    assert output.financial_profile is None  # review 단계에서는 아직 emit 안 함
+
+    output = agent.run(_confirm(session_id, state))
+    state = output.data[STATE_KEY]
+    assert state["status"] == "finalized"
     assert output.financial_profile is not None
     # tax_calculator 담당자 확정 기준 — 예금은 financial_assets로 분류.
     assert output.financial_profile.financial_assets == 100_000_000
@@ -284,8 +315,9 @@ def test_finalize_no_longer_hands_off_to_retirement_planner():
     끝나야 한다 — 별도 트리거나 안내 문구 없이."""
     output = agent.run(AgentInput(session_id="ho1", user_message="예금 1억 있어요"))
     output = agent.run(_continue("ho1", "없어요", output.data[STATE_KEY]))
+    output = agent.run(_confirm("ho1", output.data[STATE_KEY]))
 
-    assert output.data[STATE_KEY]["status"] == "done"
+    assert output.data[STATE_KEY]["status"] == "finalized"
     assert output.handoffs == []
     assert "순자산" in output.reply
     # 노후자금 시뮬레이션으로 이어가자는 안내 문구가 없어야 한다.
@@ -307,7 +339,8 @@ def test_deposit_stock_fund_classified_as_financial_assets():
             user_message="예금 3천만원, 주식 2천만원, 펀드 1천만원 있어요",
         )
     ).data[STATE_KEY]
-    output = agent.run(_continue(session_id, "없어요", state))
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    output = agent.run(_confirm(session_id, state))
 
     assert output.financial_profile.financial_assets == 60_000_000
     assert output.financial_profile.other_assets == 0
@@ -320,7 +353,8 @@ def test_real_estate_only_in_real_estate_value_field():
     state = agent.run(
         AgentInput(session_id=session_id, user_message="부동산 5억 있어요")
     ).data[STATE_KEY]
-    output = agent.run(_continue(session_id, "없어요", state))
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    output = agent.run(_confirm(session_id, state))
 
     assert output.financial_profile.real_estate_value == 500_000_000
     assert output.financial_profile.financial_assets == 0
@@ -340,7 +374,10 @@ def test_other_and_vehicle_and_pension_classified_as_other_assets():
     state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
     assert state["pension_followup_asked"] is True  # 퇴직연금이 있어 후속질문
 
-    output = agent.run(_continue(session_id, "일시금으로 받을게요", state))
+    state = agent.run(_continue(session_id, "일시금으로 받을게요", state)).data[
+        STATE_KEY
+    ]
+    output = agent.run(_confirm(session_id, state))
 
     assert output.financial_profile.other_assets == 110_000_000
     assert output.financial_profile.financial_assets == 0
@@ -356,7 +393,8 @@ def test_mixed_asset_types_are_classified_exclusively_without_overlap():
             user_message=("예금 1억, 주식 5천만원, 부동산 5억, 자동차 2천만원 있어요"),
         )
     ).data[STATE_KEY]
-    output = agent.run(_continue(session_id, "없어요", state))
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    output = agent.run(_confirm(session_id, state))
     profile = output.financial_profile
 
     assert profile.financial_assets == 150_000_000  # 예금 1억 + 주식 5천만
@@ -388,7 +426,7 @@ def test_liability_balance_confirmed_never_triggers_repayment_followup():
     state2 = output.data[STATE_KEY]
 
     assert "월 얼마씩 갚고" not in output.reply
-    assert state2["status"] == "done"
+    assert state2["status"] == "reviewing"
     liability = state2["liabilities"][0]
     assert liability["remaining_balance"] == 50_000_000
     assert liability["monthly_payment"] is None
@@ -426,7 +464,7 @@ def test_pension_followup_asked_right_after_liability_balance_confirmed():
     )
     state3 = output2.data[STATE_KEY]
 
-    assert state3["status"] == "done"
+    assert state3["status"] == "reviewing"
     assert state3["pension_followup_asked"] is True
     assert state3["pension_followup_resolved"] is True
     assert state3["incomes"] == [
@@ -475,8 +513,9 @@ def test_pension_annuity_with_absolute_start_age_creates_income_stream():
     assert any(
         a["type"] == "퇴직연금" and a["value"] == 80_000_000 for a in state2["assets"]
     )
-    assert state2["status"] == "done"
+    assert state2["status"] == "reviewing"
 
+    output = agent.run(_confirm(session_id, state2))
     extra = output.financial_profile.extra["asset_organizer"]
     assert extra["incomes"] == state2["incomes"]
 
@@ -520,7 +559,7 @@ def test_pension_relative_start_age_without_shared_current_age_skips_conversion(
     state2 = output.data[STATE_KEY]
 
     assert state2["incomes"] == []
-    assert state2["status"] == "done"  # 재질문 없이 단순 모드로 진행
+    assert state2["status"] == "reviewing"  # 재질문 없이 단순 모드로 진행
 
 
 def test_pension_lump_sum_answer_skips_income_conversion():
@@ -536,7 +575,7 @@ def test_pension_lump_sum_answer_skips_income_conversion():
     state2 = output.data[STATE_KEY]
 
     assert state2["incomes"] == []
-    assert state2["status"] == "done"
+    assert state2["status"] == "reviewing"
     assert any(
         a["type"] == "퇴직연금" and a["value"] == 80_000_000 for a in state2["assets"]
     )
@@ -555,7 +594,7 @@ def test_pension_dont_know_answer_skips_income_conversion_without_reasking():
     state2 = output.data[STATE_KEY]
 
     assert state2["incomes"] == []
-    assert state2["status"] == "done"
+    assert state2["status"] == "reviewing"
 
 
 def test_pension_annuity_intent_without_amount_or_age_still_skips_conversion():
@@ -579,7 +618,7 @@ def test_pension_annuity_intent_without_amount_or_age_still_skips_conversion():
     state2 = output.data[STATE_KEY]
 
     assert state2["incomes"] == []
-    assert state2["status"] == "done"
+    assert state2["status"] == "reviewing"
 
 
 def test_no_pension_asset_skips_followup_entirely():
@@ -593,7 +632,7 @@ def test_no_pension_asset_skips_followup_entirely():
     state2 = output.data[STATE_KEY]
 
     assert state2["pension_followup_asked"] is False
-    assert state2["status"] == "done"
+    assert state2["status"] == "reviewing"
 
 
 # ================================================ 자동차/퇴직연금/임대보증금반환채무
@@ -642,7 +681,7 @@ def test_lease_deposit_liability_recognized_under_debt_category_simple_mode():
     state2 = output.data[STATE_KEY]
 
     assert "월 얼마씩 갚고" not in output.reply
-    assert state2["status"] == "done"
+    assert state2["status"] == "reviewing"
     liability = state2["liabilities"][0]
     assert liability["monthly_payment"] is None
     assert liability["end_age"] is None
@@ -782,7 +821,8 @@ def test_insurance_value_never_included_in_shared_profile_totals():
     state = agent.run(_continue(session_id, "5천만원", state)).data[STATE_KEY]
     # 남은 카테고리 일괄 확인 — 기존 "없어요" 일괄 확정 경로(주식/펀드/
     # 부동산/자동차/퇴직연금/부채 재질문에 대한 정정 답변)를 그대로 탄다.
-    output = agent.run(_continue(session_id, "없어요", state))
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    output = agent.run(_confirm(session_id, state))
 
     profile = output.financial_profile
     assert profile.real_estate_value == 0
@@ -834,10 +874,13 @@ def test_insurance_extra_preserved_through_to_finalize():
     ).data[STATE_KEY]
     assert "보험" in state["checked_categories"]
 
-    output = agent.run(_continue(session_id, "없어요", state))  # 나머지 없음
-    state = output.data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[
+        STATE_KEY
+    ]  # 나머지 없음
+    assert state["status"] == "reviewing"
 
-    assert state["status"] == "done"
+    output = agent.run(_confirm(session_id, state))
+    assert output.data[STATE_KEY]["status"] == "finalized"
     extra = output.financial_profile.extra["asset_organizer"]
     assert extra["insurance"][0]["value"] == 50_000_000
 
@@ -1106,7 +1149,8 @@ def test_net_worth_excludes_unknown_amount_and_shows_disclaimer():
     state = agent.run(_continue(session_id, "몰라요", state)).data[
         STATE_KEY
     ]  # 부동산 금액
-    output = agent.run(_continue(session_id, "없어요", state))
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    output = agent.run(_confirm(session_id, state))
 
     assert output.financial_profile.real_estate_value == 0
     assert output.financial_profile.financial_assets == 100_000_000
@@ -1120,7 +1164,8 @@ def test_extra_asset_organizer_items_carry_confidence_field():
         AgentInput(session_id=session_id, user_message="집 한 채 있어요")
     ).data[STATE_KEY]
     state = agent.run(_continue(session_id, "몰라요", state)).data[STATE_KEY]
-    output = agent.run(_continue(session_id, "없어요", state))
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    output = agent.run(_confirm(session_id, state))
 
     extra = output.financial_profile.extra["asset_organizer"]
     asset = next(a for a in extra["assets"] if a["type"] == "부동산")
@@ -1134,7 +1179,8 @@ def test_all_confirmed_assets_show_no_disclaimer():
     state = agent.run(
         AgentInput(session_id=session_id, user_message="예금 1억 있어요")
     ).data[STATE_KEY]
-    output = agent.run(_continue(session_id, "없어요", state))
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    output = agent.run(_confirm(session_id, state))
 
     assert "제외됨" not in output.reply
     assert output.financial_profile.financial_assets == 100_000_000
@@ -1215,7 +1261,8 @@ def test_total_debts_excludes_unknown_amount_liability_and_shows_disclaimer():
     state = agent.run(_continue(session_id, "몰라요", state)).data[
         STATE_KEY
     ]  # 대출 금액
-    output = agent.run(_continue(session_id, "없어요", state))
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    output = agent.run(_confirm(session_id, state))
 
     assert output.financial_profile.total_debts == 0
     assert output.financial_profile.financial_assets == 100_000_000
@@ -1615,3 +1662,182 @@ def test_parse_failure_does_not_mark_any_category_checked():
     )
     state2 = output2.data[STATE_KEY]
     assert any(a["type"] == "예금" for a in state2["assets"])
+
+
+# ==================================== 수집 → review → 수정 → 확정(finalized)
+
+
+def _review_target(items: list[dict], label: str) -> dict:
+    return next(item["target"] for item in items if item["label"] == label)
+
+
+def test_collecting_finished_goes_to_review_not_finalized():
+    """수집이 끝나도 즉시 finalized로 넘어가지 않고 review로 간다 —
+    financial_profile도 이 시점엔 아직 emit되지 않는다."""
+    session_id = "rv1"
+    state = agent.run(
+        AgentInput(
+            session_id=session_id,
+            user_message="예금 4,200만원, 주식 600,000,000원, 부동산 6억 있어요",
+        )
+    ).data[STATE_KEY]
+    # 남은 카테고리(자동차/퇴직연금/부채/보험)를 한 번에 없다고 답해 review까지 도달.
+    output = agent.run(_continue(session_id, "없어요", state))
+
+    assert output.data[STATE_KEY]["status"] == "reviewing"
+    assert output.financial_profile is None
+    items = output.data[STATE_KEY]["review_items"]
+    labels = {item["label"] for item in items}
+    assert "예금" in labels and "주식" in labels and "부동산" in labels
+    stock = next(item for item in items if item["label"] == "주식")
+    assert stock["value"] == 600_000_000
+    assert stock["confidence"] == "confirmed"
+    assert stock["target"] == {"kind": "asset_value", "asset_type": "주식"}
+
+
+def test_edit_replaces_existing_value_without_duplicate_and_keeps_other_items():
+    """review에서 주식 6억을 1,500만원으로 수정하면 기존 값을 REPLACE하고
+    (중복 append 없음), 다른 항목(예금)은 그대로 유지된다 — 수정 후 review
+    화면이 다시 전체 표시된다."""
+    session_id = "rv2"
+    state = agent.run(
+        AgentInput(
+            session_id=session_id,
+            user_message="예금 4,200만원, 주식 600,000,000원 있어요",
+        )
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    assert state["status"] == "reviewing"
+
+    stock_target = _review_target(state["review_items"], "주식")
+    output = agent.run(_edit(session_id, "주식 수정할게요", state, stock_target))
+    state = output.data[STATE_KEY]
+    assert state["status"] == "editing_item"
+    assert "주식" in output.reply or "다시 확인" in output.reply
+
+    output = agent.run(_continue(session_id, "1500만원", state))
+    state = output.data[STATE_KEY]
+
+    assert state["status"] == "reviewing"
+    stock_entries = [a for a in state["assets"] if a["type"] == "주식"]
+    assert len(stock_entries) == 1  # 기존 6억 record가 사라지고 하나로 교체됨
+    assert stock_entries[0]["value"] == 15_000_000
+    assert stock_entries[0]["confidence"] == "confirmed"
+    # 다른 항목(예금)은 그대로.
+    deposit_entries = [a for a in state["assets"] if a["type"] == "예금"]
+    assert len(deposit_entries) == 1 and deposit_entries[0]["value"] == 42_000_000
+    # review_items에도 수정된 값이 반영돼 다시 표시된다.
+    stock_item = next(item for item in state["review_items"] if item["label"] == "주식")
+    assert stock_item["value"] == 15_000_000
+
+
+def test_item_can_be_edited_multiple_times():
+    session_id = "rv3"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 1000만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+
+    for new_value_text, expected in (
+        ("2000만원", 20_000_000),
+        ("3000만원", 30_000_000),
+    ):
+        target = _review_target(state["review_items"], "예금")
+        state = agent.run(_edit(session_id, "예금 수정할게요", state, target)).data[
+            STATE_KEY
+        ]
+        state = agent.run(_continue(session_id, new_value_text, state)).data[STATE_KEY]
+        entries = [a for a in state["assets"] if a["type"] == "예금"]
+        assert len(entries) == 1
+        assert entries[0]["value"] == expected
+
+
+def test_edit_can_toggle_confirmed_to_unknown_amount_and_back():
+    session_id = "rv4"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 1000만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+
+    target = _review_target(state["review_items"], "예금")
+    state = agent.run(_edit(session_id, "예금 수정할게요", state, target)).data[
+        STATE_KEY
+    ]
+    state = agent.run(_continue(session_id, "몰라요", state)).data[STATE_KEY]
+    entries = [a for a in state["assets"] if a["type"] == "예금"]
+    assert len(entries) == 1
+    assert entries[0]["confidence"] == "unknown_amount"
+    assert entries[0]["value"] == 0
+
+    target = _review_target(state["review_items"], "예금")
+    state = agent.run(_edit(session_id, "예금 수정할게요", state, target)).data[
+        STATE_KEY
+    ]
+    state = agent.run(_continue(session_id, "1200만원", state)).data[STATE_KEY]
+    entries = [a for a in state["assets"] if a["type"] == "예금"]
+    assert len(entries) == 1
+    assert entries[0]["confidence"] == "confirmed"
+    assert entries[0]["value"] == 12_000_000
+
+
+def test_insurance_can_be_edited_and_stays_excluded_from_totals():
+    session_id = "rv5"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 1000만원, 보험 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "몰라요", state)).data[
+        STATE_KEY
+    ]  # 보험 금액
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    assert state["status"] == "reviewing"
+
+    insurance_item = next(
+        item for item in state["review_items"] if item["label"] == "보험"
+    )
+    assert insurance_item["confidence"] == "unknown_amount"
+    assert insurance_item["value"] is None
+    assert insurance_item.get("excluded_from_totals") is True
+
+    target = insurance_item["target"]
+    state = agent.run(_edit(session_id, "보험 수정할게요", state, target)).data[
+        STATE_KEY
+    ]
+    state = agent.run(_continue(session_id, "3000만원", state)).data[STATE_KEY]
+    assert state["insurance"] == [
+        {"type": "보험", "value": 30_000_000, "note": None, "confidence": "confirmed"}
+    ]
+
+    output = agent.run(_confirm(session_id, state))
+    profile = output.financial_profile
+    assert profile.financial_assets == 10_000_000  # 예금만 — 보험 3천만원 미포함
+    assert profile.extra["asset_organizer"]["insurance"][0]["value"] == 30_000_000
+
+
+def test_confirm_review_finalizes_and_emits_financial_profile():
+    session_id = "rv6"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 1000만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    assert state["status"] == "reviewing"
+
+    output = agent.run(_confirm(session_id, state))
+    assert output.data[STATE_KEY]["status"] == "finalized"
+    assert output.financial_profile is not None
+    assert output.financial_profile.financial_assets == 10_000_000
+
+
+def test_unrecognized_input_during_review_redisplays_review_without_mutating_state():
+    session_id = "rv7"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 1000만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    before_assets = state["assets"]
+
+    output = agent.run(_continue(session_id, "음 글쎄요", state))
+    state = output.data[STATE_KEY]
+    assert state["status"] == "reviewing"
+    assert state["assets"] == before_assets
+    assert output.financial_profile is None
+    assert "수정" in output.reply or "확정" in output.reply

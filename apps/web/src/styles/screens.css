@@ -1178,6 +1178,45 @@
   flex: 1;
 }
 
+/* ---- asset_organizer review(수집 완료 후 확인/수정) ---- */
+.asset-review-card {
+  display: grid;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border: 1px solid var(--agent-asset);
+  border-radius: var(--radius-lg);
+  background: var(--surface-card);
+}
+.asset-review-list {
+  display: grid;
+  gap: var(--sp-2);
+}
+.asset-review-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+.asset-review-label {
+  flex: 1;
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+.asset-review-note {
+  font-size: var(--text-caption);
+  color: var(--ink-faint);
+}
+.asset-review-value {
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+.asset-review-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* ---- family graph panel (sheet) ---- */
 .fp-note {
   font-size: var(--text-caption);
