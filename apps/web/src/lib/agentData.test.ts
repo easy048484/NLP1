@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   hasAssetAmountRequest,
+  hasAssetReview,
   hasCategorySelectionRequest,
   hasPendingQuestions,
   parseAssetAmountRequest,
+  parseAssetReview,
   parsePendingQuestions,
   parseRemainingCategoriesPrompt,
   parseShares,
@@ -325,6 +327,90 @@ describe("parseAssetAmountRequest / hasAssetAmountRequest", () => {
       asset_organizer: { pending_amounts: [{ kind: "asset_value", asset_type: "예금" }] },
     };
     expect(parseAssetAmountRequest(data, "tax_calculator")).toBeNull();
+  });
+});
+
+/**
+ * 수집이 끝나면(state.status === "reviewing") 백엔드가 항목별 표를
+ * data.asset_organizer.review_items로 구조화해서 보내준다 — [수정] 클릭 시
+ * 되돌려 보낼 target도 항목마다 함께 온다(agent.py._build_review_items).
+ */
+describe("parseAssetReview / hasAssetReview", () => {
+  it("status가 reviewing이고 review_items가 있으면 항목들을 파싱한다", () => {
+    const data = {
+      asset_organizer: {
+        status: "reviewing",
+        review_items: [
+          {
+            kind: "asset_value",
+            type: "주식",
+            label: "주식",
+            value: 600_000_000,
+            confidence: "confirmed",
+            target: { kind: "asset_value", asset_type: "주식" },
+          },
+          {
+            kind: "insurance_value",
+            type: "보험",
+            label: "보험",
+            value: null,
+            confidence: "unknown_amount",
+            target: { kind: "insurance_value", asset_type: "보험" },
+            excluded_from_totals: true,
+          },
+        ],
+      },
+    };
+    const review = parseAssetReview(data, "asset_organizer");
+    expect(review?.items).toEqual([
+      {
+        kind: "asset_value",
+        label: "주식",
+        value: 600_000_000,
+        confidence: "confirmed",
+        target: { kind: "asset_value", asset_type: "주식" },
+        excludedFromTotals: false,
+      },
+      {
+        kind: "insurance_value",
+        label: "보험",
+        value: null,
+        confidence: "unknown_amount",
+        target: { kind: "insurance_value", asset_type: "보험" },
+        excludedFromTotals: true,
+      },
+    ]);
+    expect(hasAssetReview(data, "asset_organizer")).toBe(true);
+  });
+
+  it("status가 reviewing이 아니면 review_items가 있어도 null(예: editing_item 중 pending_amounts와 동시에 존재하지 않음)", () => {
+    const data = {
+      asset_organizer: {
+        status: "editing_item",
+        review_items: [
+          { kind: "asset_value", label: "예금", value: 100, confidence: "confirmed", target: {} },
+        ],
+      },
+    };
+    expect(parseAssetReview(data, "asset_organizer")).toBeNull();
+  });
+
+  it("review_items가 비어 있으면 null", () => {
+    expect(
+      parseAssetReview({ asset_organizer: { status: "reviewing", review_items: [] } }, "asset_organizer"),
+    ).toBeNull();
+  });
+
+  it("agentKey가 없으면 null", () => {
+    const data = {
+      asset_organizer: {
+        status: "reviewing",
+        review_items: [
+          { kind: "asset_value", label: "예금", value: 100, confidence: "confirmed", target: {} },
+        ],
+      },
+    };
+    expect(parseAssetReview(data)).toBeNull();
   });
 });
 

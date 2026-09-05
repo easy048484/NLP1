@@ -3,6 +3,7 @@ import { Markdown } from "../../lib/markdown";
 import type { ChatResponse } from "../../types";
 import {
   hasAssetAmountRequest,
+  hasAssetReview,
   hasCategorySelectionRequest,
   hasPendingQuestions,
 } from "../../lib/agentData";
@@ -65,9 +66,17 @@ export function AssistantResponse({
         (c) =>
           hasPendingQuestions(c.data ?? {}, c.agent) ||
           hasAssetAmountRequest(c.data ?? {}, c.agent) ||
+          hasAssetReview(c.data ?? {}, c.agent) ||
           hasCategorySelectionRequest(c.data ?? {}, c.agent),
       )
     : [];
+  // asset_organizer의 review 화면(AssetReviewCard)은 이미 자기 reply
+  // 텍스트("재산·부채를 확인해주세요")로 안내를 담고 있어, 일반
+  // follow-up 머리말("몇 가지만 더 확인할게요")을 그 위에 또 붙이면
+  // 중복으로 보인다 — 이번 턴 follow-up이 전부 review일 때만 생략한다.
+  const isReviewOnly =
+    followups.length > 0 &&
+    followups.every((c) => hasAssetReview(c.data ?? {}, c.agent));
 
   return (
     <div className="assistant-response">
@@ -102,7 +111,9 @@ export function AssistantResponse({
 
       {followups.length > 0 && (
         <div className="followup-block">
-          <p className="followup-head">몇 가지만 더 확인할게요</p>
+          {!isReviewOnly && (
+            <p className="followup-head">몇 가지만 더 확인할게요</p>
+          )}
           {followups.map((c, i) => (
             <AgentCards
               key={`fq-${c.agent}-${i}`}

@@ -196,6 +196,30 @@ _INSURANCE_FOLLOWUP_QUESTION_POST_DEATH = (
     "아직 모르시면 그대로 표시해둘게요."
 )
 
+#: 수집이 끝나도 즉시 finalized(최종 확정)로 넘어가지 않고 이 화면을
+#: 거친다 — 실제 표(항목별 금액·[수정])는 프론트가 data.asset_organizer
+#: .review_items(구조화 데이터, _build_review_items 참고)로 그린다. 이
+#: 문구는 그 표 위에 붙는 짧은 안내일 뿐이라, 총액·항목 나열을 텍스트로
+#: 중복 표현하지 않는다(구조 데이터와 마크다운 두 표현이 어긋날 위험 방지).
+_REVIEW_PROMPT = "재산·부채를 확인해주세요. 항목별로 [수정]을 눌러 값을 바꿀 수 있어요. 다 맞으면 [이대로 확정]을 눌러주세요."
+#: reviewing 상태에서 [수정]/[이대로 확정] 둘 다 아닌 입력(예: 자유 텍스트,
+#: 인식 못한 context)이 왔을 때 — 조용히 무시하지 않고 review 화면을 그대로
+#: 다시 보여주며 어떻게 진행해야 하는지 안내한다(Round 12 "조용한 실패
+#: 금지" 원칙과 같은 이유 — review 단계에서 새로 값을 추출하는 자유 입력
+#: 흐름은 이번 라운드 범위 밖이다).
+_REVIEW_UNRECOGNIZED_NOTE = (
+    "\n\n(수정하실 항목은 그 항목의 [수정]을, 이대로 진행하시려면 "
+    "[이대로 확정]을 눌러주세요.)"
+)
+#: editing_item 상태에서 재확인 질문에 붙는 공통 문구 — 원래 pending_amounts
+#: 최초 질문("{label} 금액이 얼마인지 알려주시겠어요?")과 결이 다른 이유는
+#: "이미 답했던 항목을 다시 묻는다"는 맥락을 명확히 하기 위해서다(사용자가
+#: review 화면에서 [수정]을 눌러 스스로 요청한 재확인이라는 점).
+_EDIT_AMOUNT_QUESTION_SUFFIX = (
+    " 금액을 다시 확인할게요. 새 금액을 알려주시거나, 모르시면 '몰라요'라고 "
+    "답해주세요."
+)
+
 _NEGATIVE_ANSWER_RE = re.compile(r"없|아니")
 #: "없어요"(retract — 항목 자체가 없다는 뜻, 기존 동작)와 구분되는 "몰라요"
 #: (존재는 있는데 금액을 모른다는 뜻) — 3단계 신뢰도의 "금액모름"으로
@@ -751,8 +775,9 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
     checked_categories에 있는 카테고리만 값을 채운다(전부는 아니어도
     최소 하나는 확인된 상태) — 아직 안 물어본 카테고리까지 0으로 채우면
     "확인 안 함"과 "확인했더니 0원"을 구분할 수 없게 된다. 이 함수는
-    status=="done"(체크리스트 전부 완료) 시점에만 호출되므로 실제로는
-    모든 카테고리가 checked_categories에 있다.
+    사용자가 review 화면에서 [이대로 확정]을 눌러 _finalize가 호출되는
+    시점(즉 체크리스트 전부 완료 이후)에만 호출되므로 실제로는 모든
+    카테고리가 checked_categories에 있다.
     """
     assets = state["assets"]
     liabilities = state["liabilities"]
@@ -808,12 +833,239 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
     )
 
 
+# ======================================================== review/수정/확정
+
+
+def _review_row(
+    *,
+    kind: str,
+    label: str,
+    value: int | None,
+    confidence: str,
+    target: dict[str, Any],
+    excluded_from_totals: bool = False,
+) -> dict[str, Any]:
+    row = {
+        "kind": kind,
+        "type": label,
+        "label": label,
+        "value": value,
+        "confidence": confidence,
+        "target": target,
+    }
+    if excluded_from_totals:
+        row["excluded_from_totals"] = True
+    return row
+
+
+def _build_review_items(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """review 화면(및 프론트 AssetReviewCard)이 표를 그리는 데 필요한
+    구조 데이터. 상태에 저장하지 않고 매번 assets/liabilities/insurance
+    원본에서 다시 계산한다(awaiting_category_selection과 같은 "이번 턴
+    응답에만 싣는 신호" 관례 — _enter_review가 반환 직전에만 state에
+    얹는다) — 캐시가 아니라 항상 최신 값을 반영한다.
+
+    각 row의 `target`을 프론트가 [수정] 클릭 시 그대로
+    `context.edit_target`으로 되돌려 보내면, 텍스트 추론 없이 정확히 그
+    항목을 재수정 대상으로 고정할 수 있다(요구사항 4번). 한 유형에 항목이
+    여러 개 쌓여 있어도(예: 과거 자유 발화로 같은 유형이 중복 추가된 경우)
+    한 row로 합쳐 보여준다 — confirmed 항목이 하나라도 있으면 그 합계를,
+    전부 unknown_amount면 금액 없이 표시한다. unknown_amount는 value=None
+    으로 내려보낸다("금액 미확인"은 프론트 문구, 0원과 혼동 금지 원칙
+    그대로)."""
+    items: list[dict[str, Any]] = []
+
+    for asset_type in _ASSET_CATEGORIES:
+        entries = [a for a in state["assets"] if a["type"] == asset_type]
+        if not entries:
+            continue
+        confirmed_entries = [a for a in entries if _is_confirmed(a)]
+        value = (
+            sum(a["value"] for a in confirmed_entries) if confirmed_entries else None
+        )
+        confidence = "confirmed" if confirmed_entries else "unknown_amount"
+        items.append(
+            _review_row(
+                kind="asset_value",
+                label=asset_type,
+                value=value,
+                confidence=confidence,
+                target={"kind": "asset_value", "asset_type": asset_type},
+            )
+        )
+
+    liability_types = list(dict.fromkeys(liab["type"] for liab in state["liabilities"]))
+    for liability_type in liability_types:
+        entries = [
+            liab for liab in state["liabilities"] if liab["type"] == liability_type
+        ]
+        confirmed_entries = [liab for liab in entries if _is_confirmed(liab)]
+        value = (
+            sum(liab["remaining_balance"] for liab in confirmed_entries)
+            if confirmed_entries
+            else None
+        )
+        confidence = "confirmed" if confirmed_entries else "unknown_amount"
+        items.append(
+            _review_row(
+                kind="liability_value",
+                label=liability_type,
+                value=value,
+                confidence=confidence,
+                target={"kind": "liability_value", "liability_type": liability_type},
+            )
+        )
+
+    insurance_entries = state["insurance"]
+    if insurance_entries:
+        confirmed_entries = [t for t in insurance_entries if _is_confirmed_insurance(t)]
+        value = (
+            sum(t["value"] for t in confirmed_entries) if confirmed_entries else None
+        )
+        confidence = "confirmed" if confirmed_entries else "unknown_amount"
+        items.append(
+            _review_row(
+                kind="insurance_value",
+                label="보험",
+                value=value,
+                confidence=confidence,
+                target={"kind": "insurance_value", "asset_type": "보험"},
+                excluded_from_totals=True,
+            )
+        )
+
+    return items
+
+
+def _replace_review_record(
+    state: dict[str, Any],
+    item: dict[str, Any],
+    amount: int | None,
+    *,
+    confidence: str,
+) -> None:
+    """review에서 [수정]으로 재확인한 항목을 반영한다. 기존 수집 흐름의
+    _append_resolved_pending_item과 달리 항상 REPLACE한다 — 같은 유형의
+    기존 record를 전부 지우고 새 record 하나로 대체하므로, 같은 항목을
+    여러 번 수정해도 목록에 중복이 쌓이지 않는다(요구사항: duplicate
+    append 금지). confidence별 자리표시자 규약은 각 모델과 동일 —
+    Asset은 unknown_amount여도 value=0(기존 규약), Liability/InsuranceTag는
+    unknown_amount면 반드시 None."""
+    kind = item["kind"]
+    if kind == "asset_value":
+        asset_type = item["asset_type"]
+        state["assets"] = [a for a in state["assets"] if a["type"] != asset_type]
+        state["assets"].append(
+            {
+                "type": asset_type,
+                "value": amount if confidence == "confirmed" else 0,
+                "liquid": None,
+                "return_rate": None,
+                "confidence": confidence,
+            }
+        )
+    elif kind == "insurance_value":
+        state["insurance"] = [
+            {
+                "type": "보험",
+                "value": amount if confidence == "confirmed" else None,
+                "note": None,
+                "confidence": confidence,
+            }
+        ]
+    else:
+        liability_type = item["liability_type"]
+        state["liabilities"] = [
+            liability
+            for liability in state["liabilities"]
+            if liability["type"] != liability_type
+        ]
+        state["liabilities"].append(
+            {
+                "type": liability_type,
+                "remaining_balance": amount if confidence == "confirmed" else None,
+                "monthly_payment": None,
+                "end_age": None,
+                "note": None,
+                "confidence": confidence,
+            }
+        )
+
+
+def _remove_review_record(state: dict[str, Any], item: dict[str, Any]) -> None:
+    """review 수정 중 "없어요"로 답하면 그 유형의 record 자체를 지운다 —
+    review 표에서 그 행이 사라진다(합계에도 당연히 안 잡힘)."""
+    kind = item["kind"]
+    if kind == "asset_value":
+        asset_type = item["asset_type"]
+        state["assets"] = [a for a in state["assets"] if a["type"] != asset_type]
+    elif kind == "insurance_value":
+        state["insurance"] = []
+    else:
+        liability_type = item["liability_type"]
+        state["liabilities"] = [
+            liability
+            for liability in state["liabilities"]
+            if liability["type"] != liability_type
+        ]
+
+
+def _edit_question_text(state: dict[str, Any], item: dict[str, Any]) -> str:
+    if item.get("kind") == "insurance_value":
+        base = (
+            _INSURANCE_FOLLOWUP_QUESTION_POST_DEATH
+            if state["mode"] == _POST_DEATH_MODE
+            else _INSURANCE_FOLLOWUP_QUESTION_PRE_NEED
+        )
+        return base
+    label = item.get("asset_type") or item.get("liability_type")
+    return f"{label}{_EDIT_AMOUNT_QUESTION_SUFFIX}"
+
+
+def _apply_review_edit_answer(
+    state: dict[str, Any], item: dict[str, Any], message: str
+) -> bool:
+    """review에서 [수정]으로 재확인 중인 항목(state.pending_amounts[0]에
+    editing_item 동안 임시로 얹어둔 target — pending_amounts는 이 시점에
+    항상 비어 있었으므로 안전하게 재사용)의 답을 해석해 반영한다. 반환값은
+    이번 메시지로 답이 해석됐는지 여부 — False면 호출부가 같은 질문을
+    다시 던진다(조용한 실패 금지 원칙, 기존 수집 흐름과 동일)."""
+    bare_amount = extractor.parse_monthly_expense_answer(message)
+    if bare_amount is not None:
+        _replace_review_record(state, item, bare_amount, confidence="confirmed")
+        return True
+    if _wants_unknown_amount(message):
+        _replace_review_record(state, item, None, confidence="unknown_amount")
+        return True
+    if _is_negative_answer(message) and not re.search(r"\d", message):
+        _remove_review_record(state, item)
+        return True
+    return False
+
+
+def _enter_review(state: dict[str, Any], *, note: str | None = None) -> AgentOutput:
+    """수집이 끝나면(또는 항목 수정을 마치면) 곧바로 finalized로 넘어가지
+    않고 이 화면을 보여준다 — "수집 종료 != 최종 확정" 원칙. review_items는
+    이번 턴 응답에만 싣는 계산값이라 state에 영구 저장하지 않는다(다음 턴
+    _load_state()가 _empty_state() 키 목록에 없는 이 값을 그대로 걸러낸다,
+    awaiting_category_selection과 동일 관례)."""
+    state["status"] = "reviewing"
+    state["pending_amounts"] = []
+    state["review_items"] = _build_review_items(state)
+    reply = _REVIEW_PROMPT + (note or "")
+    return _output(state, reply)
+
+
 # ================================================================= 흐름
 
 
 def _finalize(state: dict[str, Any]) -> AgentOutput:
-    """체크리스트가 끝나면 자산·부채 목록 + 순자산 요약만 보여주고 거기서
-    끝난다.
+    """사용자가 review 화면에서 [이대로 확정]을 눌러야만 호출된다 — 그
+    전까지는 아무리 체크리스트가 다 끝나도 draft(reviewing) 상태로 남고,
+    downstream(tax_calculator 등)이 쓰는 financial_profile도 emit하지
+    않는다(_enter_review는 financial_profile을 넘기지 않는다). 이미
+    finalized 상태에서 또 호출돼도(멱등) 같은 요약을 그대로 다시
+    돌려준다 — 상태를 되돌리거나 값을 다시 계산해 바꾸지 않는다.
 
     ⚠️ retirement_planner 핸드오프는 2026-08-30 데모 제외 결정으로
     비활성화했다(retirement_planner/spec.py의 keywords=[]와 같은 결정 —
@@ -825,7 +1077,7 @@ def _finalize(state: dict[str, Any]) -> AgentOutput:
     보내게 했었다 — TODO: retirement_planner가 데모 범위에 다시 들어오면
     아래 handoffs= 줄의 주석을 풀어서 복원할 것(엔진 자체는 계속
     보존돼 있으므로 복원 자체는 이 줄만 되살리면 된다)."""
-    state["status"] = "done"
+    state["status"] = "finalized"
     return _output(
         state,
         _format_summary(state),
@@ -872,7 +1124,10 @@ def _continue_after_categories(
         state["pension_followup_asked"] = True
         return _output(state, _PENSION_FOLLOWUP_QUESTION)
 
-    return _finalize(state)
+    # 체크리스트가 다 끝났다고 바로 finalized(최종 확정)로 넘어가지 않는다
+    # — review 화면에서 사용자가 [이대로 확정]을 눌러야만 _finalize가
+    # 호출된다(요구사항 2번).
+    return _enter_review(state)
 
 
 def _handle_image_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
@@ -902,6 +1157,46 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
         state["mode"] = None  # 잘못된 값은 저장하지 않는다 — 다음 턴에 또 재질문
         return _output(state, _MODE_QUESTION)
     state["mode"] = mode
+
+    # -0.5) review/수정/확정 흐름 — 수집이 이미 끝난 뒤(status가
+    #     reviewing/editing_item/finalized)라면 기존 수집 파이프라인을
+    #     전혀 타지 않고 여기서 갈린다. 편집 대상은 텍스트 추론이 아니라
+    #     프론트가 보낸 구조화된 context.edit_target/context.confirm_review
+    #     로만 식별한다(요구사항 4번) — 과거 대화의 입력 카드를 다시
+    #     활성화하는 방식이 아니라, "지금 review 화면에서 무엇을 눌렀는지"
+    #     매 턴 명시적으로 받는다.
+    if state["status"] == "finalized":
+        # 확정 후에도 같은 요청이 다시 오면(새로고침 등) 멱등하게 같은
+        # 요약을 되돌려준다 — 상태를 되돌리거나 다시 계산해 바꾸지 않는다.
+        return _finalize(state)
+
+    if state["status"] == "reviewing":
+        context = payload.context or {}
+        if context.get("confirm_review") is True:
+            return _finalize(state)
+        edit_target = context.get("edit_target")
+        if isinstance(edit_target, dict) and edit_target.get("kind") in (
+            "asset_value",
+            "liability_value",
+            "insurance_value",
+        ):
+            state["status"] = "editing_item"
+            state["pending_amounts"] = [dict(edit_target)]
+            return _output(state, _edit_question_text(state, edit_target))
+        # [수정]/[이대로 확정] 둘 다 아닌 입력 — review 화면을 그대로
+        # 다시 보여준다(조용히 무시하지 않고 안내를 덧붙인다).
+        return _enter_review(state, note=_REVIEW_UNRECOGNIZED_NOTE)
+
+    if state["status"] == "editing_item":
+        item = state["pending_amounts"][0] if state["pending_amounts"] else None
+        if item is None:
+            # 방어적 분기 — editing_item은 항상 pending_amounts에 정확히
+            # 하나를 얹어 진입하므로 실제로는 발생하지 않아야 한다.
+            return _enter_review(state)
+        if _apply_review_edit_answer(state, item, message):
+            state["pending_amounts"] = []
+            return _enter_review(state)
+        return _output(state, _edit_question_text(state, item))
 
     is_first_turn = not (
         state["assets"]
