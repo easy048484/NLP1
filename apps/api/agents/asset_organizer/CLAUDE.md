@@ -239,6 +239,29 @@
     단, `retirement_planner` 쪽은 이 필드를 아예 활용하지 않으므로 나중에
     그쪽에서 신뢰도를 실제로 쓰려면 그때 가서 `retirement_planner/
     models.py`의 `Asset`에도 필드를 추가하는 논의가 필요).
+- **보험 금액 후속 질문 도입(3단계 신뢰도를 InsuranceTag까지 확장)** —
+  이전엔 보험만 예외적으로 금액이 없어도 즉시 `InsuranceTag(value=0,
+  note="금액 미언급")`로 확정 처리했다("보험은 engine.py 계산에서 아예
+  제외되는 태그라 0이어도 안전하다"는 논리). 하지만 이러면 사용자가 실제로
+  보험 금액을 확인할 기회 자체가 없어지고, "unknown != 0" 원칙(위 3단계
+  신뢰도 항목 참고)과도 표현이 달라 일관성이 깨졌다. `InsuranceTag`에도
+  `Liability`와 동일한 자리표시자 방식(`confidence` 추가, `unknown_amount`
+  면 `value`는 반드시 `None`)을 적용하고, 유형만 확인되고 금액이 없으면
+  자산·부채와 동일하게 `pending_amounts`(kind="insurance_value")로 한 번만
+  후속 질문한다(모드별 문구 — 생전은 "해약환급금이나 적립금", 사후는
+  "보험사에서 확인된 지급 예정 보험금" 뉘앙스). "몰라요"로 답하면 부채/
+  퇴직연금과 동일하게 영구 확정하고 다시 캐묻지 않는다. 순자산 계산에서
+  보험을 제외하는 기존 원칙(engine.py가 이 값을 아예 안 봄) 자체는 그대로
+  — 이번 변경은 "언제 InsuranceTag를 만드는지"만 바꿨다.
+  - 이 과정에서 기존에 숨어 있던 진짜 버그 하나를 같이 고쳤다: "보험은
+    없어요"처럼 명시적으로 부정된 경우도 `is_negated` 분기 뒤에 무조건
+    `amount = _parse_amount(segment)` → `InsuranceTag` 생성 코드가 실행돼,
+    "보험이 없다"는 답변이 "보험은 있는데 금액 모름"과 똑같이 저장되고
+    있었다(실측 확인, 회귀 테스트에 기존 검증값이 그대로 남아 있었음). 이제
+    부정은 `asset_absent`로 분기해 자산/부채와 같은 방식으로 처리한다.
+  - 프론트 `AmountInputCard`를 그대로 재사용한다 — `lib/agentData.ts`의
+    `parseAssetAmountRequest`가 인식하는 `kind` 화이트리스트에
+    `"insurance_value"`만 추가했을 뿐, 새 위젯을 만들지 않았다.
 - **사후 모드 조용한 정보 유실 방어(Round 12)** — 위 다기관 조회 해석
   기능을 실측 재현해본 결과, `extract_disclosures()`가 LLM 실패로 폴백한
   일반 추출 경로(`extract_financial_slots`)조차 문장을 못 알아들으면

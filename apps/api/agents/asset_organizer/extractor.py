@@ -11,11 +11,14 @@
 - 정규식도 LLM도 값을 확정하지 못하면 절대 0이나 빈 값으로 채우지 않는다.
   대신 ExtractionResult.missing 에 "무엇이 불명확한지"를 담아 status를
   "needs_clarification"으로 돌려준다 — 호출부가 그 내용으로 재질문한다.
-- 예외적으로 InsuranceTag만 금액 없이도(value=0, note="금액 미언급") 생성한다.
-  보험은 애초에 "노후 재원 계산에서 제외"되는 태그라(engine.py가 아예 보지
-  않음) 0을 넣어도 시뮬레이션 결과가 조용히 틀려질 위험이 없다. 반면 Asset
-  의 value는 engine.simulate()의 잔액 계산에 직접 들어가므로, 유형만 알고
-  금액을 모르면 Asset을 만들지 않고 missing으로만 남긴다.
+- InsuranceTag도 유형(보험)은 알지만 금액이 없으면 Asset/Liability와 동일하게
+  즉시 만들지 않고 missing(kind="insurance_value")으로만 남긴다 — agent.py가
+  한 번 후속 질문("몰라요"도 답으로 인정)을 던져 confirmed/unknown_amount를
+  가른 뒤에야 InsuranceTag를 만든다(models.InsuranceTag.confidence 참고).
+  단, 이 함수(정규식 1차 추출)가 같은 세그먼트 안에서 "몰라요/모르겠어요"
+  까지 이미 확인했다면(예: "보험은 있는데 금액은 몰라요") 후속 질문 없이
+  바로 unknown_amount로 확정한다 — 사용자가 먼저 답을 준 걸 다시 캐묻지
+  않는다는 원칙(부채/자산 동일)의 연장.
 - 환경변수는 decedent_estate/llm_client.py와 동일하게 ANTHROPIC_API_KEY
   하나로 통일한다. 키가 없으면 예외 없이 그냥 LLM 단계를 건너뛴다.
 """
@@ -136,6 +139,12 @@ def _parse_amount(text: str) -> Optional[int]:
 #: 재현된 버그: 이 구분이 없어서 "대출은 없어요"가 대출 존재를 확정하고
 #: 금액만 되묻는 상태로 잘못 처리됐다(Round 15).
 _SEGMENT_NEGATION_RE = re.compile(r"없|아니")
+#: agent.py의 _DONT_KNOW_AMOUNT_RE와 같은 패턴의 로컬 복제본 — extractor는
+#: agent를 import할 수 없어(agent가 extractor를 import하는 방향, 순환 참조
+#: 방지) 공유할 수 없다. "보험은 있는데 금액은 몰라요"처럼 정규식 1차
+#: 추출 단계에서 바로 unknown_amount로 확정하려면 이 파일 안에서도 판단이
+#: 필요하다(_NOISE_RE 등 기존 로컬 복제 관례와 동일).
+_DONT_KNOW_AMOUNT_RE = re.compile(r"몰라|모르")
 _ASSET_KEYWORDS: dict[AssetType, tuple[str, ...]] = {
     "예금": ("예금", "적금", "저금"),
     "주식": ("주식",),
@@ -247,17 +256,34 @@ def _regex_extract(text: str) -> tuple[ExtractionResult, list[str]]:
 
         if any(keyword in segment for keyword in _INSURANCE_KEYWORDS):
             if is_negated:
+                # "보험은 없어요" — 보험 자체가 없다는 확정 답변이다.
+                # asset_absent와 동일한 이유로 금액 재질문 대상이 아니다.
                 flush_as_absent()
-            else:
-                flush_as_missing()
-            amount = _parse_amount(segment)
-            insurance_tags.append(
-                InsuranceTag(
-                    type="보험",
-                    value=amount if amount is not None else 0,
-                    note=None if amount is not None else "금액 미언급",
+                missing.append(
+                    {"kind": "asset_absent", "asset_type": "보험", "segment": segment}
                 )
-            )
+                continue
+            flush_as_missing()
+            amount = _parse_amount(segment)
+            if amount is not None:
+                insurance_tags.append(
+                    InsuranceTag(type="보험", value=amount, confidence="confirmed")
+                )
+            elif _DONT_KNOW_AMOUNT_RE.search(segment):
+                # "보험은 있는데 금액은 몰라요" — 후속 질문 없이 바로
+                # unknown_amount로 확정한다(먼저 답을 준 걸 다시 캐묻지 않음).
+                insurance_tags.append(
+                    InsuranceTag(type="보험", value=None, confidence="unknown_amount")
+                )
+            else:
+                missing.append(
+                    {
+                        "kind": "insurance_value",
+                        "asset_type": "보험",
+                        "segment": segment,
+                        "reason": "보험 금액이 언급되지 않음",
+                    }
+                )
             continue
 
         matched_types = _match_all_asset_types(segment)
@@ -518,13 +544,20 @@ def _apply_llm_payload(
             continue
         value = raw.get("value")
         has_value = isinstance(value, (int, float)) and not isinstance(value, bool)
-        insurance_tags.append(
-            InsuranceTag(
-                type="보험",
-                value=int(value) if has_value else 0,
-                note=None if has_value else "금액 미언급",
+        if has_value:
+            insurance_tags.append(
+                InsuranceTag(type="보험", value=int(value), confidence="confirmed")
             )
-        )
+        else:
+            # 금액 없이도 즉시 확정하지 않는다 — agent.py의 후속 질문 대상으로
+            # 남긴다(_regex_extract의 동일 분기 원칙, models.InsuranceTag 참고).
+            missing.append(
+                {
+                    "kind": "insurance_value",
+                    "asset_type": "보험",
+                    "reason": "보험 금액을 LLM도 확인하지 못함",
+                }
+            )
 
     # ⚠️ PII 잔여 위험 지점: "unclear"는 자산/부채/소득 type과 달리 화이트리스트가
     # 없는 완전 자유텍스트라 LLM이 (프롬프트가 금지해도) 계좌번호·이름 등을

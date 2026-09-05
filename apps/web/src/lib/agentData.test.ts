@@ -290,6 +290,21 @@ describe("parseAssetAmountRequest / hasAssetAmountRequest", () => {
     });
   });
 
+  it("insurance_value면 asset_type(항상 '보험')을 라벨로 쓴다", () => {
+    const data = {
+      asset_organizer: {
+        pending_amounts: [
+          { kind: "insurance_value", asset_type: "보험", segment: "보험", reason: "보험 금액이 언급되지 않음" },
+        ],
+      },
+    };
+    expect(parseAssetAmountRequest(data, "asset_organizer")).toEqual({
+      kind: "insurance_value",
+      label: "보험",
+    });
+    expect(hasAssetAmountRequest(data, "asset_organizer")).toBe(true);
+  });
+
   it("pending_amounts가 비어 있으면 null", () => {
     const data = { asset_organizer: { pending_amounts: [] } };
     expect(parseAssetAmountRequest(data, "asset_organizer")).toBeNull();
