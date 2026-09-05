@@ -86,7 +86,8 @@
           "id": "building_number_only",
           "description": "도로명/지번 건물번호까지는 기재됐으나 동·호수 등 세부 거주 단위는 불명확 — 장소 특정성은 사실관계에 따라 달라질 수 있어 무효로 단정하지 않는다",
           "grade": "YELLOW",
-          "precedent_ids": []
+          "precedent_ids": [],
+          "display_note": "도로명과 건물번호까지는 확인되었습니다{value}. 다만 유언장에 동·호수 등 더 상세한 주소가 있는지 추가 확인이 필요합니다. 건물번호만으로 유언자의 거주지를 충분히 특정할 수 있는지는 사실관계에 따라 달라질 수 있습니다."
         },
         {
           "id": "city_district_only",
