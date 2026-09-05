@@ -132,7 +132,12 @@ def test_unknown_defaults_to_handwritten_with_notice() -> None:
 def test_handwritten_mentioned_in_message_is_not_reasked() -> None:
     """ "자필로 쓴 유언장이 있는데 효력이 있나요?"처럼 자필 방식이 문장에 명백히
     드러나 있으면, will_type이 context에 없어도 방식 선택 질문을 다시 하지 않고
-    바로 handwritten 판정 파이프라인으로 들어가야 한다."""
+    바로 handwritten으로 확정해야 한다.
+
+    단, 이 문장 자체는 상담 요청일 뿐 실제 유언장 본문이 아니므로(날짜/주소/
+    처분 의사 등 내용이 없음) document intake gate 에 걸려 요건 판정까지는
+    들어가지 않는다 — 자세한 내용은
+    test_document_intake_gate_blocks_requirement_check_without_document."""
     payload = AgentInput(
         session_id="s1",
         user_message="자필로 쓴 유언장이 있는데 효력이 있나요?",
@@ -143,18 +148,13 @@ def test_handwritten_mentioned_in_message_is_not_reasked() -> None:
 
     assert "어떤 형태의 유언인가요?" not in output.reply
     assert output.data["will_type"] == "handwritten"
-    assert "requirements" in output.data  # handwritten 판정 파이프라인 진입 확인
-
-    # 자서/날인 등 실제 미확인 요건에 대한 확인 질문으로 이어져야 한다 —
-    # will_type 선택 질문(field == "will_type")이 아니어야 함.
+    assert "requirements" not in output.data  # 실제 본문이 없어 판정을 안 돈다
     assert output.next_action == NEXT_ACTION_AWAIT_USER
-    fields = {q["field"] for q in output.data["pending_questions"]}
-    assert "will_type" not in fields
-    assert fields  # 실제 요건 확인 질문이 최소 1개는 있어야 한다
 
 
 def test_handwritten_ui_phrase_directly_written_by_hand_is_not_reasked() -> None:
-    """ "직접 손으로 쓴 유언장인데..." 같은 UI 표현도 동일하게 감지해야 한다."""
+    """ "직접 손으로 쓴 유언장인데..." 같은 UI 표현도 동일하게 감지해야 한다.
+    이 문장도 실제 본문이 아니므로 document intake gate 에 걸린다."""
     payload = AgentInput(
         session_id="s1",
         user_message="직접 손으로 쓴 유언장인데 이대로 괜찮은지 봐주세요.",
@@ -164,7 +164,7 @@ def test_handwritten_ui_phrase_directly_written_by_hand_is_not_reasked() -> None
 
     assert "어떤 형태의 유언인가요?" not in output.reply
     assert output.data["will_type"] == "handwritten"
-    assert "requirements" in output.data
+    assert "requirements" not in output.data
 
 
 def test_ambiguous_will_message_still_asks_the_selection_question() -> None:

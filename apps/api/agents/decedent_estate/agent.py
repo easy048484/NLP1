@@ -609,6 +609,38 @@ def _resolve_photo_intake(
     return None, text, resolved_state
 
 
+_DOCUMENT_INTAKE_NOTICE = (
+    "자필 유언장의 형식 요건을 확인하려면 유언장 내용을 확인해야 합니다. "
+    "유언장 사진을 올려주시거나, 적힌 내용을 그대로 입력해 주세요."
+)
+
+
+def _document_intake_output(
+    state: DecedentState, *, intent: str = _REVIEW_INTENT
+) -> AgentOutput:
+    """review intake gate — 실제 유언장 자료(사진 또는 본문)가 없으면 요건
+    판정을 아예 돌리지 않고 자료를 요청한다.
+
+    "아버지가 돌아가시고 ... 손으로 직접 쓴 유언장을 발견했어요. 효력이 있는지
+    확인하고 싶어요" 같은 상담 요청 문장을 유언장 본문으로 오인해 날짜/주소/
+    성명이 없다고 RED 판정을 매기던 버그 수정. will_type/intent 는 이미
+    확정된 값을 그대로 유지하고, pending_questions 는 비운다(이전 턴 것이
+    남아 있으면 안 되므로).
+    """
+    return AgentOutput(
+        agent=AgentName.DECEDENT_ESTATE,
+        reply=_DOCUMENT_INTAKE_NOTICE,
+        next_action=NEXT_ACTION_AWAIT_USER,
+        data=_namespaced(
+            state,
+            {"will_type": _HANDWRITTEN_WILL_TYPE, "warnings": []},
+            will_type=_HANDWRITTEN_WILL_TYPE,
+            intent=intent,
+            pending_questions=[],
+        ),
+    )
+
+
 def _run_handwritten_pipeline(
     payload: AgentInput,
     state: DecedentState,
@@ -626,10 +658,22 @@ def _run_handwritten_pipeline(
     사진이 있으면(payload.image_base64) _resolve_photo_intake 가 먼저
     개입한다 — 확인이 안 끝났으면 여기서 조기 반환하고, 끝났으면 판독값이
     반영된 text 로 아래 로직이 평소와 동일하게 돈다.
+
+    ⚠️ document intake gate: 이번 턴에 사진도 없고(이번 턴 image_base64도,
+    진행 중이던 photo_draft 도 없음) text 도 실제 유언장 본문/초안으로 보이지
+    않으면(_looks_like_draft — prepare 모드가 쓰던 것과 동일 heuristic 재사용)
+    check_requirements 를 아예 돌리지 않는다. "유언장을 발견했는데 효력이
+    있나요?" 같은 상담 요청 문장을 본문으로 오인해 날짜/주소/성명에 RED를
+    매기던 버그 수정 — had_photo 는 _resolve_photo_intake 가 photo_draft 를
+    소비하기 전에 미리 캡쳐해둔다.
     """
+    had_photo = bool(payload.image_base64) or bool(state.photo_draft)
     photo_output, text, state = _resolve_photo_intake(payload, state)
     if photo_output is not None:
         return photo_output
+
+    if not had_photo and not _looks_like_draft(text):
+        return _document_intake_output(state, intent=intent)
 
     handwriting_answer = state.handwriting_answer
     seal_answer = state.seal_answer

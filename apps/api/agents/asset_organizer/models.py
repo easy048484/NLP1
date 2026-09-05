@@ -137,8 +137,43 @@ class Liability(BaseModel):
 
 
 class InsuranceTag(BaseModel):
-    """사망보험금 등 — 노후 재원 계산에서 제외, decedent_estate/tax_calculator 전달용."""
+    """사망보험금 등 — 노후 재원 계산에서 제외, decedent_estate/tax_calculator 전달용.
+
+    Asset이 아니라 Liability와 같은 자리표시자 방식을 쓴다 — confidence가
+    "unknown_amount"면 value는 반드시 None(0이 아니다). 보험은 애초에 engine
+    계산에서 제외되는 태그라 Asset처럼 "0을 넣어도 안전"하다는 이유로 예전엔
+    금액이 없어도 즉시 value=0으로 확정 처리했었지만, 그러면 "몰라서 0"과
+    "실제로 0원"을 값만 보고 구분할 수 없다(Liability.confidence 설명과 동일
+    문제). agent.py가 한 번 후속 질문을 던져 confirmed/unknown_amount를
+    가른 뒤에야 이 모델을 만든다 — model_validator가 그 불변식을 강제한다."""
 
     type: str
-    value: int = Field(ge=0)
+    value: int | None = Field(
+        default=None,
+        ge=0,
+        description="평가액 (원). confirmed면 필수, unknown_amount면 반드시 None — confidence 설명 참고",
+    )
     note: str | None = None
+    confidence: AmountConfidence = Field(
+        default="confirmed",
+        description=(
+            "confirmed=금액까지 확인됨(기존 동작과 동일 기본값) — 이때 value는"
+            " 반드시 int. unknown_amount=존재는 확인됐지만 금액은 모름 — 사용자가"
+            " '몰라요'로 답한 경우(생전) 또는 조회 기관이 존재만 확인해준 경우"
+            "(사후), 이때 value는 반드시 None. 한 번 이 상태가 되면 영구적으로"
+            " 취급하고 다시 캐묻지 않는다(Asset.confidence와 동일 원칙)."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_confidence_matches_value(self) -> "InsuranceTag":
+        if self.confidence == "unknown_amount" and self.value is not None:
+            raise ValueError(
+                "confidence가 unknown_amount인 InsuranceTag는 value가 None이어야"
+                " 합니다 — 0이나 다른 값은 '확인된 금액'과 구분이 안 됩니다."
+            )
+        if self.confidence == "confirmed" and self.value is None:
+            raise ValueError(
+                "confidence가 confirmed인 InsuranceTag는 value가 있어야 합니다."
+            )
+        return self

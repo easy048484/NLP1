@@ -651,14 +651,145 @@ def test_lease_deposit_liability_recognized_under_debt_category_simple_mode():
 # ============================================================ 보험 카테고리
 
 
-def test_insurance_mention_marks_category_checked_and_not_reasked():
+def test_insurance_without_amount_asks_pre_need_followup_once():
+    """예전엔 보험은 금액이 없어도 즉시 확인 완료(value=0)로 처리했지만,
+    이제는 자산·부채와 동일하게 유형만 알고 금액이 없으면 바로 확정하지
+    않고 한 번만 후속 질문한다 — 그전까지 insurance 리스트에는 아무것도
+    안 쌓인다(checked_categories만 먼저 채워짐, 부채/자산의 pending_amounts
+    와 동일한 "이미 얘기는 나왔다" 표시)."""
     output = agent.run(AgentInput(session_id="ins1", user_message="보험 하나 있어요"))
 
     state = output.data[STATE_KEY]
     assert "보험" in state["checked_categories"]
-    assert len(state["insurance"]) == 1
+    assert state["insurance"] == []
+    assert state["pending_amounts"] == [
+        {
+            "kind": "insurance_value",
+            "asset_type": "보험",
+            "segment": "보험 하나 있어요",
+            "reason": "보험 금액이 언급되지 않음",
+        }
+    ]
+    assert output.reply == (
+        "현재 확인 가능한 해약환급금이나 적립금이 있나요? 모르시면 넘어가도 됩니다."
+    )
     # 아직 안 물어본 나머지 카테고리만 되묻고, 보험은 다시 대상에 없어야 한다.
     assert "보험" not in state["pending_categories"]
+
+
+def test_insurance_followup_confirmed_amount_pre_need():
+    session_id = "ins1b"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="보험 하나 있어요")
+    ).data[STATE_KEY]
+
+    output = agent.run(_continue(session_id, "2천만원", state))
+    state = output.data[STATE_KEY]
+
+    assert state["pending_amounts"] == []
+    assert state["insurance"] == [
+        {"type": "보험", "value": 20_000_000, "note": None, "confidence": "confirmed"}
+    ]
+    # 한 번 확정된 뒤에는 다시 후속 질문하지 않는다 — 다음 카테고리 안내에
+    # "보험"이 다시 등장하지 않아야 한다.
+    assert "보험" not in output.reply
+
+
+def test_insurance_followup_unknown_amount_pre_need():
+    session_id = "ins1c"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="보험 하나 있어요")
+    ).data[STATE_KEY]
+
+    output = agent.run(_continue(session_id, "몰라요", state))
+    state = output.data[STATE_KEY]
+
+    assert state["pending_amounts"] == []
+    assert state["insurance"] == [
+        {"type": "보험", "value": None, "note": None, "confidence": "unknown_amount"}
+    ]
+    assert "보험" not in output.reply
+
+
+def test_insurance_followup_unknown_amount_post_death():
+    output = agent.run(
+        AgentInput(
+            session_id="ins1d",
+            user_message="보험이 있어요",
+            context={"mode": "post_death"},
+        )
+    )
+    state = output.data[STATE_KEY]
+    assert output.reply == (
+        "보험사에서 확인된 지급 예정 보험금이나 해약환급금이 있나요? "
+        "아직 모르시면 그대로 표시해둘게요."
+    )
+
+    output = agent.run(_continue("ins1d", "몰라요", state))
+    state = output.data[STATE_KEY]
+    assert state["insurance"] == [
+        {"type": "보험", "value": None, "note": None, "confidence": "unknown_amount"}
+    ]
+
+
+def test_insurance_amount_stated_upfront_skips_followup():
+    """ "보험 해약환급금이 2천만원 정도 있어요"처럼 처음부터 금액까지
+    말하면 후속 질문 없이 바로 confirmed로 확정돼야 한다."""
+    output = agent.run(
+        AgentInput(
+            session_id="ins1e", user_message="보험 해약환급금이 2천만원 정도 있어요"
+        )
+    )
+    state = output.data[STATE_KEY]
+    assert state["insurance"] == [
+        {"type": "보험", "value": 20_000_000, "note": None, "confidence": "confirmed"}
+    ]
+    assert state["pending_amounts"] == []
+    assert "보험" not in output.reply
+
+
+def test_insurance_unknown_amount_stated_upfront_skips_followup():
+    """ "보험은 있는데 금액은 몰라요"처럼 존재+모름을 한 문장에서 먼저
+    답하면, 후속 질문 없이 바로 unknown_amount로 종결돼야 한다."""
+    output = agent.run(
+        AgentInput(session_id="ins1f", user_message="보험은 있는데 금액은 몰라요")
+    )
+    state = output.data[STATE_KEY]
+    assert state["insurance"] == [
+        {"type": "보험", "value": None, "note": None, "confidence": "unknown_amount"}
+    ]
+    assert state["pending_amounts"] == []
+
+
+def test_insurance_absent_marks_checked_without_followup():
+    output = agent.run(AgentInput(session_id="ins1g", user_message="보험은 없어요"))
+    state = output.data[STATE_KEY]
+    assert "보험" in state["checked_categories"]
+    assert state["insurance"] == []
+    assert state["pending_amounts"] == []
+
+
+def test_insurance_value_never_included_in_shared_profile_totals():
+    """보험 금액이 확인돼도 real_estate_value/financial_assets/other_assets/
+    total_debts 어디에도 자동 합산되지 않아야 한다 — 순자산 계산에서
+    제외되는 기존 원칙(engine.py가 이 값을 아예 안 봄)은 후속 질문 도입과
+    무관하게 그대로 유지된다."""
+    session_id = "ins1h"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 1억, 보험 있어요")
+    ).data[STATE_KEY]
+
+    state = agent.run(_continue(session_id, "5천만원", state)).data[STATE_KEY]
+    # 남은 카테고리 일괄 확인 — 기존 "없어요" 일괄 확정 경로(주식/펀드/
+    # 부동산/자동차/퇴직연금/부채 재질문에 대한 정정 답변)를 그대로 탄다.
+    output = agent.run(_continue(session_id, "없어요", state))
+
+    profile = output.financial_profile
+    assert profile.real_estate_value == 0
+    assert profile.financial_assets == 100_000_000  # 예금만, 보험 5천만원 미포함
+    assert profile.other_assets == 0
+    assert profile.total_debts == 0
+    assert profile.extra["asset_organizer"]["insurance"][0]["value"] == 50_000_000
 
 
 def test_insurance_is_the_only_remaining_category_gets_asked_specifically():

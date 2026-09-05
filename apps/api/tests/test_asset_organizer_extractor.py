@@ -69,23 +69,24 @@ def test_house_deposit_and_insurance_in_one_sentence():
     - 집 한 채 -> 부동산으로 유형은 알아보지만 금액이 없어 Asset을 만들지
       않고 missing으로만 남긴다 (조용한 실패 금지 — Asset.value는 엔진
       계산에 직접 쓰이므로 임의로 0을 채우면 안 됨)
-    - 보험도 하나요 -> 금액 없이도 InsuranceTag(value=0, note="금액 미언급")
-      생성. 보험은 engine.py 계산에서 아예 제외되는 태그라 0이어도 안전함.
+    - 보험도 하나요 -> 유형은 알아보지만 금액이 없어 이제는 Asset/Liability와
+      동일하게 즉시 InsuranceTag를 만들지 않고 missing(kind="insurance_value")
+      으로만 남긴다 — agent.py가 한 번 후속 질문을 던진 뒤에야 확정한다.
     """
     result = extractor.extract_financial_slots(
         "집 한 채, 예금 3천 정도, 보험도 하나요."
     )
 
-    assert result.status == "needs_clarification"  # 부동산 금액 후속 질문 필요
+    assert result.status == "needs_clarification"  # 부동산·보험 금액 후속 질문 필요
 
     assert any(a.type == "예금" and a.value == 30_000_000 for a in result.assets)
     assert not any(a.type == "부동산" for a in result.assets)
 
-    assert len(result.insurance_tags) == 1
-    assert result.insurance_tags[0].type == "보험"
-    assert result.insurance_tags[0].value == 0
-    assert result.insurance_tags[0].note == "금액 미언급"
-
+    assert result.insurance_tags == []
+    assert any(
+        m["kind"] == "insurance_value" and m["asset_type"] == "보험"
+        for m in result.missing
+    )
     assert any(
         m["kind"] == "asset_value" and m["asset_type"] == "부동산"
         for m in result.missing
@@ -322,15 +323,17 @@ def test_comma_list_trailing_negation_marks_every_listed_type_absent():
     없어요."에서 쉼표로 나열된 앞 항목들("주식","펀드","자동차","퇴직연금")은
     자기 세그먼트에 부정 표현이 없어(맨 명사 나열) "유형은 확인, 금액만
     모름"으로 잘못 분류되고 금액을 무한 재질문했다. 나열 끝의 "보험은
-    없어요"가 나열 전체에 걸리는 부정임을 인식해야 한다."""
+    없어요"가 나열 전체에 걸리는 부정임을 인식해야 한다 — "보험"도
+    asset_absent로 걸려야 한다(이번 라운드에서 함께 고친 지점: 예전엔
+    부정된 보험도 InsuranceTag(value=0)로 잘못 확정됐었다, 아래 참고)."""
     result = extractor.extract_financial_slots(
         "주식, 펀드, 자동차, 퇴직연금, 보험은 없어요."
     )
 
     assert result.assets == []
-    assert _absent_types(result) == {"주식", "펀드", "자동차", "퇴직연금"}
+    assert _absent_types(result) == {"주식", "펀드", "자동차", "퇴직연금", "보험"}
     assert _value_missing_types(result) == set()
-    assert [tag.type for tag in result.insurance_tags] == ["보험"]
+    assert result.insurance_tags == []
 
 
 def test_and_conjunction_negation_marks_both_types_absent():

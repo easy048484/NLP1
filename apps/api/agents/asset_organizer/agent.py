@@ -11,9 +11,11 @@ agents/retirement_planner/로 그대로 옮겼고, 이 파일에는 체크리스
 
 흐름: 예금/주식/펀드/부동산/부채/보험 카테고리를 체크리스트로 모은다. 유형은
 알지만 금액이 없는 항목은 임의로 0을 채우지 않고 금액만 콕 집어 되묻는다
-(extractor.py의 "조용한 실패 금지" 원칙 그대로) — 단, 보험은 예외로 금액
-없이도 확인된 것으로 처리한다(추출기 쪽 기존 원칙 그대로, 아래
-_merge_extraction 참고). 부채는 remaining_balance만 확인되면 그걸로
+(extractor.py의 "조용한 실패 금지" 원칙 그대로) — 보험도 동일하게 존재만
+확인되고 금액이 없으면 한 번만 후속 질문하고(모드별 문구, 아래
+_INSURANCE_FOLLOWUP_QUESTION_* 참고), "몰라요"로 답하면 unknown_amount로
+영구 확정한다(다시 캐묻지 않음, 아래 _merge_extraction 참고). 부채는
+remaining_balance만 확인되면 그걸로
 수집 완료다 — monthly_payment/end_age(정밀 모드 판단 기준)는 이
 에이전트가 먼저 캐묻지 않는다(이 필드들은 은퇴자금 시뮬레이션이
 이 에이전트에 있던 시절의 잔여 후속질문이었는데, 그 계산 로직은
@@ -182,6 +184,18 @@ _PENSION_FOLLOWUP_QUESTION = (
 )
 _PENSION_ANNUITY_RE = re.compile(r"연금")
 
+#: 보험이 있다고 확인됐는데 금액이 없을 때 한 번만 묻는 후속 질문 —
+#: 부채/퇴직연금 후속질문과 같은 "한 번만 묻고 종결" 원칙, 모드별로 문구만
+#: 다르다(생전은 본인이 직접 아는지, 사후는 보험사 확인 결과인지를 묻는
+#: 뉘앙스 차이 — _resolve_mode의 두 모드 문구 분리 관례와 동일).
+_INSURANCE_FOLLOWUP_QUESTION_PRE_NEED = (
+    "현재 확인 가능한 해약환급금이나 적립금이 있나요? 모르시면 넘어가도 됩니다."
+)
+_INSURANCE_FOLLOWUP_QUESTION_POST_DEATH = (
+    "보험사에서 확인된 지급 예정 보험금이나 해약환급금이 있나요? "
+    "아직 모르시면 그대로 표시해둘게요."
+)
+
 _NEGATIVE_ANSWER_RE = re.compile(r"없|아니")
 #: "없어요"(retract — 항목 자체가 없다는 뜻, 기존 동작)와 구분되는 "몰라요"
 #: (존재는 있는데 금액을 모른다는 뜻) — 3단계 신뢰도의 "금액모름"으로
@@ -297,8 +311,18 @@ def _mark_checked(state: dict[str, Any], category: str) -> None:
         state["checked_categories"].append(category)
 
 
+#: pending_amounts 항목의 kind별로 유형을 식별하는 키가 다르다 — asset_value/
+#: insurance_value는 "asset_type"(둘 다 extractor.py가 이 키로 채워 보낸다,
+#: 보험은 항상 값이 "보험" 고정), liability_value만 "liability_type".
+_PENDING_AMOUNT_KEY_FIELD: dict[str, str] = {
+    "asset_value": "asset_type",
+    "insurance_value": "asset_type",
+    "liability_value": "liability_type",
+}
+
+
 def _add_pending_amount(state: dict[str, Any], item: dict[str, Any]) -> None:
-    key = "asset_type" if item["kind"] == "asset_value" else "liability_type"
+    key = _PENDING_AMOUNT_KEY_FIELD.get(item["kind"], "liability_type")
     already_pending = any(
         existing.get("kind") == item["kind"] and existing.get(key) == item.get(key)
         for existing in state["pending_amounts"]
@@ -308,7 +332,7 @@ def _add_pending_amount(state: dict[str, Any], item: dict[str, Any]) -> None:
 
 
 def _drop_pending_amount(state: dict[str, Any], kind: str, type_value: str) -> None:
-    key = "asset_type" if kind == "asset_value" else "liability_type"
+    key = _PENDING_AMOUNT_KEY_FIELD.get(kind, "liability_type")
     state["pending_amounts"] = [
         item
         for item in state["pending_amounts"]
@@ -340,6 +364,17 @@ def _append_resolved_pending_item(
                 "value": amount,
                 "liquid": None,
                 "return_rate": None,
+                "confidence": confidence,
+            }
+        )
+    elif item["kind"] == "insurance_value":
+        # models.InsuranceTag와 동일 규약 — 부채와 같은 자리표시자 방식
+        # (unknown_amount면 value는 반드시 None, 0이 아니다).
+        state["insurance"].append(
+            {
+                "type": "보험",
+                "value": None if confidence == "unknown_amount" else amount,
+                "note": None,
                 "confidence": confidence,
             }
         )
@@ -378,10 +413,12 @@ def _merge_extraction(
     Round 12에서 발견된 "조용한 정보 유실"(구조화 실패를 성공처럼 넘기는
     것) 방어 여부를 판단할 때 쓴다.
 
-    보험은 자산·부채와 달리 금액이 없어도(InsuranceTag.value=0,
-    note="금액 미언급") 카테고리가 바로 확인된 것으로 처리한다 —
-    extractor.py가 이미 그렇게 판단해서 넘겨준다(보험은 engine 계산에서
-    제외되는 태그라 0이어도 안전하다는 원칙, extractor.py 참고)."""
+    보험은 이제 자산·부채와 동일한 원칙이다 — 유형은 알지만 금액이 없으면
+    즉시 확정하지 않고 pending_amounts 재질문 대상(kind="insurance_value")
+    으로만 남긴다(extractor.py가 이미 그렇게 분리해서 넘겨준다). 사용자가
+    이미 금액까지 말했거나("보험 5천만원 있어요") 먼저 "몰라요"까지 답한
+    경우("보험은 있는데 금액은 몰라요")만 이 시점에 바로 InsuranceTag로
+    확정된다."""
     for asset in asset_result.assets:
         state["assets"].append(asset.model_dump(mode="json"))
         _mark_checked(state, asset.type)
@@ -395,6 +432,7 @@ def _merge_extraction(
     for tag in asset_result.insurance_tags:
         state["insurance"].append(tag.model_dump(mode="json"))
         _mark_checked(state, _INSURANCE_CATEGORY)
+        _drop_pending_amount(state, "insurance_value", "보험")
 
     # kind=="asset_value"는 유형은 알지만 금액을 못 찾은 경우라 pending_amounts
     # 재질문으로 이어진다(정상 흐름, 정보 유실 아님). kind가 "unrecognized_segment"
@@ -411,6 +449,9 @@ def _merge_extraction(
         kind = item.get("kind")
         if kind == "asset_value":
             _mark_checked(state, item["asset_type"])
+            _add_pending_amount(state, item)
+        elif kind == "insurance_value":
+            _mark_checked(state, _INSURANCE_CATEGORY)
             _add_pending_amount(state, item)
         elif kind == "asset_absent":
             # "예금은 없어요" — 그 유형은 확인 완료(없음)이지 금액 재질문
@@ -558,6 +599,18 @@ def _is_confirmed(asset: dict[str, Any]) -> bool:
     return asset.get("confidence", "confirmed") == "confirmed"
 
 
+def _is_confirmed_insurance(tag: dict[str, Any]) -> bool:
+    """models.InsuranceTag에 confidence 필드가 생기기 전 세션과의 하위
+    호환. 새 필드가 있으면 그대로 따르고, 없으면(구버전 데이터) 그 시절의
+    "미언급" 자리표시자 모양(value=0, note="금액 미언급")만 unknown_amount로
+    되돌린다 — 그 외 옛 데이터(예: 실제 확인된 value>0)는 안전하게
+    confirmed로 본다. 저장된 값 자체를 고치는 마이그레이션은 하지 않는다,
+    이 함수는 표시 판단에만 쓴다."""
+    if "confidence" in tag:
+        return tag["confidence"] == "confirmed"
+    return not (tag.get("value") == 0 and tag.get("note") == "금액 미언급")
+
+
 def _format_summary(state: dict[str, Any]) -> str:
     lines = ["확정된 자산·부채 목록입니다."]
 
@@ -621,11 +674,18 @@ def _format_summary(state: dict[str, Any]) -> str:
     # 태그라는 기존 원칙 그대로(engine.py가 이 값을 아예 보지 않음).
     insurance = state["insurance"]
     if insurance:
+        confirmed_insurance = [t for t in insurance if _is_confirmed_insurance(t)]
+        unknown_amount_insurance = [
+            t for t in insurance if not _is_confirmed_insurance(t)
+        ]
         lines.append("\n[보험]")
         lines.extend(
             f"- {tag['type']}: {_format_krw(tag['value'])}"
             + (f" ({tag['note']})" if tag.get("note") else "")
-            for tag in insurance
+            for tag in confirmed_insurance
+        )
+        lines.extend(
+            f"- {tag['type']}: 금액 확인 안 됨" for tag in unknown_amount_insurance
         )
     else:
         lines.append("\n[보험] 없음")
@@ -784,6 +844,13 @@ def _continue_after_categories(
 ) -> AgentOutput:
     if state["pending_amounts"]:
         item = state["pending_amounts"][0]
+        if item.get("kind") == "insurance_value":
+            question = (
+                _INSURANCE_FOLLOWUP_QUESTION_POST_DEATH
+                if state["mode"] == _POST_DEATH_MODE
+                else _INSURANCE_FOLLOWUP_QUESTION_PRE_NEED
+            )
+            return _output(state, question)
         label = item.get("asset_type") or item.get("liability_type")
         return _output(state, f"{label} 금액이 얼마인지 알려주시겠어요?")
 

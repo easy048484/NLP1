@@ -182,8 +182,8 @@ function assetOrganizerPendingQuestion(
 
 export interface AssetAmountRequest {
   /** 백엔드 pending_amounts 항목 kind — 후속 메시지 문구 조립에만 쓴다. */
-  kind: "asset_value" | "liability_value";
-  /** 되묻는 대상 카테고리 이름 (예: "예금", "대출"). */
+  kind: "asset_value" | "liability_value" | "insurance_value";
+  /** 되묻는 대상 카테고리 이름 (예: "예금", "대출", "보험"). */
   label: string;
 }
 
@@ -205,9 +205,15 @@ export function parseAssetAmountRequest(
   const first = asRecord(pendingAmounts[0]);
   if (!first) return null;
   const kind = asString(first.kind);
-  if (kind !== "asset_value" && kind !== "liability_value") return null;
+  if (
+    kind !== "asset_value" &&
+    kind !== "liability_value" &&
+    kind !== "insurance_value"
+  ) {
+    return null;
+  }
   const label = asString(
-    kind === "asset_value" ? first.asset_type : first.liability_type,
+    kind === "liability_value" ? first.liability_type : first.asset_type,
   );
   if (!label) return null;
   return { kind, label };
