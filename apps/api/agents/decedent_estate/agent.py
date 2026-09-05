@@ -357,11 +357,23 @@ def _requirement_payload(result: RequirementResult) -> dict[str, Any]:
 
 
 def _next_action(results: dict[str, RequirementResult]) -> Optional[str]:
-    """PENDING이 남아 있으면 되묻고, 전부 확정+자필증서로 확인되면 heir_navigator로 넘긴다."""
-    has_pending = any(
-        results[rid].grade == "PENDING" for rid in _FORMAL_REQUIREMENT_IDS
+    """PENDING이나 RED가 남아 있으면 review를 계속하고, 전부 확정(GREEN)+
+    자필증서로 확인되면 heir_navigator로 넘긴다.
+
+    ⚠️ (버그 수정) 예전에는 PENDING만 확인하고 RED는 전혀 보지 않아서, 예를
+    들어 주소만 RED고 나머지(날짜/성명/전문 자서/날인)가 GREEN이면 "PENDING
+    없음 + handwriting GREEN" 조건만으로 곧바로 heir_navigator에 handoff했다
+    — 법적으로 무효 사유(RED)가 남은 review를 끝내버리고, 사용자가 다음 턴에
+    주소를 정정해도 그 메시지를 heir_navigator가 대신 받아갔다. RED도
+    PENDING과 동일하게 "review 미종결"로 취급해 AWAIT_USER를 반환한다 —
+    router._WAITING_NEXT_ACTIONS 계약(#110/#111)에 그대로 올라타므로, 다음 턴
+    키워드 라우팅보다 decedent_estate가 우선하는 기존 continuation 메커니즘을
+    별도 구현 없이 재사용한다.
+    """
+    has_unresolved = any(
+        results[rid].grade in ("PENDING", "RED") for rid in _FORMAL_REQUIREMENT_IDS
     )
-    if has_pending:
+    if has_unresolved:
         return NEXT_ACTION_AWAIT_USER
 
     if results["handwriting"].grade == "GREEN":
