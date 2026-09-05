@@ -1186,6 +1186,91 @@ def test_all_confirmed_assets_show_no_disclaimer():
     assert output.financial_profile.financial_assets == 100_000_000
 
 
+# ============ 최종 확정 요약에서 보험 합계 제외 이유 명시(실측 피드백)
+
+
+_INSURANCE_EXCLUSION_NOTE = (
+    "보험은 금액의 성격(해약환급금·보험금 등)과 계약 관계에 따라 다르게 "
+    "취급될 수 있어 자산 합계와 순자산에는 자동 반영하지 않았습니다."
+)
+_NET_WORTH_EXCLUSION_MARKER = "이 순자산에는 제외된 항목이 있어요"
+
+
+def test_finalized_summary_shows_insurance_exclusion_note_when_confirmed():
+    """confirmed 보험이 있으면 최종 요약 [보험] 섹션 아래에 왜 합계에서
+    빠지는지 안내가 붙어야 한다 — 계산 오류로 오해하는 것을 방지."""
+    session_id = "fin-ins1"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 1억, 보험 2500만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    output = agent.run(_confirm(session_id, state))
+
+    assert "[보험]" in output.reply
+    assert "- 보험: 2,500만원" in output.reply
+    assert _INSURANCE_EXCLUSION_NOTE in output.reply
+    assert _NET_WORTH_EXCLUSION_MARKER in output.reply
+    # 집계 로직은 변하지 않는다 — 보험 2,500만원은 여전히 합계 밖.
+    assert output.financial_profile.financial_assets == 100_000_000
+    assert "순자산: 1억" in output.reply
+
+
+def test_finalized_summary_shows_insurance_exclusion_note_when_unknown_amount():
+    """금액 미확인(unknown_amount) 보험도 동일하게 안내가 표시돼야 한다 —
+    금액 유무와 무관하게 보험은 항상 집계에서 빠지기 때문."""
+    session_id = "fin-ins2"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 1억, 보험 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "몰라요", state)).data[
+        STATE_KEY
+    ]  # 보험 금액
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    output = agent.run(_confirm(session_id, state))
+
+    assert "- 보험: 금액 확인 안 됨" in output.reply
+    assert _INSURANCE_EXCLUSION_NOTE in output.reply
+    assert _NET_WORTH_EXCLUSION_MARKER in output.reply
+
+
+def test_finalized_summary_hides_insurance_note_when_no_insurance():
+    """보험을 아예 언급하지 않았으면(=[보험] 없음) 보험 관련 안내도,
+    순자산 제외 표시도 뜨지 않아야 한다 — 불필요한 안내 남발 금지."""
+    session_id = "fin-ins3"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 1억 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    output = agent.run(_confirm(session_id, state))
+
+    assert "[보험] 없음" in output.reply
+    assert _INSURANCE_EXCLUSION_NOTE not in output.reply
+    assert _NET_WORTH_EXCLUSION_MARKER not in output.reply
+
+
+def test_finalized_summary_unknown_amount_asset_and_liability_disclaimers_unchanged():
+    """이번 변경은 backend summary formatting에 안내를 "추가"한 것일 뿐,
+    기존 자산/부채 unknown_amount 제외 문구는 그대로여야 한다(회귀 방지) —
+    보험이 전혀 없는 시나리오에서도 순자산 제외 표시는 그대로 나와야
+    한다(금액 미확인 자산이 있으므로)."""
+    session_id = "fin-ins4"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 1억 있고 집 한 채 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "몰라요", state)).data[
+        STATE_KEY
+    ]  # 부동산 금액
+    state = agent.run(_continue(session_id, "없어요", state)).data[STATE_KEY]
+    output = agent.run(_confirm(session_id, state))
+
+    assert "1개 항목은 금액이 확인되지 않아 총액에서 제외됨" in output.reply
+    assert "- 부동산: 금액 확인 안 됨" in output.reply
+    assert _INSURANCE_EXCLUSION_NOTE not in output.reply  # 보험 자체가 없음
+    assert _NET_WORTH_EXCLUSION_MARKER in output.reply  # 부동산 미확인으로 여전히 표시
+    assert output.financial_profile.real_estate_value == 0
+    assert output.financial_profile.financial_assets == 100_000_000
+
+
 # ================================================ 부채 3단계 신뢰도 (unknown_amount != 0)
 
 
