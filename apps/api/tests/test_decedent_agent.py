@@ -66,7 +66,11 @@ def test_run_handwritten_without_confirm_answers_stays_pending() -> None:
     assert output.data["requirements"]["seal"]["grade"] == "PENDING"
 
 
-def test_run_all_green_and_confirmed_handoffs_to_heir_navigator() -> None:
+def test_run_all_green_and_confirmed_does_not_auto_handoff() -> None:
+    """모든 형식요건이 GREEN으로 종결돼도 더 이상 자동으로 heir_navigator에
+    handoff하지 않는다(2026-09-05) — "점검 완료"가 "상담 종료"를 뜻하지
+    않는다. 다음 턴 라우팅은 router의 기존 last_agent continuation에
+    맡긴다(decedent_estate 전용 pending 상태 없음)."""
     payload = AgentInput(
         session_id="s1",
         user_message=_WILL_TEXT_COMPLETE,
@@ -74,8 +78,8 @@ def test_run_all_green_and_confirmed_handoffs_to_heir_navigator() -> None:
     )
     output = decedent_estate.run(payload)
 
-    assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
-    assert output.data["handoff_reason"] == "가정법원 검인 절차 안내 필요"
+    assert output.next_action is None
+    assert "handoff_reason" not in output.data
 
     reqs = output.data["requirements"]
     for rid in ("date", "address", "name", "handwriting", "seal"):
@@ -152,8 +156,9 @@ def test_run_reads_answers_from_context() -> None:
     assert address["condition_id"] == "envelope_or_minor_discrepancy"
     assert address["grade"] == "YELLOW"
     assert address["precedent_ids"] == ["address_on_envelope_valid"]
-    # PENDING이 하나도 없고 자서도 확인됐으니 heir_navigator 로 넘겨야 한다.
-    assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    # PENDING/열린 followup이 하나도 없어 review는 종결됐지만, 더 이상
+    # 자동으로 heir_navigator에 handoff하지 않는다(2026-09-05).
+    assert output.next_action is None
 
 
 def test_run_confirmed_typed_will_has_no_handoff() -> None:
