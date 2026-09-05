@@ -20,6 +20,16 @@ export function MessageList({ children }: { children?: ReactNode }) {
     }
   }, [turns, loading, lastTurn?.role]);
 
+  // 과거 assistant 턴의 follow-up 카드(AmountInputCard 등)는 절대
+  // interactive하면 안 된다 — 오직 가장 마지막 턴이 assistant 응답일
+  // 때만 그 턴의 follow-up이 활성화된다. 사용자가 이미 다음 메시지를
+  // 보낸 상태(마지막 턴이 user, 응답 대기 중)라면 그 어떤 과거 assistant
+  // 턴도 더 이상 "현재"가 아니다 — 재현된 버그: 과거 주식 카드에 남아
+  // 있던 값을 수정해 다시 제출하면, 실제로는 이미 다음 카테고리(부동산)
+  // 질문으로 넘어간 백엔드 상태에 엉뚱하게 반영됐다.
+  const isLatestAssistantTurn = (i: number) =>
+    i === turns.length - 1 && turns[i].role === "assistant";
+
   return (
     <div className="chat-scroll" ref={scrollRef}>
       <div className="chat-log" role="log" aria-live="polite" aria-label="상담 대화">
@@ -28,6 +38,7 @@ export function MessageList({ children }: { children?: ReactNode }) {
             key={turn.id}
             turn={turn}
             rowRef={i === turns.length - 1 ? lastRowRef : undefined}
+            interactive={isLatestAssistantTurn(i)}
           />
         ))}
 
@@ -53,7 +64,15 @@ export function MessageList({ children }: { children?: ReactNode }) {
   );
 }
 
-function MessageRow({ turn, rowRef }: { turn: Turn; rowRef?: Ref<HTMLDivElement> }) {
+function MessageRow({
+  turn,
+  rowRef,
+  interactive,
+}: {
+  turn: Turn;
+  rowRef?: Ref<HTMLDivElement>;
+  interactive: boolean;
+}) {
   if (turn.role === "user") {
     return (
       <div className="msg-row msg-user" ref={rowRef}>
@@ -76,7 +95,7 @@ function MessageRow({ turn, rowRef }: { turn: Turn; rowRef?: Ref<HTMLDivElement>
   return (
     <div className="msg-row msg-assistant" ref={rowRef}>
       {turn.response ? (
-        <AssistantResponse response={turn.response} />
+        <AssistantResponse response={turn.response} interactive={interactive} />
       ) : (
         // 재로그인 후 복원된 지난 대화. 구조화된 응답(에이전트 카드·계획표)은
         // 저장하지 않으므로 텍스트만 있고, 그래서 말풍선으로만 보여준다.

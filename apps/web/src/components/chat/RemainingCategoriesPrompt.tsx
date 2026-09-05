@@ -17,10 +17,13 @@ export function RemainingCategoriesPrompt({
   categories,
   onConfirmNone,
   onSelectMore,
+  disabled = false,
 }: {
   categories: string[];
   onConfirmNone: () => void;
   onSelectMore: (selectedKeys: string[]) => void;
+  /** 응답 대기 중(loading) 등 제출 자체를 잠깐 막아야 할 때. */
+  disabled?: boolean;
 }) {
   const [showSelect, setShowSelect] = useState(false);
 
@@ -30,11 +33,21 @@ export function RemainingCategoriesPrompt({
         아직 확인하지 않은 {categories.join(", ")}은(는) 모두 없으신가요?
       </p>
       {showSelect ? (
-        <AssetCategorySelectCard availableKeys={categories} onSubmit={onSelectMore} />
+        <AssetCategorySelectCard
+          availableKeys={categories}
+          onSubmit={onSelectMore}
+          disabled={disabled}
+        />
       ) : (
         <div className="remaining-categories-actions">
-          <Button onClick={onConfirmNone}>네, 모두 없어요</Button>
-          <Button variant="outline" onClick={() => setShowSelect(true)}>
+          <Button onClick={onConfirmNone} disabled={disabled}>
+            네, 모두 없어요
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setShowSelect(true)}
+            disabled={disabled}
+          >
             더 있어요
           </Button>
         </div>

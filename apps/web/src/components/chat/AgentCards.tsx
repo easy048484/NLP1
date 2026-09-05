@@ -40,7 +40,7 @@ export function AgentCards({
   contribution: AgentOutput;
   mode?: "results" | "questions";
 }) {
-  const { send } = useApp();
+  const { send, loading } = useApp();
   const data = contribution.data ?? {};
 
   const signals = parseSignals(data, contribution.agent);
@@ -79,6 +79,7 @@ export function AgentCards({
           label={amountRequest.label}
           onConfirm={(amountWon) => void send(`${amountWon}원`)}
           onUnknown={() => void send("몰라요")}
+          disabled={loading}
         />,
       );
       return <div className="agent-cards">{cards}</div>;
@@ -87,7 +88,11 @@ export function AgentCards({
     // — 파싱 실패 재질문 대신 카테고리 선택 UI로 바로 진입시킨다.
     if (categorySelectionRequested) {
       cards.push(
-        <AssetCategorySelectCard key="category-select" onSubmit={submitCategorySelection} />,
+        <AssetCategorySelectCard
+          key="category-select"
+          onSubmit={submitCategorySelection}
+          disabled={loading}
+        />,
       );
       return <div className="agent-cards">{cards}</div>;
     }
@@ -101,6 +106,7 @@ export function AgentCards({
           categories={remainingCategories.categories}
           onConfirmNone={() => void send("나머지는 없어요")}
           onSelectMore={submitCategorySelection}
+          disabled={loading}
         />,
       );
       return <div className="agent-cards">{cards}</div>;
@@ -114,6 +120,7 @@ export function AgentCards({
             </div>
             <ChoiceGroup
               ariaLabel={q.question}
+              disabled={loading}
               options={q.options}
               onSelect={(value) => {
                 const chosen = q.options.find((o) => o.value === value);

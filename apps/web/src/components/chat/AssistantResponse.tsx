@@ -42,15 +42,32 @@ function renderReply(reply: string) {
  * - needs_review 배지
  * - 본문 마크다운 (서술만) — 담당 에이전트색 좌측 라인
  * - 기여별 근거 카드
+ *
+ * `interactive`는 이 응답이 대화의 가장 마지막 assistant 턴인지를
+ * 나타낸다(MessageList가 계산해서 넘겨준다) — false면 본문/결과 카드는
+ * 그대로 보이되 follow-up(AmountInputCard/AssetCategorySelectCard/
+ * RemainingCategoriesPrompt/ChoiceGroup) 블록 자체를 렌더하지 않는다.
+ * 실측 재현된 버그: 과거 턴의 follow-up 카드가 계속 렌더돼 있으면,
+ * 사용자가 이미 다음 카테고리로 넘어간 뒤에도 그 과거 카드를 수정해
+ * 다시 제출할 수 있었고, 그 답이 현재 pending 중인(다른) 카테고리에
+ * 잘못 반영됐다.
  */
-export function AssistantResponse({ response }: { response: ChatResponse }) {
+export function AssistantResponse({
+  response,
+  interactive,
+}: {
+  response: ChatResponse;
+  interactive: boolean;
+}) {
   const agents = dedupeAgents(response);
-  const followups = response.contributions.filter(
-    (c) =>
-      hasPendingQuestions(c.data ?? {}, c.agent) ||
-      hasAssetAmountRequest(c.data ?? {}, c.agent) ||
-      hasCategorySelectionRequest(c.data ?? {}, c.agent),
-  );
+  const followups = interactive
+    ? response.contributions.filter(
+        (c) =>
+          hasPendingQuestions(c.data ?? {}, c.agent) ||
+          hasAssetAmountRequest(c.data ?? {}, c.agent) ||
+          hasCategorySelectionRequest(c.data ?? {}, c.agent),
+      )
+    : [];
 
   return (
     <div className="assistant-response">
