@@ -16,6 +16,101 @@ def test_tax_agent_asks_first_missing_slot() -> None:
     assert output.data[STATE_KEY]["asked_slot"] == "decedent_is_resident"
 
 
+def test_tax_agent_uses_pre_need_wording_for_living_user() -> None:
+    first_output = run(
+        AgentInput(
+            session_id="tax-pre-need-copy",
+            user_message="살아 있을 때 상속세를 미리 계산하고 싶어요.",
+            axis="pre_need",
+        )
+    )
+
+    assert "상속을 미리 준비하는 분" in first_output.reply
+    assert "돌아가신 분" not in first_output.reply
+
+    second_output = run(
+        AgentInput(
+            session_id="tax-pre-need-copy",
+            user_message="네, 국내 거주자예요.",
+            axis="pre_need",
+            context={STATE_KEY: first_output.data[STATE_KEY]},
+        )
+    )
+
+    assert second_output.data[STATE_KEY]["asked_slot"] == "spouse_exists"
+    assert "현재 배우자가 있나요?" in second_output.reply
+    assert "돌아가신 분" not in second_output.reply
+
+
+def test_tax_agent_keeps_post_death_wording() -> None:
+    output = run(
+        AgentInput(
+            session_id="tax-post-death-copy",
+            user_message="돌아가신 아버지의 상속세를 계산하고 싶어요.",
+            axis="post_death",
+        )
+    )
+
+    assert "돌아가신 분이 사망 당시" in output.reply
+
+
+def test_tax_result_uses_pre_need_deadline_wording() -> None:
+    output = run(
+        AgentInput(
+            session_id="tax-pre-need-result-copy",
+            user_message="현재 기준으로 계산해주세요.",
+            axis="pre_need",
+            context={
+                "tax_input": {
+                    "decedent_is_resident": True,
+                    "spouse_exists": False,
+                    "children_count": 2,
+                    "original_inherited_property": 730_000_000,
+                    "deemed_inherited_property": 100_000_000,
+                    "debts": 0,
+                    "financial_assets": 30_000_000,
+                    "financial_debts": 0,
+                    "prior_gifts_to_heirs": 0,
+                    "prior_gifts_to_non_heirs": 0,
+                    "filing_within_deadline": True,
+                }
+            },
+        )
+    )
+
+    assert output.data[STATE_KEY]["status"] == "calculated"
+    assert "생전 시뮬레이션이므로" in output.reply
+    assert "돌아가신 날짜를 입력하지 않아" not in output.reply
+
+
+def test_tax_result_keeps_post_death_deadline_wording() -> None:
+    output = run(
+        AgentInput(
+            session_id="tax-post-death-result-copy",
+            user_message="상속세를 계산해주세요.",
+            axis="post_death",
+            context={
+                "tax_input": {
+                    "decedent_is_resident": True,
+                    "spouse_exists": False,
+                    "children_count": 2,
+                    "original_inherited_property": 730_000_000,
+                    "deemed_inherited_property": 100_000_000,
+                    "debts": 0,
+                    "financial_assets": 30_000_000,
+                    "financial_debts": 0,
+                    "prior_gifts_to_heirs": 0,
+                    "prior_gifts_to_non_heirs": 0,
+                    "filing_within_deadline": True,
+                }
+            },
+        )
+    )
+
+    assert output.data[STATE_KEY]["status"] == "calculated"
+    assert "돌아가신 날짜를 입력하지 않아" in output.reply
+
+
 def test_tax_agent_keeps_state_between_turns() -> None:
     first_output = run(
         AgentInput(

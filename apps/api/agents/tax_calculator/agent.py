@@ -106,6 +106,56 @@ QUESTIONS = {
     ),
 }
 
+# 생전 준비와 사후 처리에서 계산에 필요한 슬롯은 같지만, 이용자에게 보이는
+# 표현은 달라야 한다. 기본 QUESTIONS는 기존 사후 상담 문구로 유지하고,
+# pre_need 요청에서만 아래 문구를 덮어쓴다.
+PRE_NEED_QUESTIONS = {
+    "decedent_is_resident": (
+        "상속을 미리 준비하는 분이 현재 국내에 거주하고 있는지 알려주세요. "
+        "국내 거주자라면 '네', 아니면 '아니요'라고 답해주세요."
+    ),
+    "spouse_exists": "현재 배우자가 있나요? '네' 또는 '아니요'로 알려주세요.",
+    "children_count": ("현재 자녀는 몇 명인가요? 예: '2명', 자녀가 없다면 '0명'"),
+    "spouse_is_sole_heir": (
+        "자녀가 없으시군요. 배우자만 상속인이 될 것으로 예상되나요, 아니면 "
+        "본인의 부모님이나 조부모님도 함께 상속인이 될 것으로 예상되나요? "
+        "배우자만 해당한다면 '네', 부모님이나 조부모님도 해당한다면 "
+        "'아니요'로 답해주세요."
+    ),
+    "original_inherited_property": (
+        "현재 보유한 부동산, 예금, 주식 등 상속재산으로 가정할 재산은 "
+        "총 얼마인가요? 예: '10억원' 또는 '500000000원'. 사망 시 지급될 "
+        "보험금·신탁·퇴직금은 별도로 확인하며 같은 재산을 두 번 더하지 "
+        "않도록 해야 합니다."
+    ),
+    "deemed_inherited_property": (
+        "사망 시 지급될 것으로 예상되는 보험금, 신탁재산, 퇴직금처럼 "
+        "상속재산으로 함께 계산할 금액은 총 얼마인가요? 없다면 '0원'이라고 "
+        "입력해주세요."
+    ),
+    "prior_gifts_to_heirs": (
+        "현재를 상속개시 시점으로 가정할 때, 최근 10년 이내에 상속인이 될 "
+        "가족에게 증여한 재산이 있나요? 금액을 입력하고, 없다면 '0원'이라고 "
+        "입력해주세요."
+    ),
+    "prior_gifts_to_non_heirs": (
+        "현재를 상속개시 시점으로 가정할 때, 최근 5년 이내에 상속인이 아닌 "
+        "사람에게 증여한 재산이 있나요? 금액을 입력하고, 없다면 '0원'이라고 "
+        "입력해주세요."
+    ),
+    "spouse_actual_inheritance": (
+        "배우자에게 상속할 것으로 계획한 순재산은 얼마인가요? 계획한 금액이 "
+        "없다면 '0원', 아직 정해지지 않았다면 '모름'이라고 입력해주세요. "
+        "미정인 금액은 임의로 0원으로 계산하지 않습니다."
+    ),
+}
+
+PRE_NEED_DEEMED_SLOTS = {
+    "insurance_proceeds": "사망 시 지급될 것으로 예상되는 보험금",
+    "trust_property": "사망 시 이전될 것으로 예상되는 신탁재산 또는 신탁이익을 받을 권리",
+    "retirement_benefits": "사망 시 지급될 것으로 예상되는 퇴직금·퇴직수당 등",
+}
+
 
 def _empty_state() -> dict[str, Any]:
     """새로운 상속세 대화 상태를 만든다."""
@@ -474,13 +524,24 @@ def _apply_previous_answer(message: str, state: dict[str, Any]) -> bool:
     return True
 
 
-def _question_for_slot(slot: str, state: dict[str, Any]) -> str:
+def _question_for_slot(
+    slot: str, state: dict[str, Any], axis: str | None = None
+) -> str:
+    is_pre_need = axis == "pre_need"
     if slot == "profile_scope_confirmed":
         prefix = (
             "공유 재무자료가 변경되어 다시 확인할게요.\n\n"
             if state["profile_changed"]
             else ""
         )
+        if is_pre_need:
+            return prefix + (
+                "다른 에이전트의 재무자료가 있어요. 이 자료가 상속을 미리 "
+                "준비하는 분의 재산·채무이며, 현재 시점을 기준으로 빠짐없이 "
+                "정리한 금액인가요? 다른 사람의 재산이거나 다른 시점의 "
+                "자료라면 '아니요'로 답해주세요. 맞으면 '네', 불확실하면 "
+                "'모름'으로 답해주세요. 보험금·신탁·퇴직금은 별도로 확인합니다."
+            )
         return prefix + (
             "다른 에이전트의 재무자료가 있어요. 이 자료가 지금 계산할 "
             "돌아가신 분의 재산·채무이며, 사망일 기준으로 빠짐없이 정리한 "
@@ -496,8 +557,11 @@ def _question_for_slot(slot: str, state: dict[str, Any]) -> str:
             prefix = (
                 "자산정리에 보험 항목이 있지만 가입금액을 그대로 사용하지 않을게요. "
             )
+        deemed_label = (
+            PRE_NEED_DEEMED_SLOTS[slot] if is_pre_need else DEEMED_SLOTS[slot]
+        )
         return prefix + (
-            f"{DEEMED_SLOTS[slot]}이 있나요? 있다면 금액, 없다면 '0원', "
+            f"{deemed_label} 항목이 있나요? 있다면 금액, 없다면 '0원', "
             "확인되지 않았다면 '모름'이라고 알려주세요. 입력한 금액의 "
             "과세 포함 여부와 기존 재산과의 중복은 별도로 확인합니다."
         )
@@ -516,7 +580,11 @@ def _question_for_slot(slot: str, state: dict[str, Any]) -> str:
             "보험금 지급내역·보험료 납입내역, 신탁계약서, 퇴직급여 명세를 "
             "확인한 뒤 이어갈 수 있어요. 금액을 고치려면 '다시 입력'이라고 답해주세요."
         )
-    question = QUESTIONS[slot]
+    question = (
+        PRE_NEED_QUESTIONS.get(slot, QUESTIONS[slot])
+        if is_pre_need
+        else QUESTIONS[slot]
+    )
     candidate = _candidate_for_slot(slot, state)
     if slot in state["profile_reconfirm"]:
         question = (
@@ -595,7 +663,7 @@ def run(payload: AgentInput) -> AgentOutput:
             agent=AgentName.TAX_CALCULATOR,
             reply=(
                 "확인되지 않은 정보는 0원으로 처리하지 않고 계산을 보류할게요.\n\n"
-                f"{_question_for_slot(asked_slot, state)}"
+                f"{_question_for_slot(asked_slot, state, payload.axis)}"
             ),
             next_action=None,
             data={STATE_KEY: state},
@@ -608,13 +676,20 @@ def run(payload: AgentInput) -> AgentOutput:
         state["asked_slot"] = None
         state["missing_fields"] = []
 
+        unsupported_residency_reply = (
+            "현재 상속세 계산기는 국내 거주자가 상속을 미리 준비하는 경우만 "
+            "지원합니다. 해외 거주자의 상속은 국내 재산 범위와 공제 기준이 "
+            "다르므로 세무 전문가의 확인이 필요합니다."
+            if payload.axis == "pre_need"
+            else (
+                "현재 상속세 계산기는 돌아가신 분이 사망 당시 국내에 거주한 "
+                "경우만 지원합니다. 해외 거주자의 상속은 국내 재산 범위와 공제 "
+                "기준이 다르므로 세무 전문가의 확인이 필요합니다."
+            )
+        )
         return AgentOutput(
             agent=AgentName.TAX_CALCULATOR,
-            reply=(
-                "현재 상속세 계산기는 돌아가신 분이 사망 당시 국내에 거주한 "
-                "경우만 지원합니다. 해외 거주자의 상속은 국내 재산 범위와 공제 기준이 "
-                "다르므로 세무 전문가의 확인이 필요합니다."
-            ),
+            reply=unsupported_residency_reply,
             next_action=None,
             data={STATE_KEY: state},
         )
@@ -671,7 +746,7 @@ def run(payload: AgentInput) -> AgentOutput:
         state["missing_fields"] = ["profile_scope_confirmed"]
         return AgentOutput(
             agent=AgentName.TAX_CALCULATOR,
-            reply=_question_for_slot("profile_scope_confirmed", state),
+            reply=_question_for_slot("profile_scope_confirmed", state, payload.axis),
             data={STATE_KEY: state},
         )
 
@@ -687,7 +762,7 @@ def run(payload: AgentInput) -> AgentOutput:
 
         return AgentOutput(
             agent=AgentName.TAX_CALCULATOR,
-            reply=_question_for_slot(next_slot, state),
+            reply=_question_for_slot(next_slot, state, payload.axis),
             next_action=None,
             data={STATE_KEY: state},
         )
@@ -723,7 +798,7 @@ def run(payload: AgentInput) -> AgentOutput:
     state["asked_slot"] = None
     state["missing_fields"] = []
     state["last_result"] = result.model_dump(mode="json")
-    reply = result_reply(result)
+    reply = result_reply(result, axis=payload.axis)
     will_note = _will_status_note(payload.will_status)
     if will_note:
         reply = f"{will_note}\n\n{reply}"
