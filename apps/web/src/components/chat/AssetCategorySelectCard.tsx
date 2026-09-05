@@ -19,9 +19,12 @@ import { ASSET_CATEGORY_OPTIONS } from "../../lib/assetCategories";
 export function AssetCategorySelectCard({
   availableKeys,
   onSubmit,
+  disabled = false,
 }: {
   availableKeys?: string[];
   onSubmit: (selectedKeys: string[]) => void;
+  /** 응답 대기 중(loading) 등 제출 자체를 잠깐 막아야 할 때. */
+  disabled?: boolean;
 }) {
   const options = availableKeys
     ? ASSET_CATEGORY_OPTIONS.filter(
@@ -69,7 +72,7 @@ export function AssetCategorySelectCard({
         })}
       </div>
       <div className="category-select-actions">
-        <Button onClick={handleSubmit} disabled={selected.size === 0}>
+        <Button onClick={handleSubmit} disabled={selected.size === 0 || disabled}>
           선택 완료
         </Button>
       </div>

@@ -43,10 +43,14 @@ export function AmountInputCard({
   label,
   onConfirm,
   onUnknown,
+  disabled = false,
 }: {
   label: string;
   onConfirm: (amountWon: number) => void;
   onUnknown: () => void;
+  /** 응답 대기 중(loading) 등 제출 자체를 잠깐 막아야 할 때 — 값 편집은
+   * 막지 않고 실제 전송(onConfirm/onUnknown)만 비활성화한다. */
+  disabled?: boolean;
 }) {
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const [history, setHistory] = useState<Snapshot[]>([]);
@@ -193,10 +197,10 @@ export function AmountInputCard({
       )}
 
       <div className="amount-input-actions">
-        <Button variant="ghost" onClick={handleUnknown}>
+        <Button variant="ghost" onClick={handleUnknown} disabled={disabled}>
           금액을 몰라요
         </Button>
-        <Button onClick={handleSubmit} disabled={!canSubmit}>
+        <Button onClick={handleSubmit} disabled={!canSubmit || disabled}>
           이 금액으로 답하기
         </Button>
       </div>
