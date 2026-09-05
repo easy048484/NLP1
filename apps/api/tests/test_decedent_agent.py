@@ -81,6 +81,33 @@ def test_run_all_green_and_confirmed_handoffs_to_heir_navigator() -> None:
     assert output.data["pending_questions"] == []
 
 
+def test_run_red_address_blocks_handoff_even_when_others_green() -> None:
+    """주소가 RED로 확정되고(봉투에도 없음) 나머지가 모두 GREEN이어도 PENDING이
+    하나도 없다는 이유로 heir_navigator에 handoff하면 안 된다(버그 재현) —
+    RED도 PENDING과 동일하게 review 미종결로 취급해야 한다."""
+    payload = AgentInput(
+        session_id="s1",
+        user_message=_WILL_TEXT_ADDRESS_MISSING,
+        context=_ctx(
+            handwriting_answer="yes",
+            seal_answer="seal_or_fingerprint",
+            address_envelope_answer="no_envelope",  # 봉투에도 없음 → RED 확정
+        ),
+    )
+    output = decedent_estate.run(payload)
+
+    reqs = output.data["requirements"]
+    assert reqs["address"]["grade"] == "RED"
+    assert reqs["date"]["grade"] == "GREEN"
+    assert reqs["name"]["grade"] == "GREEN"
+    assert reqs["handwriting"]["grade"] == "GREEN"
+    assert reqs["seal"]["grade"] == "GREEN"
+    assert output.data["pending_questions"] == []  # PENDING 없음 — 버그의 핵심 조건
+
+    assert output.next_action != NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    assert output.next_action == NEXT_ACTION_AWAIT_USER
+
+
 def test_run_reads_answers_from_context() -> None:
     """context 의 세 확인 답변(자서/날인/주소봉투)이 실제로 판정에 반영되는지 확인."""
     payload = AgentInput(
@@ -103,7 +130,9 @@ def test_run_reads_answers_from_context() -> None:
 
 
 def test_run_confirmed_typed_will_has_no_handoff() -> None:
-    """자필이 아니라고 확인되면(전문 자서 RED) 검인 안내로 넘길 대상 자체가 아니다."""
+    """자필이 아니라고 확인되면(전문 자서 RED) 검인 안내로 넘길 대상 자체가
+    아니다 — RED가 남아있으므로(#118) heir_navigator로 handoff하지 않고
+    review를 유지한다(AWAIT_USER)."""
     payload = AgentInput(
         session_id="s1",
         user_message=_WILL_TEXT_COMPLETE,
@@ -115,7 +144,8 @@ def test_run_confirmed_typed_will_has_no_handoff() -> None:
 
     assert output.data["requirements"]["handwriting"]["grade"] == "RED"
     assert output.data["requirements"]["handwriting"]["red_label"] == "자필 작성 여부"
-    assert output.next_action is None
+    assert output.next_action != NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    assert output.next_action == NEXT_ACTION_AWAIT_USER
 
 
 def test_run_requirement_payload_covers_all_six_requirements() -> None:
@@ -232,7 +262,10 @@ def test_namespaced_context_reads_confirm_answers() -> None:
 
     assert output.data["requirements"]["handwriting"]["grade"] == "RED"
     assert output.data["requirements"]["seal"]["grade"] == "RED"
-    assert output.next_action is None
+    # RED가 남아있으므로(#118) heir_navigator로 handoff하지 않고 review를
+    # 유지한다(AWAIT_USER).
+    assert output.next_action != NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    assert output.next_action == NEXT_ACTION_AWAIT_USER
 
 
 def test_run_progress_reflects_pending_confirm_answers() -> None:

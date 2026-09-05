@@ -546,6 +546,50 @@ def test_waiting_agent_pending_clears_after_non_waiting_response(monkeypatch):
     assert len(asset_organizer.captured) == 1
 
 
+def test_red_requirement_keeps_pending_reply_agent_for_correction_turn():
+    """decedent_estate review에 RED 요건이 남아 heir_navigator로 handoff하지
+    못하면(#118), 다음 턴 라우팅 소유권(pending_reply_agent)이 decedent_estate에
+    남아야 한다 — #110/#111 continuation 메커니즘을 그대로 재사용한다(실제
+    decedent_estate 에이전트로 실행, fake 아님).
+    """
+    turn1 = router.route(
+        AgentInput(
+            session_id="red-gate-1",
+            user_message=(
+                "유언장\n유언자: 홍길동\n2026년 5월 3일\n\n"
+                "나의 전 재산을 배우자에게 상속한다."
+            ),
+            context={
+                "decedent_estate": {
+                    "will_type": "handwritten",
+                    "handwriting_answer": "yes",
+                    "seal_answer": "seal_or_fingerprint",
+                    "address_envelope_answer": "no_envelope",  # 봉투에도 없음 → RED
+                }
+            },
+        )
+    )
+    assert turn1.agent == AgentName.DECEDENT_ESTATE
+    assert turn1.data["requirements"]["address"]["grade"] == "RED"
+    assert turn1.next_action != "handoff:heir_navigator"
+
+    stored = router.default_store.load("red-gate-1")
+    assert stored.pending_reply_agent == AgentName.DECEDENT_ESTATE
+
+    # 정정 메시지에 다른 에이전트 키워드가 없어도(또는 있어도) decedent_estate가
+    # 계속 받아야 한다 — pending_reply_agent가 keyword routing보다 우선.
+    turn2 = router.route(
+        AgentInput(
+            session_id="red-gate-1",
+            user_message=(
+                "주소는 서울특별시 강남구 테헤란로 123, 101동 1203호라고 적혀 있습니다."
+            ),
+        )
+    )
+    assert turn2.agents == [AgentName.DECEDENT_ESTATE]
+    assert turn2.data["requirements"]["address"]["grade"] == "GREEN"
+
+
 # ------------------------------------------------------- compose / verify
 
 
