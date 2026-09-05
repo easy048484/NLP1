@@ -178,6 +178,7 @@ def classify(
     user_message: str,
     *,
     pending_handoff: Optional[AgentName],
+    pending_reply_agent: Optional[AgentName] = None,
     last_agent: Optional[AgentName],
     default_agent: AgentName,
     axis: Optional[str] = None,
@@ -187,6 +188,12 @@ def classify(
     axis(생전 준비 / 사후 절차)는 키워드 후보가 하나도 없을 때만 개입합니다 —
     직전 에이전트가 있으면 그 대화를 이어가고, 없으면 axis 에 맞는 기본 에이전트
     (사후→heir_navigator, 생전→asset_organizer)로 시작합니다.
+
+    pending_reply_agent: 직전 턴 응답이 "사용자 답변을 기다리는 중"이었던
+    에이전트(router._WAITING_NEXT_ACTIONS 참고 — 특정 에이전트 이름을
+    하드코딩하지 않고 next_action 값 계약만 본다). 키워드 후보보다 우선한다 —
+    이미 자료를 요청해놓고 다음 턴에 그 답을 다른 후보 에이전트로 흘려보내면
+    안 되기 때문. pending_handoff보다는 낮은 우선순위.
     """
     # (1) 직전 턴 핸드오프가 최우선 — 기존 라우터와 동일. Fast Path.
     if (
@@ -195,9 +202,16 @@ def classify(
     ):
         return Plan(path=PATH_FAST, layers=[[pending_handoff]])
 
+    # (2) 직전 턴에 답변을 기다리던 에이전트가 있으면 키워드 후보보다 우선한다.
+    if (
+        pending_reply_agent is not None
+        and registry.get_optional(pending_reply_agent) is not None
+    ):
+        return Plan(path=PATH_STANDARD, layers=[[pending_reply_agent]])
+
     candidates = registry.match_keywords(user_message)
 
-    # (2) 키워드 후보 1개 → Standard. (3) 없으면 직전 에이전트 → (4) axis 기본 → (5) 기본.
+    # (3) 키워드 후보 1개 → Standard. (4) 없으면 직전 에이전트 → (5) axis 기본 → (6) 기본.
     if len(candidates) == 1:
         return Plan(path=PATH_STANDARD, layers=[[candidates[0]]])
     if not candidates:
@@ -209,7 +223,7 @@ def classify(
             target = default_agent
         return Plan(path=PATH_STANDARD, layers=[[target]])
 
-    # (5) 후보 2개 이상 → Full Pipeline. LLM 이 고르고, 못 고르면 전부.
+    # (7) 후보 2개 이상 → Full Pipeline. LLM 이 고르고, 못 고르면 전부.
     selected = _llm_select(user_message, candidates)
     llm_used = selected is not None
     if selected is None:

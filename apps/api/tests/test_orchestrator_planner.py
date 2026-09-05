@@ -228,6 +228,52 @@ def test_decedent_estate_routing_scenarios():
     assert AgentName.DECEDENT_ESTATE not in plan.agents
 
 
+# ------------------------------------------------- pending_reply_agent (classify)
+
+
+def test_pending_reply_agent_wins_over_keyword_candidate():
+    """직전 턴에 답변을 기다리던 에이전트가 있으면, 이번 턴 메시지가 다른
+    에이전트의 키워드(예금 → asset_organizer)를 포함해도 그 에이전트가
+    우선한다 — 실제 재현: decedent_estate가 유언장 자료를 요청해놓은 상태에서
+    사용자가 유언장 본문(아파트/예금 언급 포함)을 보내는 경우."""
+    plan = planner.classify(
+        "내 소유 아파트는 장남 김민수에게 주고, 은행 예금은 두 아들이 반씩 나누어 가진다.",
+        pending_handoff=None,
+        pending_reply_agent=AgentName.DECEDENT_ESTATE,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert plan.path == "standard"
+    assert plan.layers == [[AgentName.DECEDENT_ESTATE]]
+
+
+def test_pending_handoff_wins_over_pending_reply_agent():
+    """pending_handoff와 pending_reply_agent가 동시에 있으면 handoff가 최우선
+    (기존 규칙 그대로) — Fast Path."""
+    plan = planner.classify(
+        "아무 말이나",
+        pending_handoff=AgentName.HEIR_NAVIGATOR,
+        pending_reply_agent=AgentName.DECEDENT_ESTATE,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert plan.path == "fast"
+    assert plan.layers == [[AgentName.HEIR_NAVIGATOR]]
+
+
+def test_pending_reply_agent_none_falls_back_to_keyword_routing():
+    """pending_reply_agent가 없으면(하위 호환 — 기본값 None) 기존 키워드
+    라우팅이 그대로 동작한다."""
+    plan = planner.classify(
+        "예금이 얼마나 있는지 정리하고 싶어요",
+        pending_handoff=None,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert plan.path == "standard"
+    assert plan.layers == [[AgentName.ASSET_ORGANIZER]]
+
+
 # ------------------------------------------------------------ build_plan
 
 
@@ -373,6 +419,26 @@ def test_session_state_json_round_trip_keeps_shared_profile():
     assert back.financial_profile.extra == {"k": "v"}
 
 
+def test_session_state_json_round_trip_keeps_pending_reply_agent():
+    """pending_reply_agent는 DB 컬럼이 아니라 다른 공유 상태와 같이 "_shared"
+    아래에 직렬화된다 — 새 컬럼/마이그레이션 없이."""
+    state = SessionState(pending_reply_agent=AgentName.DECEDENT_ESTATE)
+    raw = state.to_json_context()
+    assert raw["_shared"]["pending_reply_agent"] == "decedent_estate"
+
+    back = SessionState.from_json_context(raw)
+    assert back.pending_reply_agent == AgentName.DECEDENT_ESTATE
+
+
+def test_session_state_json_round_trip_omits_pending_reply_agent_when_unset():
+    state = SessionState()
+    raw = state.to_json_context()
+    assert "pending_reply_agent" not in raw.get("_shared", {})
+
+    back = SessionState.from_json_context(raw)
+    assert back.pending_reply_agent is None
+
+
 # --------------------------------------------------------------- handoffs
 
 
@@ -396,6 +462,88 @@ def test_structured_handoff_takes_priority_over_legacy_string(monkeypatch):
     second = router.route(AgentInput(session_id="h1", user_message="네"))
     assert second.agent == AgentName.DECEDENT_ESTATE
     assert second.path == "fast"
+
+
+# ------------------------------------------------ waiting-agent continuation
+#
+# 재현: decedent_estate가 review intake gate(#103)에서 "유언장 사진을
+# 올려주시거나, 적힌 내용을 그대로 입력해 주세요"를 next_action=
+# await_user_confirmation으로 반환해 답변을 기다리는 중인데, 다음 턴에 사용자가
+# 보낸 실제 유언장 본문에 asset_organizer 키워드("예금")가 섞여 있어 대화가
+# 엉뚱한 에이전트로 이탈하던 버그.
+
+
+_AWAIT_REPLY = "await_user_confirmation"
+_DECEDENT_INTAKE_REPLY = (
+    "자필 유언장의 형식 요건을 확인하려면 유언장 내용을 확인해야 합니다. "
+    "유언장 사진을 올려주시거나, 적힌 내용을 그대로 입력해 주세요."
+)
+_WILL_BODY_WITH_ASSET_KEYWORDS = (
+    "내 소유 아파트는 장남 김민수에게 주고, 은행 예금은 두 아들이 반씩 나누어 가진다."
+)
+
+
+def test_waiting_agent_keeps_next_turn_over_other_agent_keyword(monkeypatch):
+    decedent = _fake(
+        AgentName.DECEDENT_ESTATE,
+        reply=_DECEDENT_INTAKE_REPLY,
+        next_action=_AWAIT_REPLY,
+        data={"decedent_estate": {"will_type": "handwritten", "requirements": {}}},
+    )
+    asset_organizer = _fake(AgentName.ASSET_ORGANIZER)
+    _patch(monkeypatch, decedent, asset_organizer)
+
+    turn1 = router.route(
+        AgentInput(
+            session_id="wait-1",
+            user_message=(
+                "아버지가 돌아가시고 집 정리하다가 손으로 직접 쓴 유언장을 발견했어요. "
+                "이게 법적으로 효력이 있는 건지 확인하고 싶어요."
+            ),
+        )
+    )
+    assert turn1.agent == AgentName.DECEDENT_ESTATE
+    assert turn1.next_action == _AWAIT_REPLY
+
+    turn2 = router.route(
+        AgentInput(session_id="wait-1", user_message=_WILL_BODY_WITH_ASSET_KEYWORDS)
+    )
+    assert turn2.agents == [AgentName.DECEDENT_ESTATE]
+    assert not asset_organizer.captured  # asset_organizer가 아예 실행되지 않았다
+
+
+def test_waiting_agent_pending_clears_after_non_waiting_response(monkeypatch):
+    """대기 중이던 에이전트가 다음 응답에서 next_action=None을 내면 pending이
+    풀리고, 그 다음 턴은 새 키워드에 따라 정상적으로 다른 에이전트로 전환된다."""
+    decedent_waiting = _fake(
+        AgentName.DECEDENT_ESTATE,
+        reply=_DECEDENT_INTAKE_REPLY,
+        next_action=_AWAIT_REPLY,
+    )
+    asset_organizer = _fake(AgentName.ASSET_ORGANIZER)
+    _patch(monkeypatch, decedent_waiting, asset_organizer)
+
+    router.route(AgentInput(session_id="wait-2", user_message="유언장 확인하고 싶어요"))
+
+    # decedent_estate가 이번엔 확인을 마치고 next_action=None으로 응답 — pending 해제.
+    decedent_done = _fake(
+        AgentName.DECEDENT_ESTATE, reply="확인 완료", next_action=None
+    )
+    monkeypatch.setitem(router._AGENT_RUNNERS, AgentName.DECEDENT_ESTATE, decedent_done)
+    turn2 = router.route(
+        AgentInput(session_id="wait-2", user_message=_WILL_BODY_WITH_ASSET_KEYWORDS)
+    )
+    assert turn2.agents == [AgentName.DECEDENT_ESTATE]
+    assert turn2.next_action is None
+
+    # pending이 해제됐으므로 다음 턴은 키워드에 따라 asset_organizer로 정상 전환.
+    turn3 = router.route(
+        AgentInput(
+            session_id="wait-2", user_message="예금이 얼마나 있는지 정리하고 싶어요"
+        )
+    )
+    assert turn3.agents == [AgentName.ASSET_ORGANIZER]
+    assert len(asset_organizer.captured) == 1
 
 
 # ------------------------------------------------------- compose / verify
