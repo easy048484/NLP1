@@ -1203,14 +1203,14 @@
   font-size: var(--text-sm);
   color: var(--ink);
 }
-.asset-review-note {
-  font-size: var(--text-caption);
-  color: var(--ink-faint);
-}
 .asset-review-value {
   font-size: var(--text-sm);
   color: var(--ink-muted);
   white-space: nowrap;
+}
+.asset-review-exclusion-note {
+  font-size: var(--text-caption);
+  color: var(--ink-faint);
 }
 .asset-review-actions {
   display: flex;
