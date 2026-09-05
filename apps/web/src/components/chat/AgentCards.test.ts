@@ -173,3 +173,56 @@ describe("AgentCards — 자산정리 카테고리 선택 위젯", () => {
     expect(html).not.toContain("선택 완료");
   });
 });
+
+/**
+ * 수집이 끝나면(status==="reviewing") 즉시 finalized로 넘어가지 않고
+ * 항목별 확인/수정 화면(AssetReviewCard)을 보여준다 — 기존 AmountInputCard
+ * 위젯들과 마찬가지로 mode="questions"에서만 렌더된다.
+ */
+describe("AgentCards — 자산정리 review(수집 완료 후 확인/수정) 위젯", () => {
+  it("status가 reviewing이면 항목 표와 [수정]/[이대로 확정] 버튼을 렌더한다", () => {
+    const data = {
+      asset_organizer: {
+        status: "reviewing",
+        review_items: [
+          {
+            kind: "asset_value",
+            type: "주식",
+            label: "주식",
+            value: 15_000_000,
+            confidence: "confirmed",
+            target: { kind: "asset_value", asset_type: "주식" },
+          },
+          {
+            kind: "insurance_value",
+            type: "보험",
+            label: "보험",
+            value: null,
+            confidence: "unknown_amount",
+            target: { kind: "insurance_value", asset_type: "보험" },
+            excluded_from_totals: true,
+          },
+        ],
+      },
+    };
+    const html = render("asset_organizer", data, "questions");
+    expect(html).toContain("주식");
+    expect(html).toContain("보험");
+    expect(html).toContain("금액 미확인");
+    expect(html).toContain("합계 제외");
+    expect(html).toContain("수정");
+    expect(html).toContain("이대로 확정");
+  });
+
+  it("editing_item 중(pending_amounts만 있음)에는 review 표 대신 기존 AmountInputCard를 렌더한다", () => {
+    const data = {
+      asset_organizer: {
+        status: "editing_item",
+        pending_amounts: [{ kind: "asset_value", asset_type: "주식" }],
+      },
+    };
+    const html = render("asset_organizer", data, "questions");
+    expect(html).toContain("이 금액으로 답하기");
+    expect(html).not.toContain("이대로 확정");
+  });
+});

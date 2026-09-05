@@ -17,10 +17,16 @@
 (agent.py의 `_ASSET_CATEGORIES`/`_LIABILITY_CATEGORY` 참고, 새 유형을 추가할 때
 이 비대칭 구조를 먼저 확인하고 맞출 것).
 
-다 모이면 develop의 공유 계약 `schemas.FinancialProfile`(flat 집계)로 눌러서
-`AgentOutput.financial_profile`에 실어 보내고, 동시에 `AgentOutput.handoffs`로
-`retirement_planner`에 핸드오프를 건다(체크리스트 끝나면 자연스럽게 은퇴자금
-시뮬레이션으로 이어지는 게 원래 의도 — 아래 "빌드 히스토리" 참고).
+다 모여도(체크리스트 완료) 곧바로 최종 확정하지 않는다 — `status`가
+`reviewing`으로 바뀌며 항목별 표(`review_items`)를 보여주고, 사용자가
+[수정]으로 개별 항목을 고치거나 [이대로 확정]을 눌러야 `finalized`로
+넘어간다(`_enter_review`/`_finalize` 참고, "review/수정/확정 흐름" 절
+참고). `financial_profile`(develop의 공유 계약 `schemas.FinancialProfile`,
+flat 집계)은 `finalized` 시점에만 emit된다 — review 단계에서는 draft라
+downstream(tax_calculator 등)에 아직 넘기지 않는다. `AgentOutput.handoffs`로
+`retirement_planner`에 핸드오프를 거는 코드는 여전히 존재하지만 주석
+처리돼 비활성 상태다(체크리스트 끝나면 자연스럽게 은퇴자금 시뮬레이션으로
+이어지는 게 원래 의도였다 — 아래 "빌드 히스토리" 참고).
 
 ### 안 하는 일
 
@@ -297,3 +303,39 @@
     필드도 구조적으로 같은 잠재 위험(부분 판독 실패가 조용히 드롭될 수
     있음)이 있으나, 범위를 좁게 유지하기 위해 이번엔 손대지 않았다(다음
     라운드 후보).
+- **수집 → review → 수정 → 확정(finalized) 흐름 도입** — 예전엔 체크리스트가
+  끝나면(`_continue_after_categories`) 곧바로 `_finalize()`를 호출해
+  `status="done"` + `financial_profile` emit까지 한 번에 끝냈다. 이제는
+  `_enter_review()`로 가서 `status="reviewing"` + 항목별 표(`review_items`,
+  `_build_review_items` 참고)만 보여주고, 사용자가 review 화면에서
+  [이대로 확정]을 눌러야만(`context.confirm_review === True`) `_finalize()`가
+  호출된다 — 그 전까지는 `financial_profile`을 emit하지 않는다(draft
+  boundary).
+  - **[수정] 클릭 → 재확인 → REPLACE**: review 화면의 [수정]은 항목의
+    `target`(`{"kind": ..., "asset_type"/"liability_type": ...}`)을
+    `context.edit_target`으로 그대로 보낸다 — 라벨 텍스트를 다시 파싱해서
+    대상을 추측하지 않는다(요구사항: 텍스트 추론 금지). `status`가
+    `editing_item`으로 바뀌며 그 target을 `state["pending_amounts"]`에
+    임시로 얹는다 — `pending_amounts`는 review/editing_item 상태에서는
+    항상 비어 있었으므로 재사용해도 안전하고, 덕분에 프론트가 기존
+    `AmountInputCard`(pending_amounts 감지 경로)를 그대로 재사용한다(새
+    위젯 불필요). 답을 받으면 `_apply_review_edit_answer`가
+    `_replace_review_record`로 그 유형의 기존 record를 전부 지우고 새
+    record 하나로 교체한다(APPEND 아님) — 같은 항목을 여러 번 수정해도
+    목록에 중복이 쌓이지 않는다.
+  - **status 값 변경**: 기존 `"done"`을 `"finalized"`로 이름 바꿨다(다른
+    에이전트는 이 값을 보지 않으므로 하위 호환 이슈 없음, 실측 확인 —
+    각 에이전트가 자기 네임스페이스 상태만 읽는 handoff.py 규약 때문에
+    cross-agent 참조가 애초에 없다). `"reviewing"`/`"editing_item"`
+    두 값을 새로 추가했다.
+  - **review_items는 저장하지 않는 계산값**이다 —
+    `awaiting_category_selection`과 같은 관례로, `_enter_review()`가
+    반환 직전에만 `state`에 얹고 `_empty_state()`의 키 목록에 없어 다음
+    턴 `_load_state()`가 그대로 걸러낸다. 매번 assets/liabilities/insurance
+    원본에서 다시 계산하므로 캐시 불일치가 생기지 않는다.
+  - **프론트**: 새 `AssetReviewCard` 컴포넌트 하나만 추가했다 — [수정]
+    버튼은 `context.edit_target`, [이대로 확정] 버튼은
+    `context.confirm_review`만 보내고 백엔드 응답을 텍스트로 재해석하지
+    않는다. `AssistantResponse`의 기존 "최신 assistant 턴만 interactive"
+    게이팅(PR #101/#102)에 `hasAssetReview`만 추가해 과거 review/edit
+    카드도 자동으로 재클릭 불가 처리된다 — 새 메커니즘을 만들지 않았다.

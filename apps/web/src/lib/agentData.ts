@@ -227,6 +227,83 @@ export function hasAssetAmountRequest(
   return parseAssetAmountRequest(data, agentKey) !== null;
 }
 
+export interface AssetReviewItem {
+  kind: "asset_value" | "liability_value" | "insurance_value";
+  /** 표에 보여줄 이름(예: "예금", "대출", "보험"). */
+  label: string;
+  /** null이면 금액 미확인 — 0원과 혼동하지 않는다. */
+  value: number | null;
+  confidence: "confirmed" | "unknown_amount";
+  /**
+   * [수정] 클릭 시 그대로 `context.edit_target`으로 되돌려 보낼 구조화
+   * 식별자. 백엔드(agent.py._build_review_items)가 만든 값을 그대로
+   * 왕복시킬 뿐 프론트가 내용을 해석하지 않는다 — 텍스트 추론으로 수정
+   * 대상을 다시 찾지 않기 위해서다.
+   */
+  target: Record<string, unknown>;
+  /** true면 합계에서 제외되는 항목(보험). */
+  excludedFromTotals?: boolean;
+}
+
+export interface AssetReview {
+  items: AssetReviewItem[];
+}
+
+/**
+ * asset_organizer가 수집을 끝내고 review 화면(state.status === "reviewing")
+ * 인지, 그리고 표로 그릴 항목 목록(state.review_items)을 읽는다. status가
+ * "editing_item"인 동안은 review_items가 없고 대신 pending_amounts가 채워져
+ * 기존 AmountInputCard 경로(parseAssetAmountRequest)를 그대로 타므로, 이
+ * 파서와 절대 동시에 true를 반환하지 않는다.
+ */
+export function parseAssetReview(
+  data: Record<string, unknown>,
+  agentKey?: string,
+): AssetReview | null {
+  if (!agentKey) return null;
+  const ownNamespace = asRecord(data[agentKey]);
+  if (ownNamespace?.status !== "reviewing") return null;
+  const rawItems = asArray(ownNamespace.review_items);
+  if (rawItems.length === 0) return null;
+
+  const items: AssetReviewItem[] = [];
+  for (const raw of rawItems) {
+    const rec = asRecord(raw);
+    if (!rec) continue;
+    const kind = asString(rec.kind);
+    if (
+      kind !== "asset_value" &&
+      kind !== "liability_value" &&
+      kind !== "insurance_value"
+    ) {
+      continue;
+    }
+    const label = asString(rec.label);
+    const target = asRecord(rec.target);
+    if (!label || !target) continue;
+    const confidence = rec.confidence === "confirmed" ? "confirmed" : "unknown_amount";
+    const value = confidence === "confirmed" ? asNumber(rec.value) ?? null : null;
+    items.push({
+      kind,
+      label,
+      value,
+      confidence,
+      target,
+      excludedFromTotals: rec.excluded_from_totals === true,
+    });
+  }
+  if (items.length === 0) return null;
+  return { items };
+}
+
+/** 이 data 에 asset_organizer review 화면(항목 표 + [수정]/[이대로 확정])이 있는지. */
+export function hasAssetReview(
+  data: Record<string, unknown>,
+  agentKey?: string,
+): boolean {
+  return parseAssetReview(data, agentKey) !== null;
+}
+
 /**
  * asset_organizer가 자산정리 시작 의사만 있고 구체적인 자산 항목이 없어
  * (예: "자산 정리하고 싶어요") 카테고리 선택 UI로 진입시키는 중인지
