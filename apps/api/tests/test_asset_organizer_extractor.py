@@ -912,3 +912,205 @@ def test_specific_loan_keywords_are_unaffected_by_bit_generic_intent_guard(
     liabilities, missing = extractor.extract_liabilities(text)
     assert liabilities == []
     assert missing[0]["kind"] == expected_kind
+
+
+# ============== P0: 부채가 "기타" 자산으로 중복 등록되는 버그(실측 재현)
+
+
+_P0_REPRO_TEXT = (
+    "안심상속 조회 결과 예금 8천만 원, 아파트 5억 원, "
+    "카드대출 2천만 원이 확인됐어요. 자산과 부채를 정리해주세요."
+)
+
+
+def test_p0_repro_liability_segment_excluded_from_asset_llm_candidates():
+    """근본 원인 증명: asset 쪽 정규식(_regex_extract)은 "카드대출
+    2천만원이 확인됐어요"를 유형 자체를 못 알아본 unresolved 세그먼트로
+    분류한다(자산 키워드 사전에 대출류가 없으므로 당연함) — 수정 후에는
+    이 세그먼트가 asset LLM 폴백 후보에서 빠져야 한다. extract_liabilities
+    는 같은 세그먼트를 독립적으로 "대출"로 정확히 잡는다(정보 유실
+    아님)."""
+    result, unresolved = extractor._regex_extract(_P0_REPRO_TEXT)
+    assert any("카드대출" in seg for seg in unresolved)  # 자산 쪽엔 여전히 안 잡힘
+
+    llm_candidates = [
+        seg for seg in unresolved if extractor._match_liability_type(seg) is None
+    ]
+    assert not any("카드대출" in seg for seg in llm_candidates)
+
+    liabilities, liability_missing = extractor.extract_liabilities(_P0_REPRO_TEXT)
+    assert liabilities == [
+        extractor.Liability(
+            type="대출",
+            remaining_balance=20_000_000,
+            monthly_payment=None,
+            end_age=None,
+            note=None,
+            confidence="confirmed",
+        )
+    ]
+    assert liability_missing == []
+
+
+def test_p0_malicious_llm_returning_debt_as_gita_asset_is_never_sent_the_segment(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """테스트 A: fake LLM이 "카드대출 2천만원" 관련 텍스트를 받으면
+    일부러 "기타" 자산(2천만원)으로 반환하도록 결정론적으로 구성한다 —
+    수정 전이라면 이 세그먼트가 그대로 LLM에 전달돼 실제로 이 악성
+    응답이 반영됐겠지만, 수정 후에는 이 세그먼트 자체가 LLM 호출
+    후보에서 빠지므로 이 fake LLM이 이 내용으로 호출될 일이 없고,
+    따라서 "기타" 2천만원 자산도 생기지 않는다."""
+
+    def _fake_llm_extract(text: str):
+        if "카드대출" in text or "대출" in text:
+            # 악성/오분류 LLM 시뮬레이션 — 수정 전 버그를 실제로 일으켰던
+            # 정확한 응답 모양.
+            return {
+                "assets": [{"type": "기타", "value": 20_000_000}],
+                "incomes": [],
+                "insurance": [],
+                "unclear": [],
+            }
+        return {"assets": [], "incomes": [], "insurance": [], "unclear": []}
+
+    monkeypatch.setattr(extractor, "_llm_extract", _fake_llm_extract)
+
+    result = extractor.extract_financial_slots(_P0_REPRO_TEXT)
+
+    assert not any(a.type == "기타" and a.value == 20_000_000 for a in result.assets)
+    assert any(a.type == "예금" and a.value == 80_000_000 for a in result.assets)
+    assert any(a.type == "부동산" and a.value == 500_000_000 for a in result.assets)
+
+
+def test_p0_liability_segment_never_reaches_llm_extract_call(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """_llm_extract에 실제로 전달되는 텍스트를 가로채 "카드대출"/"대출"
+    문자열이 아예 없는지 직접 확인한다 — 위 테스트가 "결과"를 검증한다면
+    이 테스트는 "메커니즘"(무엇이 LLM에 보내지는지) 자체를 검증한다."""
+    captured: list[str] = []
+
+    def _capture(text: str):
+        captured.append(text)
+        return {"assets": [], "incomes": [], "insurance": [], "unclear": []}
+
+    monkeypatch.setattr(extractor, "_llm_extract", _capture)
+
+    extractor.extract_financial_slots(_P0_REPRO_TEXT)
+
+    assert len(captured) == 1
+    assert "카드대출" not in captured[0]
+    assert "대출" not in captured[0]
+    # 부채와 무관한 나머지 unresolved 세그먼트는 그대로 전달돼야 한다
+    # (과도하게 걸러내 정보 유실이 생기면 안 됨).
+    assert "정리해주세요" in captured[0]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "대출이 있어요",
+        "카드론이 있어요",
+        "전세자금대출이 있어요",
+        "임대보증금 반환채무가 있어요",
+    ],
+)
+def test_liability_like_segments_never_become_gita_asset_via_llm_fallback(
+    text: str, monkeypatch: pytest.MonkeyPatch
+):
+    """대출/카드론/전세자금대출/임대보증금반환채무 등 liability-like
+    세그먼트는(금액이 없어 재질문 대상이더라도) 절대 asset LLM 폴백으로
+    가지 않는다 — "기타" 자산이 되지 않아야 한다. 금액 미확인 상태도
+    동일하게 보호된다."""
+
+    def _always_gita(_text: str):
+        return {
+            "assets": [{"type": "기타", "value": 99_000_000}],
+            "incomes": [],
+            "insurance": [],
+            "unclear": [],
+        }
+
+    monkeypatch.setattr(extractor, "_llm_extract", _always_gita)
+
+    result = extractor.extract_financial_slots(text)
+
+    assert result.assets == []
+    liabilities, liability_missing = extractor.extract_liabilities(text)
+    assert liabilities == []
+    assert len(liability_missing) == 1
+    assert liability_missing[0]["kind"] == "liability_value"
+
+
+def test_negated_liability_segment_never_becomes_gita_asset_via_llm_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """ "대출은 없어요"(부재)도 "기타" 자산으로 둔갑하면 안 된다."""
+
+    def _always_gita(_text: str):
+        return {
+            "assets": [{"type": "기타", "value": 99_000_000}],
+            "incomes": [],
+            "insurance": [],
+            "unclear": [],
+        }
+
+    monkeypatch.setattr(extractor, "_llm_extract", _always_gita)
+
+    result = extractor.extract_financial_slots("대출은 없어요")
+
+    assert result.assets == []
+    liabilities, liability_missing = extractor.extract_liabilities("대출은 없어요")
+    assert liabilities == []
+    assert liability_missing == [
+        {
+            "kind": "liability_absent",
+            "liability_type": "대출",
+            "segment": "대출은 없어요",
+        }
+    ]
+
+
+def test_legitimate_unrecognized_segment_still_falls_back_to_gita_asset(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """부채와 무관한, 진짜로 유형을 못 알아본 세그먼트("목돈")는 기존처럼
+    LLM 폴백을 타고 "기타" 자산으로 확정될 수 있어야 한다 — 이번 수정이
+    기존 기타 자산 폴백 자체를 막으면 안 된다(회귀 방지)."""
+
+    def _fake_llm_extract(text: str):
+        assert "대출" not in text
+        return {
+            "assets": [{"type": "기타", "value": 50_000_000}],
+            "incomes": [],
+            "insurance": [],
+            "unclear": [],
+        }
+
+    monkeypatch.setattr(extractor, "_llm_extract", _fake_llm_extract)
+
+    result = extractor.extract_financial_slots("목돈이 5천만원 정도 있어요")
+
+    assert any(a.type == "기타" and a.value == 50_000_000 for a in result.assets)
+
+
+def test_same_amount_deposit_and_loan_both_preserved_without_dedup():
+    """ "예금 2천만원, 대출 2천만원"처럼 금액이 같아도 자산·부채 둘 다
+    독립적으로 보존돼야 한다 — 금액만 같다는 이유로 dedupe하면 안 된다
+    (요구사항 4번)."""
+    result = extractor.extract_financial_slots("예금 2천만원 있어요")
+    liabilities, missing = extractor.extract_liabilities("대출 2천만원 있어요")
+
+    assert any(a.type == "예금" and a.value == 20_000_000 for a in result.assets)
+    assert liabilities == [
+        extractor.Liability(
+            type="대출",
+            remaining_balance=20_000_000,
+            monthly_payment=None,
+            end_age=None,
+            note=None,
+            confidence="confirmed",
+        )
+    ]
+    assert missing == []
