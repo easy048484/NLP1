@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useState, type ReactNode } from "react";
 import { useApp } from "../lib/appState";
 import { useFamilyGraphSync } from "../lib/useFamilyGraph";
 import { AppHeader } from "./AppHeader";
@@ -12,9 +12,9 @@ const THEME_KEY = "eznext.app_theme";
 
 function readTheme(): AppTheme {
   try {
-    return window.localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
+    return window.localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light";
   } catch {
-    return "dark";
+    return "light";
   }
 }
 
@@ -36,6 +36,19 @@ export function AppShell({ children }: { children: ReactNode }) {
     } catch {
       /* ignore */
     }
+  }, [theme]);
+
+  // 상담 앱 안에서는 앱 토글이 팔레트의 유일한 기준이다 — 이 값을 <html>에
+  // 심어 tokens.css가 OS(prefers-color-scheme)와 무관하게 따라오게 한다.
+  // (안 심으면 OS=다크 + 앱=밝게일 때 배경만 어두워지는 반쪽 상태가 된다.)
+  // 첫 페인트 전에 적용해 깜빡임을 막는다.
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.setAttribute("data-theme", theme);
+    return () => {
+      // 셸을 벗어나면(공개 사이트) OS 설정을 다시 따르도록 되돌린다.
+      root.removeAttribute("data-theme");
+    };
   }, [theme]);
 
   return (

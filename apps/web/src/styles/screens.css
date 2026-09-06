@@ -1041,9 +1041,15 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
   background: var(--surface-page);
+  color: var(--ink);
 }
 .amount-unit-input:focus-visible {
   border-color: var(--brand-navy);
+}
+.amount-unit-input:-webkit-autofill,
+.amount-direct-input:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px var(--surface-page) inset;
+  box-shadow: 0 0 0 1000px var(--surface-page) inset;
 }
 .amount-preview {
   display: grid;
@@ -1104,6 +1110,10 @@
   font-size: var(--text-sm);
   background: var(--surface-page);
   color: var(--ink);
+}
+.amount-direct-input:focus-visible {
+  outline: none;
+  border-color: var(--brand-navy);
 }
 .amount-direct-input::placeholder {
   color: var(--ink-faint);

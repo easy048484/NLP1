@@ -9,6 +9,12 @@
 .app-shell {
   --font-scale: 1.08;
 }
+.app-shell[data-app-theme="light"] {
+  color-scheme: light;
+}
+.app-shell[data-app-theme="dark"] {
+  color-scheme: dark;
+}
 
 /* ============ 두 버전 공통 ============ */
 
