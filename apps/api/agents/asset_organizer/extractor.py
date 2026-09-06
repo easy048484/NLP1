@@ -53,12 +53,23 @@ def _build_system_prompt() -> str:
     프롬프트 문구도 자동으로 따라오고, 화이트리스트와 프롬프트가 서로
     어긋날 일이 없다(수동 동기화 불필요). 호출 시점에 조립하는 이유는
     _VALID_ASSET_TYPES가 이 함수보다 파일 아래쪽(LLM 폴백 섹션)에서
-    정의되기 때문 — 모듈 로드가 끝난 뒤 호출되므로 문제없다."""
+    정의되기 때문 — 모듈 로드가 끝난 뒤 호출되므로 문제없다.
+
+    ⚠️ P0 버그의 방어선 2(보조): 실제 수정은 extract_financial_slots()가
+    _match_liability_type()으로 식별되는 세그먼트를 애초에 이 LLM 호출
+    후보에서 제외하는 것이다(구조적 제외, 이 함수 밖) — 아래 부채 관련
+    지시문은 그 필터를 우회하는 다른 경로(예: 필터를 통과한 세그먼트 안에
+    부채 언급이 섞여 있는 경우)에 대비한 보조 방어선일 뿐, 이 프롬프트
+    문구 하나로 버그를 고쳤다고 보지 않는다."""
     asset_types = "|".join(_VALID_ASSET_TYPES)
     return (
         "너는 사용자의 자연어 발화에서 금융자산·소득·보험 정보를 추출하는 도구다.\n"
         "정규식으로 못 잡은 표현만 너에게 온다. 절대 판정하거나 조언하지 마라 — "
         "너는 오직 값 추출만 한다.\n"
+        "대출·카드론·전세자금대출·임대보증금반환채무 등 부채(빚) 관련 언급은 "
+        "assets에 절대 포함하지 마라 — 부채는 이 도구가 다루는 범위가 아니고, "
+        "별도 시스템이 처리한다. 부채로 보이는 표현은 assets에도 unclear에도 "
+        "넣지 말고 그냥 무시하라.\n"
         "금액이나 나이를 확실히 알 수 없으면 절대 숫자를 지어내지 마라 — 그 항목은 "
         "생략하고 unclear 배열에 이유를 적어라.\n"
         "반드시 아래 JSON 형식으로만 답하라. 코드블록이나 다른 설명을 절대 덧붙이지 "
@@ -621,15 +632,40 @@ def extract_financial_slots(text: str) -> ExtractionResult:
     if not unresolved:
         return result
 
-    # 원문 전체가 아니라 정규식이 못 알아본 세그먼트만 LLM에 넘긴다. 원문
-    # 전체를 다시 넘기면 정규식이 이미 정확히 찾은 항목(예: "아파트 5억원")을
-    # LLM이 독립적으로 또 찾아내고, 그 결과가 아래에서 regex 결과에 그대로
-    # extend()되어 같은 항목이 두 번 쌓인다(실측 재현: "아파트 5억원, 예금
-    # 8천만원, 대출은 없습니다" → "대출은 없습니다"만 unresolved인데도 원문
-    # 전체를 LLM에 보내면 부동산·예금이 중복 생성돼 순자산이 2배로 잡혔다).
-    llm_payload = _llm_extract(" ".join(unresolved))
+    # ⚠️ P0 실측 재현된 버그: "카드대출 2천만원이 확인됐어요"는 asset
+    # 키워드 사전에 없어 unresolved로 넘어갔는데, 이 함수가 그 세그먼트를
+    # (다른 unresolved 세그먼트와 합쳐) 그대로 asset LLM 폴백에 보내면
+    # LLM이 "기타" 자산으로 반환할 수 있었다 — 같은 문장을 별도로 처리하는
+    # extract_liabilities()가 이미 "대출"로 정확히 잡은 항목이 자산에도
+    # 중복 등록되어 총자산이 실제보다 부채 금액만큼 부풀려졌다(요구사항
+    # 4번과 대칭 원칙: 대출·카드론·전세자금대출·임대보증금반환채무 등
+    # _match_liability_type()으로 부채임을 식별 가능한 세그먼트는 애초에
+    # asset LLM 폴백 후보에서 제외한다 — 그 세그먼트의 소유권은 오직
+    # liability extractor에게만 있다. 같은 텍스트를 처리하는
+    # extract_liabilities()가 이 세그먼트를 여전히 독립적으로 보고
+    # 정상 처리하므로 정보 유실이 아니다.
+    llm_candidate_segments = [
+        segment for segment in unresolved if _match_liability_type(segment) is None
+    ]
+
+    if not llm_candidate_segments:
+        # 남은 unresolved 전부가 부채로 식별 가능한 세그먼트였다 — asset
+        # 쪽은 더 이상 "이해 못함" 상태가 아니므로 LLM을 부르지 않고
+        # status도 그에 맞게 되돌린다(_regex_extract는 unresolved 유무만
+        # 보고 미리 "needs_clarification"을 세워뒀을 수 있다).
+        result.status = "needs_clarification" if result.missing else "ok"
+        return result
+
+    # 원문 전체가 아니라 정규식이 못 알아본 세그먼트만(그중에서도 부채로
+    # 식별되지 않는 것만) LLM에 넘긴다. 원문 전체를 다시 넘기면 정규식이
+    # 이미 정확히 찾은 항목(예: "아파트 5억원")을 LLM이 독립적으로 또
+    # 찾아내고, 그 결과가 아래에서 regex 결과에 그대로 extend()되어 같은
+    # 항목이 두 번 쌓인다(실측 재현: "아파트 5억원, 예금 8천만원, 대출은
+    # 없습니다" → "대출은 없습니다"만 unresolved인데도 원문 전체를 LLM에
+    # 보내면 부동산·예금이 중복 생성돼 순자산이 2배로 잡혔다).
+    llm_payload = _llm_extract(" ".join(llm_candidate_segments))
     if llm_payload is None:
-        for segment in unresolved:
+        for segment in llm_candidate_segments:
             result.missing.append(
                 {
                     "kind": "unrecognized_segment",
