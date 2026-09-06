@@ -21,6 +21,8 @@ from .steps import (
     Step,
     StepId,
     blocked_by,
+    find_asked_step,
+    prerequisite_chain,
     unlocked,
 )
 
@@ -39,7 +41,9 @@ __all__ = [
     "add_months",
     "blocked_by",
     "compute_deadlines",
+    "find_asked_step",
     "guide_for",
     "month_end",
+    "prerequisite_chain",
     "unlocked",
 ]
