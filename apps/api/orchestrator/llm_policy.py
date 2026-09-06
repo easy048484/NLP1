@@ -15,6 +15,7 @@ planner.py 와 compose.py 에 중복돼 있던 _llm_enabled() 를 모았습니�
 from __future__ import annotations
 
 import os
+from typing import Optional
 
 _OFF = {"0", "false", "no", "off"}
 _ON = {"1", "true", "yes", "on"}
@@ -45,6 +46,16 @@ def llm_enabled() -> bool:
 def llm_required() -> bool:
     """LLM 실패 시 폴백 대신 예외를 올려야 하는 환경인지."""
     return llm_mode() == "required"
+
+
+def router_model() -> Optional[str]:
+    """라우팅 분류(planner._llm_route) 전용 모델.
+
+    CLAUDE_ROUTER_MODEL 이 비어 있으면 None — llm.claude 가 CLAUDE_MODEL 기본값을
+    씁니다. 라우팅은 매 턴 한 번씩 도는 짧은 분류라, 대화·합성용 모델과 따로
+    고르고 싶을 때만 설정하세요.
+    """
+    return os.getenv("CLAUDE_ROUTER_MODEL", "").strip() or None
 
 
 def llm_status() -> str:
