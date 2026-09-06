@@ -963,6 +963,57 @@ def test_completed_review_does_not_auto_handoff_and_keeps_followup_with_decedent
     assert turn3.agents == [AgentName.HEIR_NAVIGATOR]
 
 
+def test_notarial_guidance_does_not_auto_handoff_and_keeps_followup_with_decedent():
+    """공정증서(notarial) 버전의 위 회귀 방지 — 실측 재현: "아버지가 돌아가시고
+    서류를 정리하다가 공증받은 유언장을 발견했어요"가 will_type=notarial로 자동
+    확정되고 공정증서 안내가 나온 뒤, next_action=handoff:heir_navigator가 서면
+    "그럼 이 유언장은 따로 확인할 건 없는 건가요?" 같은 순수 후속 질문에도
+    pending_handoff(최우선)를 따라 heir_navigator가 선점해버린다.
+
+    수정 후: 안내 완료돼도 pending_handoff가 서지 않고(next_action=None),
+    keyword가 없는 후속 질문은 last_agent continuation으로 decedent_estate가
+    계속 받는다. 사용자가 실제로 "상속 절차"를 물으면 기존 keyword routing으로
+    heir_navigator가 정상 선택된다(실제 decedent_estate/heir_navigator
+    에이전트로 실행, fake 아님)."""
+    turn1 = router.route(
+        AgentInput(
+            session_id="notarial-no-auto-handoff-1",
+            user_message=(
+                "아버지가 돌아가시고 서류를 정리하다가 공증받은 유언장을 발견했어요. "
+                "이 경우에도 따로 효력이나 형식 요건을 확인해야 하나요?"
+            ),
+        )
+    )
+    assert turn1.agent == AgentName.DECEDENT_ESTATE
+    assert "어떤 형태의 유언인가요?" not in turn1.reply
+    assert turn1.data["will_type"] == "notarial"
+    assert turn1.next_action is None
+
+    stored = router.default_store.load("notarial-no-auto-handoff-1")
+    assert stored.pending_handoff is None
+    assert stored.pending_reply_agent is None
+    assert stored.last_agent == AgentName.DECEDENT_ESTATE
+
+    # A) 순수 후속 질문 — 키워드가 없으므로 last_agent continuation을 타야 한다.
+    turn2 = router.route(
+        AgentInput(
+            session_id="notarial-no-auto-handoff-1",
+            user_message="그럼 이 유언장은 따로 확인할 건 없는 건가요?",
+        )
+    )
+    assert turn2.agents == [AgentName.DECEDENT_ESTATE]
+
+    # B) 실제로 다른 주제("상속 절차")를 물으면 기존 keyword routing으로
+    # heir_navigator가 선택된다.
+    turn3 = router.route(
+        AgentInput(
+            session_id="notarial-no-auto-handoff-1",
+            user_message="그럼 상속 절차는 어떻게 해야 해?",
+        )
+    )
+    assert turn3.agents == [AgentName.HEIR_NAVIGATOR]
+
+
 # ------------------------------------------------------- compose / verify
 
 
