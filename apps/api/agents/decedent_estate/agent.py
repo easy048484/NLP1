@@ -77,6 +77,7 @@ from .result_formatter import (
 from .state import STATE_KEY, DecedentState, dump_state, load_state
 from .will_types import (
     get_will_type,
+    infer_will_type_from_message,
     intent_question,
     known_will_type_ids,
     no_will_guidance,
@@ -95,52 +96,21 @@ _NOTARIAL_WILL_TYPE = "notarial"
 # 자체가 확인되지 않는다"라, 요건 판정을 아예 돌지 않고 법정상속 안내로 넘긴다.
 _NO_WILL_TYPE = "none"
 
-# will_type이 미확인일 때, 사용자 메시지에 자필증서 방식이 명백히 드러나 있으면
-# 방식 선택 질문을 다시 하지 않고 바로 handwritten으로 확정한다(되물음 루프
-# 버그 수정). 오탐 방지를 위해 최소·명백한 표현만 deterministic하게 매칭한다 —
-# LLM 분류는 쓰지 않는다. "직접 작성"처럼 애매한 표현은 의도적으로 제외했다.
-_HANDWRITTEN_MESSAGE_MARKERS = ("자필", "직접 손으로 쓴", "손으로 직접 쓴")
 
-# recording(§1067)도 동일 원칙(2026-09-05) — 실측 재현: "휴대폰을 정리하다가
-# 재산 얘기를 남긴 음성메모를 발견했어요"처럼 이미 명백히 녹음임을 밝혔는데도
-# will_type을 다시 물었다. "메모"/"파일"/"영상"/"말"/"기록" 같은 단어 하나만으로는
-# 추론하지 않는다 — UI의 "녹음·영상" 선택값은 구조화 context.will_type 경로
-# (explicit, 아래 우선순위 A)로 이미 처리되므로 자연어 추론을 넓혀서 해결할
-# 대상이 아니다.
-_RECORDING_MESSAGE_MARKERS = (
-    "음성메모",
-    "음성 메모",
-    "녹음 유언",
-    "녹음으로 남긴",
-    "녹음해 둔",
-    "녹음해둔",
-)
-
-# notarial(공정증서, §1068)도 동일 원칙(2026-09-06) — 실측 재현: "공증받은
-# 유언장을 발견했어요"처럼 이미 명백히 공정증서임을 밝혔는데도 방식 선택
-# 질문을 다시 했다. "공증"/"서류"/"증서"/"공증사무소" 같은 단어 하나만으로는
-# 추론하지 않는다 — "공증받은 서류"는 유언 방식 자체가 불명확해 제외했다.
-_NOTARIAL_MESSAGE_MARKERS = (
-    "공정증서 유언",
-    "공정증서로 작성한 유언",
-    "공증받은 유언장",
-    "공증 받은 유언장",
-    "공증받은 유언",
-    "공증 받은 유언",
-)
-
-
+# will_type이 미확인일 때, 사용자 메시지에 유언 방식이 명백히 드러나 있으면
+# 방식 선택 질문을 다시 하지 않고 바로 그 방식으로 확정한다(되물음 루프 버그
+# 수정, 2026-09-06 rules 기반으로 정리). 핵심 invariant: 사용자가 민법상
+# 유언 방식을 명백하게 특정했다면, 그 방식이 full-support(handwritten/
+# recording)인지 guidance-only(notarial/secret/oral)인지와 무관하게 다시
+# 묻지 않는다. marker의 단일 출처는 rules/will_types.json 의
+# will_types[].inference_markers 이고, 실제 추론 로직(충돌 방어 포함)은
+# will_types.infer_will_type_from_message() 에 있다 — 이 함수는 그 얇은
+# wrapper일 뿐, 방식별 marker 상수를 여기 더 이상 두지 않는다.
 def _infer_will_type_from_message(user_message: str) -> Optional[str]:
     """자연어에서 명백한 will_type만 추론한다 (우선순위 C — 이 함수는
     _run_pipeline에서 state.will_type이 이미 None일 때만, 즉 이번 턴 explicit
     context.will_type(A)도 저장된 값(B)도 없을 때만 호출된다)."""
-    if any(marker in user_message for marker in _HANDWRITTEN_MESSAGE_MARKERS):
-        return _HANDWRITTEN_WILL_TYPE
-    if any(marker in user_message for marker in _RECORDING_MESSAGE_MARKERS):
-        return _RECORDING_WILL_TYPE
-    if any(marker in user_message for marker in _NOTARIAL_MESSAGE_MARKERS):
-        return _NOTARIAL_WILL_TYPE
-    return None
+    return infer_will_type_from_message(user_message)
 
 
 # intent가 명시되지 않았을 때 review로 기본 동작하던 것과 별개로, 자연어로
