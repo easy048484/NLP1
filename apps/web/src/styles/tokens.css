@@ -15,6 +15,9 @@
  */
 
 :root {
+  /* 폼 컨트롤·스크롤바·자동완성 배경을 팔레트에 맞춰 렌더링 */
+  color-scheme: light;
+
   /* ---- 표면 ---- */
   --surface-page: #faf8f4;
   --surface-card: #ffffff;
@@ -127,6 +130,7 @@
 /* 다크 — 시스템 설정(명시적 선택 없을 때) */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --surface-page: #16171c;
     --surface-card: #1e2027;
     --surface-sunken: #24262e;
@@ -171,6 +175,7 @@
 
 /* 다크 — 사용자가 접근성 바에서 명시적으로 선택 */
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --surface-page: #16171c;
   --surface-card: #1e2027;
   --surface-sunken: #24262e;
