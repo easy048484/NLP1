@@ -161,6 +161,14 @@ _FOOTER_NOTICE = (
     "이 점검은 민법 제1066조의 형식 요건에 대한 참고용 확인이며, 법률 자문이 아닙니다. "
     "유언의 유효성에 대한 최종 판단은 법원과 법률 전문가의 영역입니다."
 )
+# recording(§1067)은 handwritten(§1066)과 조문이 달라 footer만 별도로 둔다 —
+# format_result/format_guide 의 footer_notice 파라미터로 recording 호출부(agent.py)만
+# 명시적으로 이 값을 넘긴다. 기본값은 그대로 _FOOTER_NOTICE(제1066조)라 handwritten
+# 등 기존 호출부는 회귀 없이 그대로 동작한다.
+RECORDING_FOOTER_NOTICE = (
+    "이 점검은 민법 제1067조의 형식 요건에 대한 참고용 확인이며, 법률 자문이 아닙니다. "
+    "유언의 유효성에 대한 최종 판단은 법원과 법률 전문가의 영역입니다."
+)
 
 
 def closing_lines() -> list[str]:
@@ -216,6 +224,21 @@ def _precedent_card_line(precedent_id: str) -> Optional[str]:
     return f"{card['one_liner']} {_precedent_citation(card)}"
 
 
+def _is_legal_requirement(requirement_id: str) -> bool:
+    """요건 id → rules/requirements.json 의 is_legal_requirement (기본값 True).
+
+    간인(interseal)처럼 명시적으로 false인 항목은 법정 형식요건 5개와 같은
+    자리(순서대로 나열되는 요건 목록)에 섞이면 안 된다 — format_result 의
+    기본 ordered_ids 계산과 _supplemental_section 이 이 값을 단일 출처로
+    쓴다. 필드가 아예 없는 요건(대다수)은 그냥 형식요건이므로 True.
+    """
+    rules = _load_rules()
+    for req in rules["requirements"]:
+        if req["id"] == requirement_id:
+            return bool(req.get("is_legal_requirement", True))
+    return True
+
+
 def red_label(requirement_id: str) -> str:
     """요건 id → RED 문구용 축약 라벨 (rules/requirements.json 의 red_label 필드).
 
@@ -239,6 +262,33 @@ def term_note(requirement_id: str) -> Optional[str]:
     for req in rules["requirements"]:
         if req["id"] == requirement_id:
             return req.get("term_note")
+    return None
+
+
+def _condition_display_note(
+    requirement_id: str, condition_id: Optional[str], result: RequirementResult
+) -> Optional[str]:
+    """요건 id + condition id 조합에만 적용되는 조건 전용 설명 (conditions[].display_note).
+
+    term_note는 요건 id 단위라 같은 요건의 서로 다른 condition(예: 주소의
+    RED city_district_only와 YELLOW building_number_only)이 같은 문구를
+    공유한다. building_number_only는 실제로 도로명·건물번호까지 정상 인식된
+    상태인데 city_district_only용 term_note("구·동까지만 적으면 무효")를
+    그대로 보여주면 판정 상태와 화면 설명이 어긋난다 — 이 조건에서만
+    display_note로 실제 상태를 반영한 문구를 쓴다. {value} 자리에는 추출된
+    주소 원문을 "(추출값)" 형태로 채운다(없으면 빈 문자열).
+    """
+    if condition_id is None:
+        return None
+    rules = _load_rules()
+    for req in rules["requirements"]:
+        if req["id"] != requirement_id:
+            continue
+        for cond in req.get("conditions", []):
+            if cond.get("id") == condition_id and cond.get("display_note"):
+                value = _extracted_display_value(result)
+                suffix = f" ({value})" if value else ""
+                return cond["display_note"].format(value=suffix)
     return None
 
 
@@ -308,16 +358,28 @@ def format_requirement_line(
         return "\n".join(lines)
 
     if result.grade == "YELLOW":
-        lines = [f"⚠️ {name}: {name}{_josa_i_ga(name)} {_YELLOW_VERB_PHRASE}"]
+        display_note = _condition_display_note(
+            result.requirement_id, result.condition_id, result
+        )
+        if display_note:
+            lines = [f"⚠️ {name}: {display_note}"]
+        else:
+            lines = [f"⚠️ {name}: {name}{_josa_i_ga(name)} {_YELLOW_VERB_PHRASE}"]
         if include_precedent_cards:
             for precedent_id in result.precedent_ids:
                 card_line = _precedent_card_line(precedent_id)
                 if card_line:
                     lines.append(card_line)
-        note = term_note(result.requirement_id)
-        if note:
-            lines.append(f"   ℹ️ {note}")
+        if not display_note:
+            note = term_note(result.requirement_id)
+            if note:
+                lines.append(f"   ℹ️ {note}")
         lines.append(_YELLOW_CTA)
+        # 아직 열린 후속 질문이 있으면(예: 주소 building_number_only — 동·호수
+        # 불명확) 함께 안내한다. 이미 답이 끝난 YELLOW(예: 봉투확인 승격)는
+        # followup_question이 없어 이 줄이 붙지 않는다.
+        if result.followup_question:
+            lines.append(f"   ❓ {result.followup_question}")
         return "\n".join(lines)
 
     if result.grade == "WHITE":
@@ -393,7 +455,11 @@ def format_guide_line(requirement_id: str) -> Optional[str]:
 
 
 def format_guide(
-    ordered_ids: list[str], intro: str, *, include_closing: bool = True
+    ordered_ids: list[str],
+    intro: str,
+    *,
+    include_closing: bool = True,
+    footer_notice: str = _FOOTER_NOTICE,
 ) -> str:
     """가이드 모드 전체 화면 문구를 조립한다: 안내 인트로 → 요건별 가이드 → 상담 연결 → 하단 고지.
 
@@ -402,6 +468,9 @@ def format_guide(
     이미 같은 두 줄을 붙이기 때문에 한 화면에 두 번 반복되는 것을 막기 위해서다.
     가이드만 단독으로 보여줄 때는 기본값(True) 그대로 두어야 §3-3/§3-4가 모든 결과
     화면에 들어간다는 스펙을 유지한다.
+
+    footer_notice 기본값은 handwritten(§1066)이다 — recording(§1067) 호출부만
+    RECORDING_FOOTER_NOTICE 를 명시적으로 넘긴다.
     """
     sections = [intro]
     for requirement_id in ordered_ids:
@@ -410,7 +479,7 @@ def format_guide(
             sections.append(line)
     if include_closing:
         sections.append(_CONSULTATION_LINE)
-        sections.append(_FOOTER_NOTICE)
+        sections.append(footer_notice)
     return "\n\n".join(sections)
 
 
@@ -583,6 +652,29 @@ def cited_precedents(
     return precedents
 
 
+_SUPPLEMENTAL_HEADING = "추가 참고사항"
+
+
+def _supplemental_section(results: dict[str, RequirementResult]) -> Optional[str]:
+    """법정 형식요건 5개 목록과 시각적으로 분리해서 보여줄 참고 항목(현재는
+    간인뿐) — 있으면 "추가 참고사항" 소제목과 함께 별도 문단으로 반환한다.
+
+    간인은 is_legal_requirement: false라 위 ordered_ids 계산에서 이미
+    제외됐다 — 여기서는 그중 여러 장이 실제로 감지된 경우(WHITE)에만 그
+    사실을 알려주고, 근거가 없으면(single_page, grade=None) 아무것도 반환
+    하지 않는다. "필수 형식요건이 아니다"를 단정 문구로 오해하지 않도록
+    _INTERSEAL_REFERENCE_LINE 문구를 그대로 재사용한다 — 신호등(✅/❌/⚠️)
+    없이 "ℹ️ 참고:"로만 시작해 미실시가 무효라는 인상을 주지 않는다.
+    """
+    interseal = results.get("interseal")
+    if interseal is None or interseal.grade != "WHITE":
+        return None
+    line = format_requirement_line(interseal)
+    if not line:
+        return None
+    return f"{_SUPPLEMENTAL_HEADING}\n{line}"
+
+
 def format_result(
     results: dict[str, RequirementResult],
     *,
@@ -590,6 +682,7 @@ def format_result(
     ordered_ids: Optional[list[str]] = None,
     messages: SummaryMessages = _HANDWRITTEN_SUMMARY_MESSAGES,
     include_precedent_cards: bool = True,
+    footer_notice: str = _FOOTER_NOTICE,
 ) -> str:
     """전체 화면 문구를 조립한다: 요약 → (확인 질문) → 요건별 문구 → 상담 연결 → 하단 고지.
 
@@ -601,13 +694,16 @@ def format_result(
     (format_requirement_line 참고) — P0-1의 body 가 이 옵션으로
     reply 와 같은 함수를 재사용해서, 판례 카드는 precedents 배열로만
     중복 없이 나가게 한다.
+
+    footer_notice 기본값은 handwritten(§1066)이다 — recording(§1067) 호출부만
+    RECORDING_FOOTER_NOTICE 를 명시적으로 넘긴다.
     """
     if ordered_ids is None:
         rules = _load_rules()
         ordered_ids = [
             req["id"]
             for req in sorted(rules["requirements"], key=lambda r: r["order"])
-            if req["id"] in results
+            if req["id"] in results and _is_legal_requirement(req["id"])
         ]
 
     sections = [summarize(results, formal_ids, messages)]
@@ -627,7 +723,11 @@ def format_result(
         if line:
             sections.append(line)
 
+    supplemental = _supplemental_section(results)
+    if supplemental:
+        sections.append(supplemental)
+
     sections.append(_CONSULTATION_LINE)
-    sections.append(_FOOTER_NOTICE)
+    sections.append(footer_notice)
 
     return "\n\n".join(sections)

@@ -28,6 +28,14 @@ _WILL_TEXT_ADDRESS_MISSING = (
     "유언장\n유언자: 홍길동\n2026년 5월 3일\n\n나의 전 재산을 배우자에게 상속한다."
 )
 
+_WILL_TEXT_ADDRESS_NO_UNIT_DETAIL = (
+    "유언장\n유언자: 홍길동\n주소: 서울특별시 강남구 테헤란로 123\n2026년 5월 3일\n\n"
+    "나의 전 재산을 배우자에게 상속한다."
+)
+
+_WILL_TEXT_MULTI_PAGE = _WILL_TEXT_COMPLETE + "\n\n(1/2)"
+_WILL_TEXT_SINGLE_PAGE_EXPLICIT = _WILL_TEXT_COMPLETE + "\n\n총 1장"
+
 
 def _ctx(**extra: str) -> dict[str, str]:
     """평면 키 context (전환기 폴백 경로). 기존 테스트는 이 경로를 계속 검증한다."""
@@ -61,7 +69,11 @@ def test_run_handwritten_without_confirm_answers_stays_pending() -> None:
     assert output.data["requirements"]["seal"]["grade"] == "PENDING"
 
 
-def test_run_all_green_and_confirmed_handoffs_to_heir_navigator() -> None:
+def test_run_all_green_and_confirmed_does_not_auto_handoff() -> None:
+    """모든 형식요건이 GREEN으로 종결돼도 더 이상 자동으로 heir_navigator에
+    handoff하지 않는다(2026-09-05) — "점검 완료"가 "상담 종료"를 뜻하지
+    않는다. 다음 턴 라우팅은 router의 기존 last_agent continuation에
+    맡긴다(decedent_estate 전용 pending 상태 없음)."""
     payload = AgentInput(
         session_id="s1",
         user_message=_WILL_TEXT_COMPLETE,
@@ -69,8 +81,8 @@ def test_run_all_green_and_confirmed_handoffs_to_heir_navigator() -> None:
     )
     output = decedent_estate.run(payload)
 
-    assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
-    assert output.data["handoff_reason"] == "가정법원 검인 절차 안내 필요"
+    assert output.next_action is None
+    assert "handoff_reason" not in output.data
 
     reqs = output.data["requirements"]
     for rid in ("date", "address", "name", "handwriting", "seal"):
@@ -79,6 +91,55 @@ def test_run_all_green_and_confirmed_handoffs_to_heir_navigator() -> None:
 
     assert "형식 요건상 문제가 발견되지 않았습니다" in output.reply
     assert output.data["pending_questions"] == []
+
+
+def test_run_red_address_blocks_handoff_even_when_others_green() -> None:
+    """주소가 RED로 확정되고(봉투에도 없음) 나머지가 모두 GREEN이어도 PENDING이
+    하나도 없다는 이유로 heir_navigator에 handoff하면 안 된다(버그 재현) —
+    RED도 PENDING과 동일하게 review 미종결로 취급해야 한다."""
+    payload = AgentInput(
+        session_id="s1",
+        user_message=_WILL_TEXT_ADDRESS_MISSING,
+        context=_ctx(
+            handwriting_answer="yes",
+            seal_answer="seal_or_fingerprint",
+            address_envelope_answer="no_envelope",  # 봉투에도 없음 → RED 확정
+        ),
+    )
+    output = decedent_estate.run(payload)
+
+    reqs = output.data["requirements"]
+    assert reqs["address"]["grade"] == "RED"
+    assert reqs["date"]["grade"] == "GREEN"
+    assert reqs["name"]["grade"] == "GREEN"
+    assert reqs["handwriting"]["grade"] == "GREEN"
+    assert reqs["seal"]["grade"] == "GREEN"
+    assert output.data["pending_questions"] == []  # PENDING 없음 — 버그의 핵심 조건
+
+    assert output.next_action != NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    assert output.next_action == NEXT_ACTION_AWAIT_USER
+
+
+def test_run_yellow_address_without_unit_detail_blocks_handoff_and_asks_detail() -> (
+    None
+):
+    """도로명 건물번호까지만 있고 동·호수가 불명확하면 무효로 단정하지 않고
+    YELLOW(building_number_only)로 확정하되, 아직 열린 후속 질문이 있으므로
+    heir_navigator로 handoff하면 안 된다(2026-09-05)."""
+    payload = AgentInput(
+        session_id="s1",
+        user_message=_WILL_TEXT_ADDRESS_NO_UNIT_DETAIL,
+        context=_ctx(handwriting_answer="yes", seal_answer="seal_or_fingerprint"),
+    )
+    output = decedent_estate.run(payload)
+
+    address = output.data["requirements"]["address"]
+    assert address["grade"] == "YELLOW"
+    assert address["condition_id"] == "building_number_only"
+    assert "동·호수" in output.reply
+
+    assert output.next_action != NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    assert output.next_action == NEXT_ACTION_AWAIT_USER
 
 
 def test_run_reads_answers_from_context() -> None:
@@ -98,12 +159,15 @@ def test_run_reads_answers_from_context() -> None:
     assert address["condition_id"] == "envelope_or_minor_discrepancy"
     assert address["grade"] == "YELLOW"
     assert address["precedent_ids"] == ["address_on_envelope_valid"]
-    # PENDING이 하나도 없고 자서도 확인됐으니 heir_navigator 로 넘겨야 한다.
-    assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    # PENDING/열린 followup이 하나도 없어 review는 종결됐지만, 더 이상
+    # 자동으로 heir_navigator에 handoff하지 않는다(2026-09-05).
+    assert output.next_action is None
 
 
 def test_run_confirmed_typed_will_has_no_handoff() -> None:
-    """자필이 아니라고 확인되면(전문 자서 RED) 검인 안내로 넘길 대상 자체가 아니다."""
+    """자필이 아니라고 확인되면(전문 자서 RED) 검인 안내로 넘길 대상 자체가
+    아니다 — RED가 남아있으므로(#118) heir_navigator로 handoff하지 않고
+    review를 유지한다(AWAIT_USER)."""
     payload = AgentInput(
         session_id="s1",
         user_message=_WILL_TEXT_COMPLETE,
@@ -115,10 +179,16 @@ def test_run_confirmed_typed_will_has_no_handoff() -> None:
 
     assert output.data["requirements"]["handwriting"]["grade"] == "RED"
     assert output.data["requirements"]["handwriting"]["red_label"] == "자필 작성 여부"
-    assert output.next_action is None
+    assert output.next_action != NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    assert output.next_action == NEXT_ACTION_AWAIT_USER
 
 
-def test_run_requirement_payload_covers_all_six_requirements() -> None:
+def test_run_requirement_payload_covers_exactly_five_formal_requirements() -> None:
+    """간인(interseal)은 법정 형식요건이 아니다(rules/requirements.json
+    is_legal_requirement: false) — requirements 페이로드에는 항상 5개 형식
+    요건만 담기고, 간인이 6번째 항목으로 섞이지 않는다(2026-09-05 UX 버그
+    수정). 간인 참고 문구는 여러 장이 감지될 때만 별도 supplemental 필드로
+    나간다 — test_run_supplemental_* 참고."""
     payload = AgentInput(
         session_id="s1",
         user_message=_WILL_TEXT_COMPLETE,
@@ -132,8 +202,63 @@ def test_run_requirement_payload_covers_all_six_requirements() -> None:
         "name",
         "handwriting",
         "seal",
-        "interseal",
     }
+    assert "supplemental" not in output.data
+    assert "간인" not in output.reply
+
+
+def test_run_multiple_pages_shows_separate_supplemental_section_only() -> None:
+    """여러 장이 실제로 감지된 경우(기존 _MULTI_PAGE_RE, 예: "(1/2)")에만
+    간인 참고 문구가 나가고, 핵심 5개 형식요건 목록·등급·overall 판단에는
+    영향이 없다 — "추가 참고사항"으로 시각/구조적으로 분리되고, 필수
+    형식요건이 아니라는 점도 명시한다(2026-09-05)."""
+    payload = AgentInput(
+        session_id="s1",
+        user_message=_WILL_TEXT_MULTI_PAGE,
+        context=_ctx(handwriting_answer="yes", seal_answer="seal_or_fingerprint"),
+    )
+    output = decedent_estate.run(payload)
+
+    assert set(output.data["requirements"].keys()) == {
+        "date",
+        "address",
+        "name",
+        "handwriting",
+        "seal",
+    }
+    for rid in output.data["requirements"]:
+        assert output.data["requirements"][rid]["grade"] == "GREEN"
+
+    assert output.data["supplemental"] == {
+        "id": "interseal",
+        "name": "간인",
+        "note": (
+            "ℹ️ 참고: 간인은 법정 요건이 아니지만, 여러 장일 경우 위조 다툼 "
+            "예방에 도움이 됩니다"
+        ),
+    }
+    assert "추가 참고사항" in output.reply
+    # "법정 요건이 아니지만"(필수 형식요건이 아님을 명시) — 미실시가 무효라는
+    # 인상을 주는 단정 표현이 아니라 참고 문구로만 나온다.
+    assert "법정 요건이 아니지만" in output.reply
+    # 형식요건 판정 완료 요약 문구(5가지 형식 요건)가 그대로 유지된다 —
+    # 간인 존재가 overall summary 를 바꾸지 않는다.
+    assert "5가지 형식 요건" in output.reply
+
+
+def test_run_single_page_explicit_shows_no_interseal_mention() -> None:
+    """ "총 1장"처럼 명시적으로 단일 장이라고 밝혀도 간인 관련 문구를 아예
+    보여주지 않는다(근거 없음 = 표시 없음 정책 그대로, 2026-09-05)."""
+    payload = AgentInput(
+        session_id="s1",
+        user_message=_WILL_TEXT_SINGLE_PAGE_EXPLICIT,
+        context=_ctx(handwriting_answer="yes", seal_answer="seal_or_fingerprint"),
+    )
+    output = decedent_estate.run(payload)
+
+    assert "supplemental" not in output.data
+    assert "간인" not in output.reply
+    assert "추가 참고사항" not in output.reply
 
 
 def test_run_no_confirm_answers_has_no_warnings() -> None:
@@ -232,7 +357,10 @@ def test_namespaced_context_reads_confirm_answers() -> None:
 
     assert output.data["requirements"]["handwriting"]["grade"] == "RED"
     assert output.data["requirements"]["seal"]["grade"] == "RED"
-    assert output.next_action is None
+    # RED가 남아있으므로(#118) heir_navigator로 handoff하지 않고 review를
+    # 유지한다(AWAIT_USER).
+    assert output.next_action != NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    assert output.next_action == NEXT_ACTION_AWAIT_USER
 
 
 def test_run_progress_reflects_pending_confirm_answers() -> None:

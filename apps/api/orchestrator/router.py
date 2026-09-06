@@ -61,6 +61,19 @@ logger = logging.getLogger(__name__)
 #: 핸드오프도, 이어갈 이전 에이전트도 없을 때(=새 대화) 받을 기본 에이전트.
 _DEFAULT_AGENT = AgentName.HEIR_NAVIGATOR
 
+#: next_action 값 중 "이 에이전트가 사용자의 다음 답변을 기다리고 있다"는 뜻으로
+#: 쓰이는 것들. 특정 에이전트 이름을 하드코딩하지 않고 이 값 계약만 확인한다 —
+#: 어떤 에이전트든 next_action에 이 값을 반환하면 다음 턴 classify()에서
+#: pending_reply_agent로 최우선 라우팅된다(키워드 후보보다 우선, pending_handoff
+#: 보다는 낮음). 지금 실제로 이 값을 쓰는 곳은 decedent_estate뿐이다
+#: (NEXT_ACTION_AWAIT_USER = "await_user_confirmation") — 확인되지 않은 다른
+#: "await_*" 값까지 미리 일반화하지 않는다.
+_WAITING_NEXT_ACTIONS = frozenset({"await_user_confirmation"})
+
+
+def _is_waiting_for_reply(next_action: Optional[str]) -> bool:
+    return next_action in _WAITING_NEXT_ACTIONS
+
 
 class _RunnerTable(dict):
     """AgentName → run 함수. 없는 키는 레지스트리의 entrypoint 로 채웁니다.
@@ -134,6 +147,7 @@ def node_classify(state: GraphState) -> GraphState:
     plan = classify(
         payload.user_message,
         pending_handoff=session.pending_handoff,
+        pending_reply_agent=session.pending_reply_agent,
         last_agent=session.last_agent,
         default_agent=_DEFAULT_AGENT,
         axis=payload.axis,
@@ -240,6 +254,15 @@ def node_persist_session(state: GraphState) -> GraphState:
     )
     session.financial_profile = state["execution"].financial_profile
     session.will_status = state["execution"].will_status
+    # 이번 턴 최종 응답(state["output"], 사용자가 실제로 받은 next_action)이 "답변
+    # 대기" 계약값이면 그 에이전트를 기억해뒀다가 다음 턴 키워드보다 우선
+    # 라우팅한다. 아니면(응답이 끝났거나 다른 신호면) 비워서 일반 라우팅으로
+    # 되돌린다.
+    session.pending_reply_agent = (
+        state["output"].agent
+        if _is_waiting_for_reply(state["output"].next_action)
+        else None
+    )
     # 합성까지 끝난 최종 답변만 이력에 남깁니다 (에이전트별 원문이 아니라
     # 사용자가 실제로 본 문장). 다음 턴 추출기가 "무엇을 물어봤는지"를 정확히
     # 같은 문장으로 보게 하려면 이쪽이 맞습니다.

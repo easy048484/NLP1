@@ -837,3 +837,78 @@ def test_disclosures_prompt_instructs_excluding_institution_names():
     실수로 빠지는 걸 막는 회귀 잠금."""
     prompt = extractor._build_disclosure_system_prompt()
     assert "은행" in prompt and "결과에 포함하지 마라" in prompt
+
+
+# ==================== "빚" 포괄 상담 의도 vs 실제 부채 존재 오탐 (실측 재현)
+
+
+def test_generic_organize_intent_with_bit_keyword_is_not_treated_as_liability():
+    """실측 재현된 버그: 사후 모드 첫 턴에서 "재산이랑 빚을 정리해두려고
+    해요"라고만 말해도 "빚" 키워드가 대출 존재로 잡혀 곧바로 대출 금액을
+    되물었다 — 구체적 보유 항목이 없는 포괄적 상담 의도일 뿐이다."""
+    liabilities, missing = extractor.extract_liabilities(
+        "어머니가 돌아가셔서 재산이랑 빚을 한번 정리해두려고 해요."
+    )
+    assert liabilities == []
+    assert missing == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "재산이랑 빚 정리하고 싶어요",
+        "자산과 부채를 확인하고 싶어요",
+        "재산이랑 빚을 정리해볼까 해요",
+    ],
+)
+def test_various_generic_organize_intent_phrasings_find_no_liability(text: str):
+    liabilities, missing = extractor.extract_liabilities(text)
+    assert liabilities == []
+    assert missing == []
+
+
+def test_bit_keyword_with_explicit_amount_still_confirms_liability():
+    """ "빚이 4천만원 있어요"처럼 금액까지 말하면 포괄 의도 가드와 무관하게
+    그대로 확정돼야 한다 — 회귀 방지 불변식."""
+    liabilities, missing = extractor.extract_liabilities("빚이 4천만원 있어요")
+    assert len(liabilities) == 1
+    assert liabilities[0].type == "대출"
+    assert liabilities[0].remaining_balance == 40_000_000
+    assert missing == []
+
+
+def test_bit_keyword_with_existence_verb_still_asks_amount_even_with_organize_intent():
+    """ "빚이 좀 있는데 정리하고 싶어요"처럼 존재를 실제로 진술하는 구절이
+    같이 있으면, 포괄 의도 표현이 섞여 있어도 억제하지 않는다 — 금액
+    되묻기 대상으로 남아야 한다."""
+    liabilities, missing = extractor.extract_liabilities(
+        "빚이 좀 있는데 정리하고 싶어요"
+    )
+    assert liabilities == []
+    assert missing == [
+        {
+            "kind": "liability_value",
+            "liability_type": "대출",
+            "segment": "빚이 좀 있는데 정리하고 싶어요",
+            "reason": "대출 금액이 언급되지 않음",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_kind"),
+    [
+        ("대출이 있어요", "liability_value"),
+        ("카드대출이 남아 있어요", "liability_value"),
+        ("대출은 없어요", "liability_absent"),
+    ],
+)
+def test_specific_loan_keywords_are_unaffected_by_bit_generic_intent_guard(
+    text: str, expected_kind: str
+):
+    """ "대출"/"카드론" 등 구체적 금융상품 명사는 "빚"과 달리 포괄 의도
+    가드의 영향을 받지 않는다 — 기존 동작 그대로 유지되는지 확인하는
+    회귀 잠금."""
+    liabilities, missing = extractor.extract_liabilities(text)
+    assert liabilities == []
+    assert missing[0]["kind"] == expected_kind

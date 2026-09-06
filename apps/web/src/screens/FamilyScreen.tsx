@@ -126,7 +126,7 @@ export function FamilyScreen() {
         {/* ── 기준 인물 앵커 ── */}
         <div className="family-anchor">
           <label className="family-anchor-label" htmlFor="centerName">
-            {isPreNeed ? "기준: 나" : "누구의 상속인가요?"}
+            {isPreNeed ? "재산을 남길 사람" : "누구의 상속인가요?"}
           </label>
           <input
             id="centerName"
@@ -134,12 +134,14 @@ export function FamilyScreen() {
             value={centerName}
             onChange={(e) => setCenterName(e.target.value)}
             placeholder={
-              isPreNeed ? "내 이름 (선택)" : "고인 성함 (선택, 예: 김O수)"
+              isPreNeed
+                ? "본인의 이름 또는 별칭 (선택)"
+                : "고인 성함 (선택, 예: 김O수)"
             }
           />
           <p className="family-anchor-hint">
             {isPreNeed
-              ? "내가 세상을 떠났을 때를 기준으로 준비합니다."
+              ? "내가 세상을 떠났을 때를 기준으로 준비합니다. 비워두면 ‘나’로 표시되며, 배우자·자녀 이름은 아래에서 입력해주세요."
               : "이분이 상속의 기준입니다. 아래 가족은 이분의 배우자·자녀·부모."}
           </p>
         </div>

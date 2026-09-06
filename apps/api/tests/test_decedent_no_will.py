@@ -14,6 +14,8 @@ handoff:heir_navigator는 받는 쪽이 없어 막다른 길이었다. 사용자
 - 무단정 원칙(CLAUDE.md 절대 원칙 2)을 그대로 지킨다
 """
 
+import pytest
+
 from agents import decedent_estate
 from agents.decedent_estate.will_types import no_will_guidance, selection_question
 from schemas import AgentInput, AgentName
@@ -74,6 +76,90 @@ def test_intent_does_not_affect_no_will_path() -> None:
 
     assert review.reply == prepare.reply == _no_will_output().reply
     assert "guide" not in prepare.data
+
+
+# ---------------------------------------------------------------------------
+# [1-1] 유언장 존재 자체가 불확실한 자연어 → none 자동 추론 (2026-09-06, #150)
+#
+# 실측 재현 1: "유언장이 있는지 확실하지 않아요"처럼 유언장 존재 자체가
+# 명백히 불확실한데도 방식(핸드/녹음/공증...)부터 물었다. "어떤 방식인지
+# 모르겠다"(유언장은 있음 — unknown이 답할 질문)와는 다른 축이라 섞이면
+# 안 된다.
+#
+# 실측 재현 2(#150): exact substring marker만으로는 "유언장이 없는 건지,
+# 못 찾았는 건지 잘 모르겠어요"처럼 조사·어미·띄어쓰기가 다른 표면형
+# 변형을 놓쳤다. rules/will_types.json 의 no_will.inference_patterns(regex)
+# /exclusion_patterns 를 단일 출처로 삼아 will_types.infer_will_type_from_message()
+# 가 5방식·marker와 함께 generic하게 처리한다 — 아래는 marker/pattern을
+# exact phrase가 아니라 paraphrase family로 고정한 회귀 테스트다.
+# ---------------------------------------------------------------------------
+
+_NO_WILL_EXISTENCE_UNCERTAIN_PARAPHRASES = [
+    "유언장이 있는지 확실하지 않아요",
+    "유언장이 있는지 모르겠어요",
+    "유언장이 없는 건지 모르겠어요",
+    "유언장이 있는 건지 없는 건지 모르겠어요",
+    "유언장이 없는 건지 못 찾은 건지 모르겠어요",
+    "유언장이 없는 건지, 못 찾았는 건지 잘 모르겠어요",  # 정확한 production 재현
+    "유언장을 아무리 찾아도 못 찾겠어요",
+    "유언장을 찾지 못했습니다",
+    "유언장이 없는 것 같아요",
+]
+
+_NO_WILL_FALSE_POSITIVE_PARAPHRASES = [
+    "유언장은 있는데 어떤 방식인지 모르겠어요",
+    "유언장이 있긴 한데 무슨 종류인지 모르겠어요",
+    "유언장 내용이 유효한지 모르겠어요",
+    "유언장에 적힌 주소가 맞는지 모르겠어요",
+    "자필증서인지 공정증서인지 모르겠어요",
+    "유언장에 대해 잘 모르겠어요",
+]
+
+
+@pytest.mark.parametrize("message", _NO_WILL_EXISTENCE_UNCERTAIN_PARAPHRASES)
+def test_existence_uncertain_paraphrase_family_is_inferred_as_none(
+    message: str,
+) -> None:
+    """유언장 존재/발견 자체가 불확실함을 나타내는 표현은 표면형이 달라도
+    (조사·어미·띄어쓰기 변형 포함) 모두 방식 선택 질문 없이 none으로
+    확정돼야 한다."""
+    output = decedent_estate.run(AgentInput(session_id="s1", user_message=message))
+
+    assert "어떤 형태의 유언인가요?" not in output.reply, message
+    assert output.data["will_type"] == "none", message
+    assert "requirements" not in output.data, message
+
+
+@pytest.mark.parametrize("message", _NO_WILL_FALSE_POSITIVE_PARAPHRASES)
+def test_non_existence_uncertainty_paraphrase_family_does_not_infer_none(
+    message: str,
+) -> None:
+    """유언장은 있다는 전제이거나(방식/내용/주소가 불확실할 뿐) 존재/방식
+    어느 쪽인지 알 수 없는 모호한 표현은 임의로 none을 추론하지 않고
+    기존 방식 선택 질문으로 돌아가야 한다."""
+    output = decedent_estate.run(AgentInput(session_id="s1", user_message=message))
+
+    assert output.data.get("will_type") != "none", message
+    assert "어떤 형태의 유언인가요?" in output.reply, message
+
+
+def test_explicit_handwritten_wins_over_no_will_phrase_in_message() -> None:
+    """테스트 G — context에 will_type=handwritten이 이미 명시돼 있으면,
+    문장에 "유언장이 없는 것 같아요" 같은 none 표현이 섞여 있어도 명시값이
+    우선해야 한다(우선순위 A)."""
+    output = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="유언장이 없는 것 같긴 한데, 이 손으로 쓴 유언장부터 봐주세요.",
+            context={
+                "will_type": "handwritten",
+                "handwriting_answer": "yes",
+                "seal_answer": "seal_or_fingerprint",
+            },
+        )
+    )
+
+    assert output.data["will_type"] == "handwritten"
 
 
 # ---------------------------------------------------------------------------
@@ -240,3 +326,23 @@ def test_unknown_will_type_still_reasks() -> None:
     assert "어떤 형태의 유언인가요?" in output.reply
     assert output.data["warnings"][0]["field"] == "will_type"
     assert "none" in output.data["warnings"][0]["allowed"]
+
+
+# ---------------------------------------------------------------------------
+# [4] inference_patterns/exclusion_patterns 안전 처리 (#150)
+# ---------------------------------------------------------------------------
+
+
+def test_malformed_regex_pattern_is_skipped_not_crashed() -> None:
+    """rules/will_types.json 의 inference_patterns/exclusion_patterns 중
+    하나가 regex로 컴파일 안 되는 오타여도(re.error) 그 항목만 조용히
+    건너뛰고, 나머지 정상 패턴은 그대로 동작해야 한다 — 설정 파일 오타
+    하나가 에이전트 전체를 죽이면 안 된다."""
+    from agents.decedent_estate.will_types import _any_pattern_matches
+
+    malformed_and_valid = ["유언장[", "유언장[^.?!\n]{0,10}(?:찾지\\s*못)"]
+    assert _any_pattern_matches(malformed_and_valid, "유언장을 찾지 못했어요")
+    assert not _any_pattern_matches(malformed_and_valid, "안녕하세요")
+
+    only_malformed = ["유언장[", "(unterminated"]
+    assert _any_pattern_matches(only_malformed, "아무 텍스트") is False

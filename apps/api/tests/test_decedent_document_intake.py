@@ -127,3 +127,42 @@ def test_document_provided_on_next_turn_proceeds_normally() -> None:
     assert turn2.data["will_type"] == "handwritten"
     assert "requirements" in turn2.data
     assert turn2.data["requirements"]["date"]["grade"] == "GREEN"
+
+
+def test_natural_disposition_body_after_intake_is_not_reasked() -> None:
+    """실제 재현 — intake gate가 자료를 요청한 뒤, 사용자가 보낸 실제 유언장
+    본문("...에게 주고, ...")이 자연스러운 처분 연결형이라 _looks_like_draft가
+    이를 놓쳐 같은 intake 안내를 반복하던 버그.
+
+    1턴: "손으로 직접 쓴 유언장을 발견했어요..." → intake 요청.
+    2턴: "내 소유 아파트는 장남 김민수에게 주고, 은행 예금은 두 아들이 반씩
+         나누어 가진다." → checker가 실제로 실행돼야 한다(intake 반복 금지).
+    """
+    turn1 = decedent_estate.run(
+        AgentInput(session_id="s2", user_message=_REQUEST_ONLY_MESSAGE)
+    )
+    assert "requirements" not in turn1.data
+    assert turn1.next_action == NEXT_ACTION_AWAIT_USER
+
+    turn2 = decedent_estate.run(
+        AgentInput(
+            session_id="s2",
+            user_message=(
+                "내 소유 아파트는 장남 김민수에게 주고, "
+                "은행 예금은 두 아들이 반씩 나누어 가진다."
+            ),
+            context=turn1.data["decedent_estate"],
+        )
+    )
+    assert turn2.data["will_type"] == "handwritten"
+    # intake 안내를 반복하면 안 된다 — 실제로 checker가 실행돼 requirements가 생성됐다.
+    assert "유언장 사진을 올려주시거나" not in turn2.reply
+    assert "requirements" in turn2.data
+    assert turn2.data["requirements"] != {}
+    # 날짜/주소/성명은 이 문장에 없으므로 여전히 미확인(RED)으로 남는 것이
+    # 정상이다 — 이 테스트는 "checker가 실행됐는지"만 확인한다(요건 판정
+    # 결과의 세부 등급은 범위 밖).
+    # 자서/날인처럼 텍스트로 판별 불가한 요건은 기존처럼 확인 질문(PENDING)으로
+    # 남아 pending 흐름이 유지돼야 한다.
+    pending_fields = {q["field"] for q in turn2.data["pending_questions"]}
+    assert "handwriting_answer" in pending_fields or "seal_answer" in pending_fields

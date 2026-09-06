@@ -18,11 +18,11 @@ import pytest
 from agents import decedent_estate
 from agents.decedent_estate.agent import (
     NEXT_ACTION_AWAIT_USER,
-    NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR,
+    _DOCUMENT_INTAKE_NOTICE,
     _looks_like_draft,
 )
 from agents.decedent_estate.recording_checker import FORMAL_RECORDING_REQUIREMENT_IDS
-from schemas import AgentInput
+from schemas import AgentInput, AgentOutput
 
 _PRECEDENTS_PATH = (
     Path(__file__).resolve().parents[1]
@@ -69,6 +69,23 @@ def _run_namespaced(text: str, **context):
     return decedent_estate.run(payload)
 
 
+def _run_turns(messages: list[str]) -> list[AgentOutput]:
+    """decedent_estate.run()을 세션처럼 순차 호출한다 — 각 턴은 이전 턴이 돌려준
+    네임스페이스 상태(output.data["decedent_estate"])를 그대로 다음 턴 context로
+    넘긴다. 오케스트레이터의 세션 저장/복원(router.default_store)과 동일한
+    효과를 에이전트 단위에서 재현한 것 — 이 에이전트는 그 자체로는 세션을
+    들고 있지 않고 순수하게 context -> AgentOutput 함수이므로 이렇게 체이닝
+    하면 충분하다."""
+    outputs: list[AgentOutput] = []
+    context: dict = {}
+    for message in messages:
+        payload = AgentInput(session_id="s1", user_message=message, context=context)
+        output = decedent_estate.run(payload)
+        outputs.append(output)
+        context = {"decedent_estate": output.data["decedent_estate"]}
+    return outputs
+
+
 # ---------------------------------------------------------------------------
 # intent 게이트
 # ---------------------------------------------------------------------------
@@ -85,7 +102,8 @@ def test_missing_intent_defaults_to_review_and_matches_existing_pipeline() -> No
     # intent를 아예 안 보내는 옛 호출부와 동일하게 review 파이프라인이 그대로 돈다.
     assert "guide" not in output.data
     assert "requirements" in output.data
-    assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    # 종결돼도 더 이상 자동 handoff 없음(2026-09-05).
+    assert output.next_action is None
     assert "형식 요건상 문제가 발견되지 않았습니다" in output.reply
 
 
@@ -147,8 +165,142 @@ def test_notarial_ignores_intent_entirely() -> None:
         "공증인이 작성한 유언은 형식 요건 검증이 필요하지 않습니다. "
         "가정법원 검인 절차도 필요하지 않습니다."
     )
-    assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    assert output.next_action is None  # 자동 handoff 없음(2026-09-06)
     assert "guide" not in output.data
+
+
+# ---------------------------------------------------------------------------
+# 자연어 prepare intent 전환 (2026-09-05 버그 수정)
+#
+# 실측 재현: will_type/intent가 미지정이거나 이미 review로 저장돼 있어도,
+# 이번 턴 자연어에 명백한 "아직 작성 전" 의도가 있으면 review 기본값/저장값
+# 보다 그 의도를 우선해 prepare로 전환해야 한다. document intake(사진/본문
+# 요청)가 반복되면 안 된다. 우선순위: 이번 턴 explicit context.intent >
+# 이번 턴 명확한 자연어 > 저장된 state.intent > 기본값 review.
+# ---------------------------------------------------------------------------
+
+
+def test_exact_three_turn_regression_ends_in_prepare_without_document_intake() -> None:
+    """작업 지시서의 정확한 3턴 재현.
+
+    Turn 1 "내가 유언장을 쓰고 싶은데 어떤 게 중요해" — will_type이 아직
+    없어 방식 질문으로 돌아가지만, 메시지 자체에 이미 명백한 prepare
+    의도("유언장을 쓰고 싶")가 있어 state.intent=prepare가 저장된다.
+    Turn 2 "직접 손으로 쓴 유언장" — will_type=handwritten으로 확정.
+    Turn 3 "아직 쓰진 않았어, 근데 어떤 조건을 맞춰야 해?" — 설령 turn1/2가
+    prepare를 저장하지 못했더라도 이 메시지 자체가 review 기본값/저장값을
+    뒤집을 만큼 명백한 prepare 신호다(핵심 회귀 지점).
+
+    최종적으로 intent=prepare, 자필증서 작성 가이드(5개)가 나오고 사진/본문
+    제출 요구(document intake)가 없어야 한다."""
+    turn1, turn2, turn3 = _run_turns(
+        [
+            "내가 유언장을 쓰고 싶은데 어떤 게 중요해",
+            "직접 손으로 쓴 유언장",
+            "아직 쓰진 않았어, 근데 어떤 조건을 맞춰야 해?",
+        ]
+    )
+
+    # Turn 1 — will_type 미확정이라 방식 질문이 나가지만, prepare 의도는 저장된다.
+    assert "어떤 형태의 유언인가요?" in turn1.reply
+    assert turn1.data["decedent_estate"]["intent"] == "prepare"
+
+    final = turn3
+    assert final.data["decedent_estate"]["will_type"] == "handwritten"
+    assert final.data["decedent_estate"]["intent"] == "prepare"
+    assert final.next_action is None
+
+    assert "**자필증서 유언 작성 가이드입니다.**" in final.reply
+    assert set(final.data["guide"].keys()) == set(_HANDWRITTEN_GUIDE_IDS)
+    assert _DOCUMENT_INTAKE_NOTICE not in final.reply
+    assert "review" not in final.data
+    assert "requirements" not in final.data
+
+
+def test_stored_review_yields_to_explicit_natural_language_prepare() -> None:
+    """이미 document intake가 실행돼 state.intent=review로 저장된 뒤에도,
+    이번 턴 자연어가 명백히 prepare를 가리키면 review를 유지하지 않는다
+    (이번 버그의 핵심 regression)."""
+    review_started = _run(
+        "아버지가 돌아가시고 손으로 직접 쓴 유언장을 발견했어요. 효력이 있는지 "
+        "확인하고 싶어요.",
+    )
+    assert review_started.data["decedent_estate"]["intent"] == "review"
+    assert _DOCUMENT_INTAKE_NOTICE in review_started.reply
+
+    switched = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="아직 쓰지 않았어요, 어떤 조건을 맞춰야 하나요?",
+            context={"decedent_estate": review_started.data["decedent_estate"]},
+        )
+    )
+    assert switched.data["decedent_estate"]["intent"] == "prepare"
+    assert _DOCUMENT_INTAKE_NOTICE not in switched.reply
+    assert "**자필증서 유언 작성 가이드입니다.**" in switched.reply
+
+
+def test_explicit_context_intent_review_wins_over_prepare_looking_sentence() -> None:
+    """이번 턴 explicit context.intent="review"가 있으면, 문장 자체가
+    prepare처럼 들려도(예: "아직 안 썼어요") 자연어 추론이 덮어쓰지 않는다
+    (우선순위: explicit > 자연어 추론)."""
+    output = _run(
+        "아직 안 썼어요, 그래도 일단 점검해주세요",
+        will_type="handwritten",
+        intent="review",
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+    )
+
+    assert output.data["decedent_estate"]["intent"] == "review"
+    assert "guide" not in output.data
+
+
+def test_explicit_context_intent_prepare_still_works() -> None:
+    """이번 턴 explicit context.intent="prepare"는 그대로 최우선으로 적용된다
+    (기존 계약 유지 — 회귀 아님, 우선순위 정리 후에도 동일해야 함)."""
+    output = _run("아무 말이나", will_type="handwritten", intent="prepare")
+
+    assert output.data["decedent_estate"]["intent"] == "prepare"
+    assert "**자필증서 유언 작성 가이드입니다.**" in output.reply
+
+
+def test_ambiguous_message_keeps_stored_intent() -> None:
+    """모호한 자연어(상태 전환 신호가 전혀 없음)는 저장된 intent를 그대로
+    유지한다 — review 진행 중에 흔히 나올 수 있는 후속 질문들."""
+    for message in ("그럼 중요한 게 뭐야?", "이거 어떻게 해?", "유언장이 궁금해"):
+        review_started = _run(
+            "아버지가 돌아가시고 손으로 직접 쓴 유언장을 발견했어요. 효력이 "
+            "있는지 확인하고 싶어요.",
+        )
+        followup = decedent_estate.run(
+            AgentInput(
+                session_id="s1",
+                user_message=message,
+                context={"decedent_estate": review_started.data["decedent_estate"]},
+            )
+        )
+        assert followup.data["decedent_estate"]["intent"] == "review", message
+        assert _DOCUMENT_INTAKE_NOTICE in followup.reply, message
+
+
+def test_recording_natural_language_prepare_intent() -> None:
+    """intent resolver는 will_type과 무관하게 공유되므로, recording도 같은
+    원칙으로 자연어 prepare 전환이 적용된다(#132/#133과 무관, 최소 확인).
+
+    transcript intake gate(2026-09-05, agent.py의 _looks_like_recording_transcript)는
+    실제 초안이 있을 때만(_has_draft_text) 개입한다 — "아직 녹음 전인데..."는
+    초안으로 안 보이므로(has_draft=False) review 파이프라인 자체가 호출되지
+    않고, intake gate가 끼어들 여지가 없다."""
+    output = _run("아직 녹음 전인데 어떤 조건이 필요해?", will_type="recording")
+
+    assert output.data["decedent_estate"]["intent"] == "prepare"
+    assert "**녹음 유언 작성 가이드입니다.**" in output.reply
+    assert set(output.data["guide"].keys()) == set(FORMAL_RECORDING_REQUIREMENT_IDS)
+    # intake gate 문구(대본 요청 안내)가 끼어들지 않는다 — 가이드 뒤에는
+    # 초안 제출 안내만 붙는다.
+    assert "📼 녹음하신 내용을 그대로 적어주세요" not in output.reply
+    assert "review" not in output.data
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +389,9 @@ def test_prepare_recording_without_draft_returns_guide_only() -> None:
         f"{eligible_citation}. 조문상 유언집행자는 증인 결격사유로 열거되어 "
         f"있지 않습니다."
     ) in output.reply
+    # recording(§1067) prepare footer — handwritten(§1066)과 조문이 달라야 한다.
+    assert "민법 제1067조" in output.reply
+    assert "민법 제1066조" not in output.reply
 
 
 # ---------------------------------------------------------------------------
@@ -262,8 +417,8 @@ def test_prepare_handwritten_with_draft_also_includes_review_result() -> None:
     assert output.data["review"]["requirements"]["date"]["grade"] == "GREEN"
     # 초안이 있어도 가이드 정보는 그대로 함께 반환된다.
     assert set(output.data["guide"].keys()) == set(_HANDWRITTEN_GUIDE_IDS)
-    # next_action은 review 결과를 그대로 따른다.
-    assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    # next_action은 review 결과를 그대로 따른다 — 종결돼도 자동 handoff 없음(2026-09-05).
+    assert output.next_action is None
 
 
 def test_prepare_handwritten_with_draft_carries_requirement_body_and_precedents() -> (
@@ -322,7 +477,11 @@ def test_prepare_recording_with_draft_also_includes_review_result() -> None:
     assert "✅ 연월일: 기재 확인" in output.reply
     assert "review" in output.data
     assert output.data["review"]["requirements"]["rec_content"]["grade"] == "GREEN"
-    assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    # 종결돼도 더 이상 자동 handoff 없음(2026-09-05).
+    assert output.next_action is None
+    # 가이드+점검 결과가 이어붙는 화면도 recording(§1067) footer를 써야 한다.
+    assert "민법 제1067조" in output.reply
+    assert "민법 제1066조" not in output.reply
 
 
 def test_prepare_has_draft_context_flag_overrides_heuristic() -> None:
@@ -459,6 +618,12 @@ _NOT_DRAFT_MESSAGES = [
     "설명 드립니다.",
     "이거 확인 후 남깁니다.",
     "곧 다시 연락 드리겠습니다.",
+    # 회귀 테스트 — "주고"는 "-아/어 주다" 보조동사로도 흔히 쓰인다. 앞에 다른
+    # 동사의 활용형이 오면(수신자 표시 "에게"/"한테"가 아니라) 처분 의사가
+    # 아니다 — 문장 안에 재산 명사가 우연히 있어도(예: "아파트") 오탐이면
+    # 안 된다(실측 확인된 버그).
+    "유언장을 확인해 주고 싶어요",
+    "아파트 관련해서 설명해 주고 싶어요",
 ]
 
 _DRAFT_MESSAGES = [
@@ -467,6 +632,12 @@ _DRAFT_MESSAGES = [
     "제 모든 재산을 장남에게 물려주고자 합니다",  # 처분 의사(녹음 대본체)
     "2026년 5월 3일",  # 날짜 표기
     "유언장\n나는 아래와 같이 정한다",  # 제목 줄 + 내용
+    # 회귀 테스트 — "에게/한테 주고"(연결형)도 처분 의사로 인정해야 한다.
+    # 실제 재현: intake gate 이후 사용자가 보낸 진짜 유언장 본문이 "발견했다"는
+    # 상담 문장의 연장으로 오인돼 checker가 실행되지 않던 버그.
+    "내 소유 아파트는 장남 김민수에게 주고, 은행 예금은 두 아들이 반씩 나누어 가진다.",
+    "아파트는 장남에게 주고 예금은 차남에게 준다",
+    "재산을 두 자녀에게 나누어 준다",
 ]
 
 

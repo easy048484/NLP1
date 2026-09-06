@@ -695,7 +695,12 @@ def _format_summary(state: dict[str, Any]) -> str:
         lines.append("\n[부채] 없음")
 
     # 보험은 순자산 계산에 넣지 않는다 — 노후 재원 계산에서 제외되는
-    # 태그라는 기존 원칙 그대로(engine.py가 이 값을 아예 보지 않음).
+    # 태그라는 기존 원칙 그대로(engine.py가 이 값을 아예 보지 않음). review
+    # 화면(AssetReviewCard)에는 왜 빠지는지 안내가 있는데, 최종 확정
+    # 요약에는 [보험] 항목만 보이고 이 설명이 사라져 "2,500만원이 있는데
+    # 순자산에 왜 안 잡히지?"로 계산 오류처럼 오해할 수 있었다(실측
+    # 피드백) — confirmed든 unknown_amount든 보험이 하나라도 있으면(둘 다
+    # 항상 총액 제외 대상이므로) 안내를 한 번만 덧붙인다.
     insurance = state["insurance"]
     if insurance:
         confirmed_insurance = [t for t in insurance if _is_confirmed_insurance(t)]
@@ -711,10 +716,21 @@ def _format_summary(state: dict[str, Any]) -> str:
         lines.extend(
             f"- {tag['type']}: 금액 확인 안 됨" for tag in unknown_amount_insurance
         )
+        lines.append(
+            "(보험은 금액의 성격(해약환급금·보험금 등)과 계약 관계에 따라 "
+            "다르게 취급될 수 있어 자산 합계와 순자산에는 자동 반영하지 "
+            "않았습니다.)"
+        )
     else:
         lines.append("\n[보험] 없음")
 
     lines.append(f"\n순자산: {_format_krw(total_assets - total_liabilities)}")
+    # 순자산 계산에서 실제로 제외된 게 있으면(금액 미확인 자산·부채 또는
+    # 보험) 각 섹션의 개별 안내와 별개로, 순자산 숫자 자체를 볼 때도 "이
+    # 합계는 전부를 담은 게 아니다"가 바로 눈에 띄게 한 줄 더 남긴다 —
+    # 문구를 반복하지 않고 위 안내를 가리키기만 한다.
+    if unknown_amount_assets or unknown_amount_liabilities or insurance:
+        lines.append("(이 순자산에는 제외된 항목이 있어요 — 위 안내 참고)")
     return "\n".join(lines)
 
 

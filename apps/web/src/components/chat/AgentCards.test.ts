@@ -209,9 +209,36 @@ describe("AgentCards — 자산정리 review(수집 완료 후 확인/수정) �
     expect(html).toContain("주식");
     expect(html).toContain("보험");
     expect(html).toContain("금액 미확인");
-    expect(html).toContain("합계 제외");
     expect(html).toContain("수정");
     expect(html).toContain("이대로 확정");
+    // 보험 행 자체에는 "(합계 제외)"를 붙이지 않는다 — "보험은 재산이
+    // 아닌가?"로 오해하기 쉬웠던 표현(실측 피드백 반영). 대신 카드 하단에
+    // 안내문을 한 번만 보여준다.
+    expect(html).not.toContain("합계 제외");
+    expect(html).toContain(
+      "보험은 금액의 성격(해약환급금·보험금 등)과 계약 관계에 따라",
+    );
+  });
+
+  it("excludedFromTotals 항목이 없으면 안내문을 표시하지 않는다", () => {
+    const data = {
+      asset_organizer: {
+        status: "reviewing",
+        review_items: [
+          {
+            kind: "asset_value",
+            type: "예금",
+            label: "예금",
+            value: 42_000_000,
+            confidence: "confirmed",
+            target: { kind: "asset_value", asset_type: "예금" },
+          },
+        ],
+      },
+    };
+    const html = render("asset_organizer", data, "questions");
+    expect(html).toContain("예금");
+    expect(html).not.toContain("보험은 금액의 성격");
   });
 
   it("editing_item 중(pending_amounts만 있음)에는 review 표 대신 기존 AmountInputCard를 렌더한다", () => {

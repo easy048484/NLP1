@@ -8,7 +8,8 @@
 - unknown(그 외·모르겠음) → 자필증서를 기본값으로 안내하며 같은 파이프라인 실행
 - recording(녹음, §1067) → 대본(전사) 텍스트 기반 요건 판정 파이프라인
   (recording_checker → result_formatter) 실행
-- notarial(공정증서) → 검증·검인 모두 불필요 안내 후 heir_navigator로 핸드오프
+- notarial(공정증서) → 검증·검인 모두 불필요 안내 (자동 handoff 없음 — 2026-09-06,
+  handwritten/recording의 #126/#127과 동일 원칙)
 - secret/oral → 요건 요약만 안내, 자동 점검 미지원
 
 will_type이 full 지원(handwritten/unknown/recording)이면 두 번째로 intent(이용
@@ -46,16 +47,21 @@ from .image_reader import PHOTO_FIELD_IDS, extract_will_photo_fields
 from .recording_checker import (
     FORMAL_RECORDING_REQUIREMENT_IDS,
     check_recording_requirements,
+    extract_content as extract_recording_content,
+    extract_witness_accuracy,
+    extract_witness_name,
     validate_recording_confirm_answers,
 )
 from .requirement_checker import (
     RequirementResult,
     check_requirements,
+    extract_name,
     photo_confirm_templates,
     validate_confirm_answers,
 )
 from .result_formatter import (
     HANDWRITTEN_GUIDE_INTRO,
+    RECORDING_FOOTER_NOTICE,
     RECORDING_GUIDE_INTRO,
     RECORDING_SUMMARY_MESSAGES,
     cited_precedents_for_requirement,
@@ -71,6 +77,7 @@ from .result_formatter import (
 from .state import STATE_KEY, DecedentState, dump_state, load_state
 from .will_types import (
     get_will_type,
+    infer_will_type_from_message,
     intent_question,
     known_will_type_ids,
     no_will_guidance,
@@ -79,7 +86,6 @@ from .will_types import (
 )
 
 _FORMAL_REQUIREMENT_IDS = ("date", "address", "name", "handwriting", "seal")
-_ALL_REQUIREMENT_IDS = (*_FORMAL_REQUIREMENT_IDS, "interseal")
 
 _UNKNOWN_WILL_TYPE = "unknown"
 _HANDWRITTEN_WILL_TYPE = "handwritten"
@@ -90,16 +96,86 @@ _NOTARIAL_WILL_TYPE = "notarial"
 # 자체가 확인되지 않는다"라, 요건 판정을 아예 돌지 않고 법정상속 안내로 넘긴다.
 _NO_WILL_TYPE = "none"
 
-# will_type이 미확인일 때, 사용자 메시지에 자필증서 방식이 명백히 드러나 있으면
-# 방식 선택 질문을 다시 하지 않고 바로 handwritten으로 확정한다(되물음 루프
-# 버그 수정). 오탐 방지를 위해 최소·명백한 표현만 deterministic하게 매칭한다 —
-# LLM 분류는 쓰지 않는다. "직접 작성"처럼 애매한 표현은 의도적으로 제외했다.
-_HANDWRITTEN_MESSAGE_MARKERS = ("자필", "직접 손으로 쓴", "손으로 직접 쓴")
 
-
+# will_type이 미확인일 때, 사용자 메시지에 유언 방식이 명백히 드러나 있으면
+# 방식 선택 질문을 다시 하지 않고 바로 그 방식으로 확정한다(되물음 루프 버그
+# 수정, 2026-09-06 rules 기반으로 정리). 핵심 invariant: 사용자가 민법상
+# 유언 방식을 명백하게 특정했다면, 그 방식이 full-support(handwritten/
+# recording)인지 guidance-only(notarial/secret/oral)인지와 무관하게 다시
+# 묻지 않는다. marker의 단일 출처는 rules/will_types.json 의
+# will_types[].inference_markers 이고, 실제 추론 로직(충돌 방어 포함)은
+# will_types.infer_will_type_from_message() 에 있다 — 이 함수는 그 얇은
+# wrapper일 뿐, 방식별 marker 상수를 여기 더 이상 두지 않는다.
 def _infer_will_type_from_message(user_message: str) -> Optional[str]:
-    if any(marker in user_message for marker in _HANDWRITTEN_MESSAGE_MARKERS):
-        return _HANDWRITTEN_WILL_TYPE
+    """자연어에서 명백한 will_type만 추론한다 (우선순위 C — 이 함수는
+    _run_pipeline에서 state.will_type이 이미 None일 때만, 즉 이번 턴 explicit
+    context.will_type(A)도 저장된 값(B)도 없을 때만 호출된다)."""
+    return infer_will_type_from_message(user_message)
+
+
+# intent가 명시되지 않았을 때 review로 기본 동작하던 것과 별개로, 자연어로
+# 명백한 "아직 작성/녹음 전" 의도가 있으면 review 기본값(또는 이전에 저장된
+# review 상태)보다 그 의도를 우선한다(2026-09-05 버그 수정 — 실측 재현:
+# document intake가 한 번 review로 저장된 뒤에는 사용자가 "아직 안 썼어요"라고
+# 분명히 말해도 계속 본문/사진을 요구했다). will_type 추론과 동일한 원칙 —
+# 최소·명백한 표현만 deterministic하게 매칭하고 LLM은 쓰지 않는다. "유언"/
+# "자필"/"조건" 같은 단어 하나만으로는 추론하지 않는다 — 오탐이 review 흐름을
+# 깨뜨리는 게 더 위험하다(예: review 진행 중인 사용자가 "이 조건을 맞춰야
+# 하나요?"라고 물어도 review를 유지해야 한다).
+#
+# 상태가 그 자체로 명백한 표현 — 단독으로 prepare 인정.
+_PREPARE_NOT_YET_DONE_MARKERS = (
+    "아직 쓰지 않았",
+    "아직 쓰진 않았",
+    "아직 안 썼",
+    "아직 안 쓴",
+    "아직 작성 전",
+    "아직 작성하지 않았",
+    "아직 작성하지 않",
+    "아직 녹음 전",
+    "아직 녹음하지 않았",
+    "아직 안 녹음",
+)
+# "작성/녹음하겠다"는 의도 자체가 명백한 표현 — 단독으로 prepare 인정.
+_PREPARE_CREATE_INTENT_MARKERS = (
+    "유언장을 쓰려고",
+    "유언장 쓰려고",
+    "유언장을 작성하려고",
+    "유언장 작성하려고",
+    "유언장을 쓰고 싶",
+    "유언장 쓰고 싶",
+    "유언장을 작성하고 싶",
+    "유언장 작성하고 싶",
+    "작성 요건",
+    "녹음하려고",
+    "녹음하고 싶",
+)
+
+
+def _infer_intent_from_message(user_message: str) -> Optional[str]:
+    """자연어에서 명백한 prepare(아직 작성/녹음 전) 의도만 잡는다. 그 외는
+    None — 저장된 state.intent 나 기본값(review)을 그대로 쓰라는 뜻이다."""
+    if any(marker in user_message for marker in _PREPARE_NOT_YET_DONE_MARKERS):
+        return _PREPARE_INTENT
+    if any(marker in user_message for marker in _PREPARE_CREATE_INTENT_MARKERS):
+        return _PREPARE_INTENT
+    return None
+
+
+def _explicit_intent_this_turn(context: Optional[dict[str, Any]]) -> Optional[str]:
+    """이번 턴에 클라이언트가 명시적으로 보낸 intent(평면 최상위 키)만 본다.
+
+    state.py의 평면 폴백 정의(_flat_overrides)와 정확히 같은 판정 기준(None/빈
+    문자열은 미지정)이다. 네임스페이스(context["decedent_estate"]["intent"])는
+    "지난 턴에 저장된 값"이라 여기서는 보지 않는다 — 그래야 자연어 추론이 저장된
+    값보다 먼저 개입할 수 있다 (우선순위: 이번 턴 explicit > 이번 턴 자연어 추론
+    > 저장된 state.intent > 기본값 review). 이 함수는 그 첫 번째 우선순위만
+    담당한다.
+    """
+    context = context or {}
+    value = context.get("intent")
+    if isinstance(value, str) and value:
+        return value
     return None
 
 
@@ -115,10 +191,7 @@ _FULL_SUPPORT_WILL_TYPES = (
     _RECORDING_WILL_TYPE,
 )
 
-_RECORDING_TRANSCRIPT_NOTICE = (
-    "📼 녹음하신 내용을 그대로 적어주세요. 아직 녹음 전이라면, 예정된 대본으로 "
-    "미리 점검할 수도 있습니다."
-)
+_RECORDING_REVIEW_INTAKE_NOTICE = "📼 녹음하신 내용을 그대로 적어주세요."
 
 # next_action 힌트 값. 오케스트레이터/프론트가 참조하는 문자열 상수라 자유 형식이지만,
 # 이 두 값만 이 에이전트가 실제로 내보낸다.
@@ -167,17 +240,39 @@ def _namespaced(
 
 def _resolve_intent(
     state: DecedentState,
+    context: Optional[dict[str, Any]],
+    user_message: str,
 ) -> tuple[Optional[str], list[dict[str, Any]]]:
     """상태의 intent 를 review/prepare 로 정리한다.
 
-    will_type 게이트와 같은 패턴을 쓰되(잘못된 값이면 재질문), "미지정"의 취급만
-    다르다 — will_type은 기본값이 없어 None이면 무조건 되묻지만, intent는
-    review라는 합리적인 기본값이 있어서 값이 아예 없으면(context에 키 자체가
-    없거나 None) 조용히 review로 판정한다(기존 호출부 하위 호환 — intent를 아직
-    모르는 옛 클라이언트도 그대로 review 파이프라인을 탄다). 값이 있는데
-    화이트리스트 밖이면(오타 등) will_type과 동일하게 None을 돌려줘 호출부가
-    재질문(_intent_question_output)하게 한다.
+    우선순위(2026-09-05 자연어 prepare 전환 버그 수정 — A > B > C > D):
+      A. 이번 턴 explicit 평면 context.intent — 최우선. 화이트리스트 밖이면
+         (오타 등) will_type 게이트와 동일하게 None을 돌려줘 재질문하게 한다.
+      B. 이번 턴 자연어에 명백한 prepare 의도(_infer_intent_from_message)가
+         있으면 저장된 state.intent(지난 턴 값, review 기본값 포함)보다
+         우선한다 — "이미 review로 저장돼 있다"는 이유만으로 "아직 안
+         썼어요" 같은 명백한 발화를 무시하면 안 된다(실측 재현 버그: 문서
+         intake가 한 번 review로 저장된 뒤에는 사용자가 아무리 명확하게
+         "아직 안 썼다"고 말해도 계속 본문/사진을 요구했다).
+      C. 저장된 state.intent(지난 턴 값).
+      D. 미지정이면 review 기본값(기존 호출부 하위 호환).
     """
+    explicit = _explicit_intent_this_turn(context)
+    if explicit is not None:
+        if explicit not in _INTENT_VALUES:
+            return None, [
+                {
+                    "field": "intent",
+                    "invalid_value": explicit,
+                    "allowed": list(_INTENT_VALUES),
+                }
+            ]
+        return explicit, []
+
+    inferred = _infer_intent_from_message(user_message)
+    if inferred is not None:
+        return inferred, []
+
     intent = state.intent
     if intent is None:
         return _REVIEW_INTENT, []
@@ -253,10 +348,77 @@ _DRAFT_BARE_GIVE_VERB_RE = re.compile(
 _DRAFT_RECIPIENT_OR_PROPERTY_RE = re.compile(
     r"에게|한테|재산|통장|부동산|예금|주식|아파트|건물|집|땅|토지|돈"
 )
+# "주고"(연결형)는 _DRAFT_BARE_GIVE_VERB_RE에 그냥 추가하면 안 된다 — "확인해
+# 주고 싶어요"/"설명해 주고 싶어요"처럼 "-아/어 주다" 보조동사로도 흔히 쓰여서,
+# 문장 어디에 재산 명사가 하나만 있어도(예: "아파트 관련해서 설명해 주고
+# 싶어요") _DRAFT_RECIPIENT_OR_PROPERTY_RE 와 맞물려 오탐이 난다(실측 확인:
+# "손으로 직접 쓴 유언장을 발견했어요" → intake 요청 이후 실제 유언장 본문
+# "...장남 김민수에게 주고, 은행 예금은..."을 초안으로 못 알아채던 버그).
+# 그래서 "에게"/"한테" 수신자 표시 바로 뒤에 붙은 "주고"만 처분 의사로
+# 인정한다 — 이 형태는 항상 명사+조사 뒤에 오지, "-아/어 주다" 보조동사처럼
+# 다른 동사의 활용형 뒤에 오지 않는다(구조적으로 겹치지 않아 안전).
+_DRAFT_GIVE_TO_RECIPIENT_RE = re.compile(r"(?:에게|한테)\s*주고")
 
 # 3) "유언장"/"유언" 만으로 이루어진 제목 줄 (그 아래에 내용이 더 있어야 초안).
 #    "유언장을 준비하려고요"처럼 문장 속에 들어간 경우는 제목이 아니라 요청이다.
 _DRAFT_TITLE_LINE_RE = re.compile(r"^\s*(?:유언장|유언)\s*$")
+
+# review 진행 중 자연어 확인 답변 — handwriting_answer/seal_answer는 원래
+# ChoiceGroup 버튼 클릭이 구조화 context(예: context.handwriting_answer="yes")로
+# 보내주는 값이지만, 사용자가 버튼 대신 자연어로 "직접 손으로 쓰셨고, 도장도
+# 찍혀 있습니다"처럼 답할 수도 있다. 명백한 표현만 deterministic하게 인정하고
+# (LLM 분류 없음), 모호한 표현은 추측하지 않는다 — 기존 미확인(PENDING) 상태를
+# 그대로 유지한다.
+_HANDWRITING_CONFIRMED_RE = re.compile(r"직접\s*손으로\s*(?:쓰|썼|쓰신|쓰셨)")
+_SEAL_CONFIRMED_RE = re.compile(r"(?:도장|지장|손도장)\S{0,3}\s*찍(?:혀|혔)")
+
+# review 진행 중 자연어 확인 답변 — recording witness 2문항(rec_witness_present_answer/
+# rec_witness_eligible_answer)도 handwriting/seal과 같은 원칙: 명백한 표현만
+# deterministic하게 인정하고(LLM 없음), 모호한 표현("있었던 것 같아요" 등)은
+# 추측하지 않고 기존 PENDING을 유지한다. 부정 표현이 긍정 표현의 부분 문자열을
+# 우연히 포함할 수 있어(예: "참여하지 않았"에 "참여"가 들어있음) 호출부에서
+# negative를 먼저 확인한 뒤 positive를 확인하는 순서로 오분류를 막는다.
+_REC_WITNESS_PRESENT_NEGATIVE_RE = re.compile(
+    r"증인[^.?!\n]{0,15}참여\s*(?:하지\s*않|안\s*했)|증인\s*없이\s*녹음"
+)
+_REC_WITNESS_PRESENT_POSITIVE_RE = re.compile(
+    r"증인[^.?!\n]{0,15}(?:실제로\s*참여|참여\s*했|같이\s*있었)"
+)
+_REC_WITNESS_ELIGIBLE_DISQUALIFIED_RE = re.compile(
+    r"결격\s*사유[^.?!\n]{0,8}해당(?:합니다|한다|해요|됩니다|된다)"
+)
+_REC_WITNESS_ELIGIBLE_NOT_DISQUALIFIED_RE = re.compile(
+    r"결격\s*사유[^.?!\n]{0,8}(?:해당하지\s*않|없)"
+)
+
+
+def _infer_rec_witness_present(text: str) -> Optional[str]:
+    """자연어에서 명백한 증인 참여 여부만 잡는다 (negative 우선 확인).
+
+    "참여하지 않았"처럼 부정 표현이 "참여"라는 긍정 표현의 부분 문자열을
+    포함하므로, positive 정규식을 먼저 보면 부정 문장도 긍정으로 오분류될 수
+    있다 — 그래서 negative를 먼저 확인한다.
+    """
+    if _REC_WITNESS_PRESENT_NEGATIVE_RE.search(text):
+        return "no"
+    if _REC_WITNESS_PRESENT_POSITIVE_RE.search(text):
+        return "yes"
+    return None
+
+
+def _infer_rec_witness_eligible(text: str) -> Optional[str]:
+    """자연어에서 명백한 증인 결격 여부만 잡는다.
+
+    "결격사유에는 해당하지 않습니다"처럼 결격(disqualified) 정규식이 먼저면
+    "해당" 부분만 보고 오분류할 위험이 있어, not_disqualified(부정문)를 먼저
+    확인한다 — 두 정규식은 "해당" 뒤에 오는 말이 달라(하지 않음 vs 합니다 류)
+    서로 겹치지 않지만, 우선순위를 명시적으로 둬 유지보수 중 실수를 막는다.
+    """
+    if _REC_WITNESS_ELIGIBLE_NOT_DISQUALIFIED_RE.search(text):
+        return "not_disqualified"
+    if _REC_WITNESS_ELIGIBLE_DISQUALIFIED_RE.search(text):
+        return "disqualified"
+    return None
 
 
 def _looks_like_draft(text: str) -> bool:
@@ -274,6 +436,9 @@ def _looks_like_draft(text: str) -> bool:
         return False
 
     if _DRAFT_DISPOSITION_VERB_RE.search(text):
+        return True
+
+    if _DRAFT_GIVE_TO_RECIPIENT_RE.search(text):
         return True
 
     if _DRAFT_BARE_GIVE_VERB_RE.search(text) and _DRAFT_RECIPIENT_OR_PROPERTY_RE.search(
@@ -334,30 +499,87 @@ def _requirement_payload(result: RequirementResult) -> dict[str, Any]:
     }
 
 
-def _next_action(results: dict[str, RequirementResult]) -> Optional[str]:
-    """PENDING이 남아 있으면 되묻고, 전부 확정+자필증서로 확인되면 heir_navigator로 넘긴다."""
-    has_pending = any(
-        results[rid].grade == "PENDING" for rid in _FORMAL_REQUIREMENT_IDS
-    )
-    if has_pending:
-        return NEXT_ACTION_AWAIT_USER
+def _supplemental_payload(
+    results: dict[str, RequirementResult],
+) -> Optional[dict[str, Any]]:
+    """법정 형식요건 5개와 같은 자리에 두면 안 되는 참고 항목(현재는 간인뿐).
 
-    if results["handwriting"].grade == "GREEN":
-        return NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    간인(interseal)은 rules/requirements.json에서 is_legal_requirement: false로
+    명시된 유일한 항목이다 — 예전에는 results["interseal"]이 그대로
+    requirements 딕셔너리에 나머지 5개와 나란히 들어가, single_page(근거
+    없음, grade=None)여도 빈 카드가, multiple_pages(WHITE)여도 신호등처럼
+    보이는 카드가 붙어 프론트에 "6번째 요건"으로 보였다(실측 확인, UX
+    버그). 여러 장이 실제로 감지된 경우(WHITE)에만 별도 필드로 노출하고,
+    근거가 없으면 아예 내보내지 않는다 — "여러 장인가요?"라는 새 필수
+    질문을 추가하지 않는다는 원칙 그대로, 기존 _MULTI_PAGE_RE 감지 결과만
+    쓴다.
+    """
+    interseal = results.get("interseal")
+    if interseal is None or interseal.grade != "WHITE":
+        return None
+    return {
+        "id": interseal.requirement_id,
+        "name": interseal.name,
+        "note": format_requirement_line(interseal) or "",
+    }
+
+
+def _next_action(results: dict[str, RequirementResult]) -> Optional[str]:
+    """PENDING이나 RED가 남아 있으면 review를 계속한다.
+
+    ⚠️ (버그 수정) 예전에는 PENDING만 확인하고 RED는 전혀 보지 않아서, 예를
+    들어 주소만 RED고 나머지(날짜/성명/전문 자서/날인)가 GREEN이면 "PENDING
+    없음 + handwriting GREEN" 조건만으로 곧바로 heir_navigator에 handoff했다
+    — 법적으로 무효 사유(RED)가 남은 review를 끝내버리고, 사용자가 다음 턴에
+    주소를 정정해도 그 메시지를 heir_navigator가 대신 받아갔다. RED도
+    PENDING과 동일하게 "review 미종결"로 취급해 AWAIT_USER를 반환한다 —
+    router._WAITING_NEXT_ACTIONS 계약(#110/#111)에 그대로 올라타므로, 다음 턴
+    키워드 라우팅보다 decedent_estate가 우선하는 기존 continuation 메커니즘을
+    별도 구현 없이 재사용한다.
+
+    ⚠️ (2026-09-05) YELLOW인데 아직 열린 후속 질문이 있는 경우(예: 주소가
+    building_number_only — 도로명/지번 건물번호까지만 있고 동·호수가 불명확)도
+    동일하게 미종결로 본다. grade 자체는 YELLOW로 확정해도(무효 단정 방지),
+    followup_question이 남아있으면 아직 review가 끝난 게 아니다 — 이미 답이
+    끝난 봉투확인 YELLOW(followup_question 없음)는 그대로 미종결이 아니다.
+
+    ⚠️ (2026-09-05) 모든 요건이 종결돼도 더 이상 자동으로
+    handoff:heir_navigator를 반환하지 않는다 — "형식요건 점검 완료"가 곧
+    "사용자가 유언장 상담을 끝냈다"는 뜻이 아니다. 실측 재현된 버그: 점검이
+    끝난 직후 사용자가 "그럼 요건은 일단 다 맞는 건가?"처럼 결과 후속
+    질문을 해도, 세션에 남은 pending_handoff가 다음 턴 라우팅 최우선이라
+    heir_navigator가 그 메시지를 대신 가로채 "돌아가신 날짜가 언제인가요?"
+    같은 엉뚱한 절차 안내를 시작했다. 이제 정상 종료 시 next_action=None을
+    반환한다 — router.classify()의 기존 last_agent continuation(다른
+    키워드가 없으면 직전 에이전트가 이어받는 표준 경로)을 그대로 타므로, 새
+    pending 상태나 decedent_estate 전용 routing 하드코딩을 추가하지 않고도
+    "그다음" 후속 질문은 decedent_estate가 계속 받고, 사용자가 실제로
+    "상속 절차는 어떻게 해?"처럼 다른 키워드를 말하면 기존 라우팅으로
+    heir_navigator가 자연스럽게 선택된다.
+    """
+    has_unresolved = any(
+        results[rid].grade in ("PENDING", "RED") or results[rid].followup_question
+        for rid in _FORMAL_REQUIREMENT_IDS
+    )
+    if has_unresolved:
+        return NEXT_ACTION_AWAIT_USER
 
     return None
 
 
 def _next_action_recording(results: dict[str, RequirementResult]) -> Optional[str]:
-    """PENDING이 남아 있으면 되묻고, 전부 확정+증인 실제 참여가 확인되면 heir_navigator로 넘긴다."""
+    """PENDING이 남아 있으면 되묻는다.
+
+    ⚠️ (2026-09-05) _next_action과 동일한 원칙 — 모든 요건이 종결돼도 더 이상
+    자동으로 handoff:heir_navigator를 반환하지 않는다. 점검 완료 직후의 결과
+    후속 질문("증인 요건은 다 맞는 건가?" 등)이 heir_navigator에 가로채이던
+    문제를 handwritten과 동일하게 막는다.
+    """
     has_pending = any(
         results[rid].grade == "PENDING" for rid in FORMAL_RECORDING_REQUIREMENT_IDS
     )
     if has_pending:
         return NEXT_ACTION_AWAIT_USER
-
-    if results["rec_witness_present"].grade == "GREEN":
-        return NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
 
     return None
 
@@ -641,6 +863,94 @@ def _document_intake_output(
     )
 
 
+#: date/name/address 는 텍스트에서 아무 근거도 못 찾으면 이 condition_id로
+#: 떨어진다(rules/requirements.json). review가 진행 중인 뒤 이 세 요건만
+#: "이전 턴에 실제 근거를 찾았는데 이번 턴에 못 찾았다고 되돌리지 않는다"
+#: 병합 대상이다 — handwriting/seal은 answer 파라미터로만 정해지므로(텍스트를
+#: 스캔하지 않음) 매 턴 다시 계산해도 안전하고, interseal은 이번 버그의
+#: 범위 밖이다.
+_TEXT_DERIVED_REQUIREMENT_IDS = ("date", "address", "name")
+
+
+def _requirement_is_unresolved(requirement_id: str, result: RequirementResult) -> bool:
+    """이번 턴 text에서 이 요건의 실제 근거를 못 찾았는지.
+
+    address는 본문에 아무 근거가 없으면(_build_address_result) 봉투 확인
+    followup으로 넘어가면서 겉보기 condition_id가 바뀐다 — 그래서
+    extracted["underlying_case"](followup 진입 전 본문 판정)도 함께 본다.
+    """
+    if requirement_id == "address":
+        return result.condition_id == "absent" or (
+            result.extracted.get("underlying_case") == "absent"
+        )
+    return result.condition_id == "absent"
+
+
+def _requirement_result_from_stored(stored: dict[str, Any]) -> RequirementResult:
+    """세션에 저장된 _requirement_payload() 결과(dict)를 RequirementResult로
+    되돌린다 — 유언장 원문이 아니라 이미 판정까지 끝난 구조화 값만 쓰므로
+    새 PII 저장 없이 이전 판정을 그대로 재사용할 수 있다."""
+    return RequirementResult(
+        requirement_id=stored["id"],
+        name=stored["name"],
+        condition_id=stored.get("condition_id"),
+        grade=stored.get("grade"),
+        precedent_ids=list(stored.get("precedent_ids") or []),
+        extracted=dict(stored.get("extracted") or {}),
+        followup_question=stored.get("followup_question"),
+    )
+
+
+#: recording의 text-derived 5요건 — handwritten의 date/address/name과 동일한
+#: "이번 턴에 못 찾았다고 이전 판정을 잃지 않는다" 병합이 필요하다(2026-09-05).
+#: 실측 확인: transcript intake gate를 지나 review가 시작된 뒤 증인 참여/결격
+#: 답변만 담긴 짧은 메시지가 오면, 이 5개를 그 메시지만으로 다시 판정해 이미
+#: GREEN이었던 결과가 전부 RED/absent로 되돌아갔다. rec_witness_present/
+#: rec_witness_eligible은 answer 파라미터로만 정해지므로(텍스트를 스캔하지
+#: 않음) 매 턴 다시 계산해도 안전해 이 목록에 없다.
+_RECORDING_TEXT_DERIVED_REQUIREMENT_IDS = (
+    "rec_content",
+    "rec_testator_name",
+    "rec_date",
+    "rec_witness_accuracy",
+    "rec_witness_name",
+)
+
+
+def _preserve_established_requirements(
+    results: dict[str, RequirementResult],
+    stored_requirements: dict[str, Any],
+    text_derived_ids: tuple[str, ...] = _TEXT_DERIVED_REQUIREMENT_IDS,
+) -> dict[str, RequirementResult]:
+    """review가 이미 진행 중일 때, 이번 턴 자연어 답변이 "유언장 본문"이 아니라서
+    text_derived_ids를 못 찾더라도 이전에 이미 확정된 판정을 잃지 않게 한다.
+
+    "주소는 본문에 적혀 있습니다" 같은 확인 답변은 실제 주소 값을 담고 있지
+    않으므로 이번 턴만 보면 absent다 — 그렇다고 이전 턴에 이미 판정한 결과를
+    absent로 되돌리면 review가 처음부터 다시 시작된 것처럼 보인다. 반대로
+    이번 턴에 실제 새 값이 오면(예: 실제 주소 문자열) 그 값을 우선한다 — 오직
+    "이번 턴에도 못 찾았고, 이전엔 찾았다"일 때만 이전 결과를 보존한다.
+
+    text_derived_ids: 기본값은 handwritten의 date/address/name. recording은
+    _RECORDING_TEXT_DERIVED_REQUIREMENT_IDS(5개)를 넘겨 동일 로직을 공유한다
+    (_requirement_is_unresolved의 else 분기가 이미 "absent면 미해결"이라는
+    같은 판정을 하므로 recording 전용 분기를 새로 만들 필요가 없다).
+    """
+    merged = dict(results)
+    for rid in text_derived_ids:
+        new_result = results[rid]
+        if not _requirement_is_unresolved(rid, new_result):
+            continue  # 이번 턴에 실제 근거를 새로 찾았다 — rule engine의 새 판정을 쓴다.
+        stored = stored_requirements.get(rid)
+        if not stored:
+            continue  # 이전에 판정한 적이 없다 — absent 그대로.
+        old_result = _requirement_result_from_stored(stored)
+        if _requirement_is_unresolved(rid, old_result):
+            continue  # 이전에도 근거가 없었다 — 보존할 것이 없다.
+        merged[rid] = old_result
+    return merged
+
+
 def _run_handwritten_pipeline(
     payload: AgentInput,
     state: DecedentState,
@@ -666,17 +976,45 @@ def _run_handwritten_pipeline(
     있나요?" 같은 상담 요청 문장을 본문으로 오인해 날짜/주소/성명에 RED를
     매기던 버그 수정 — had_photo 는 _resolve_photo_intake 가 photo_draft 를
     소비하기 전에 미리 캡쳐해둔다.
+
+    ⚠️ review continuation: 위 게이트는 review가 "이미 시작된 뒤"에는 적용하지
+    않는다(review_already_started — state.requirements 가 비어있지 않음, 즉
+    최소 한 번은 실제 본문으로 check_requirements 를 돌린 적이 있다는 뜻). 안
+    그러면 "주소는 본문에 적혀 있습니다, 도장도 찍혀 있어요" 같은 확인 답변
+    턴마다 _looks_like_draft 가 False를 반환해 매번 처음 intake 안내로
+    되돌아간다(실측 확인된 버그). 새 boolean 상태를 추가하지 않고 기존
+    state.requirements 유무만으로 판단한다.
     """
     had_photo = bool(payload.image_base64) or bool(state.photo_draft)
     photo_output, text, state = _resolve_photo_intake(payload, state)
     if photo_output is not None:
         return photo_output
 
-    if not had_photo and not _looks_like_draft(text):
+    review_already_started = bool(state.requirements)
+    if not had_photo and not _looks_like_draft(text) and not review_already_started:
         return _document_intake_output(state, intent=intent)
 
+    # handwriting_answer/seal_answer 는 원래 ChoiceGroup 버튼 클릭이 구조화
+    # context로 보내주지만, review 진행 중 자연어로도 명백히 확인되면
+    # deterministic하게 반영한다(모호하면 그대로 미확인으로 둔다) — 위
+    # _HANDWRITING_CONFIRMED_RE/_SEAL_CONFIRMED_RE 참고. 이미 답변이 있으면
+    # (버튼이든 이전 자연어든) 덮어쓰지 않는다.
     handwriting_answer = state.handwriting_answer
+    if handwriting_answer is None and _HANDWRITING_CONFIRMED_RE.search(text):
+        handwriting_answer = "yes"
     seal_answer = state.seal_answer
+    if seal_answer is None and _SEAL_CONFIRMED_RE.search(text):
+        seal_answer = "seal_or_fingerprint"
+    if (
+        handwriting_answer != state.handwriting_answer
+        or seal_answer != state.seal_answer
+    ):
+        state = state.model_copy(
+            update={
+                "handwriting_answer": handwriting_answer,
+                "seal_answer": seal_answer,
+            }
+        )
     address_envelope_answer = state.address_envelope_answer
 
     results = check_requirements(
@@ -685,12 +1023,15 @@ def _run_handwritten_pipeline(
         seal_answer=seal_answer,
         address_envelope_answer=address_envelope_answer,
     )
+    if review_already_started:
+        results = _preserve_established_requirements(results, state.requirements)
 
     next_action = _next_action(results)
 
     requirements = {
-        rid: _requirement_payload(results[rid]) for rid in _ALL_REQUIREMENT_IDS
+        rid: _requirement_payload(results[rid]) for rid in _FORMAL_REQUIREMENT_IDS
     }
+    supplemental = _supplemental_payload(results)
     pending = pending_questions(results)
 
     data: dict[str, Any] = {
@@ -706,8 +1047,8 @@ def _run_handwritten_pipeline(
             address_envelope_answer=address_envelope_answer,
         ),
     }
-    if next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR:
-        data["handoff_reason"] = "가정법원 검인 절차 안내 필요"
+    if supplemental:
+        data["supplemental"] = supplemental
 
     reply = format_result(results)
     if prefix_notice:
@@ -728,18 +1069,115 @@ def _run_handwritten_pipeline(
     )
 
 
+def _looks_like_recording_transcript(text: str) -> bool:
+    """실제 구술 대본으로 볼 근거가 있는지 최소 heuristic으로 판별한다.
+
+    handwritten의 _looks_like_draft()를 그대로 재사용하지 않는다 — 그쪽은
+    "유언장" 제목 줄 등 문서 형식 신호를 보는데, 녹음 대본은 구어체 전사문이라
+    그런 형식이 없다. 대신 recording_checker가 이미 갖고 있는 추출 함수를
+    그대로 재사용해(중복 regex 금지) 신호를 본다: 재산 처분 구술
+    (extract_recording_content), 유언자 성명 구술(extract_name), 날짜 구술
+    (parse_dates), 증인 정확함/성명 구술(extract_witness_accuracy/
+    extract_witness_name) 중 하나라도 있으면 실제 대본으로 본다.
+
+    "녹음·영상"(UI 방식 선택 문구), "녹음 유언이에요"(방식 설명 문장) 같은
+    것은 이 신호가 전혀 없어 대본으로 보지 않는다 — check_recording_requirements
+    전체를 먼저 돌려 판정한 뒤 intake 여부를 정하는 방식(대본 없이도 5개
+    text-derived 요건에 잘못된 RED/PENDING이 매겨지던 버그)은 쓰지 않는다.
+    """
+    if not text or not text.strip():
+        return False
+    if extract_recording_content(text).case != "absent":
+        return True
+    if extract_name(text).case != "absent":
+        return True
+    if parse_dates(text).case != "absent":
+        return True
+    if extract_witness_accuracy(text).case != "absent":
+        return True
+    if extract_witness_name(text).case != "absent":
+        return True
+    return False
+
+
+def _recording_intake_output(
+    state: DecedentState, *, intent: str = _REVIEW_INTENT
+) -> AgentOutput:
+    """recording review intake gate — 실제 대본이 없으면 요건 판정을 아예
+    돌리지 않고 대본을 요청한다 (2026-09-05).
+
+    handwritten의 _document_intake_output과 동일한 원칙: "녹음·영상"(UI 방식
+    선택 문구)이나 "녹음 유언이에요"(방식 설명 문장)가 user_message로 그대로
+    들어와도 실제 대본으로 오인해 5개 text-derived 요건에 잘못된 판정을
+    매기던 버그 수정. will_type/intent는 이미 확정된 값을 그대로 유지하고,
+    requirements/progress는 아예 내보내지 않는다(handwritten의 intake와
+    동일한 관례 — "판정 대상이 없다"는 뜻이지 빈 판정이 아니다).
+    """
+    return AgentOutput(
+        agent=AgentName.DECEDENT_ESTATE,
+        reply=_RECORDING_REVIEW_INTAKE_NOTICE,
+        next_action=NEXT_ACTION_AWAIT_USER,
+        data=_namespaced(
+            state,
+            {"will_type": _RECORDING_WILL_TYPE, "warnings": []},
+            will_type=_RECORDING_WILL_TYPE,
+            intent=intent,
+            pending_questions=[],
+        ),
+    )
+
+
 def _run_recording_pipeline(
     payload: AgentInput, state: DecedentState, *, intent: str = _REVIEW_INTENT
 ) -> AgentOutput:
-    """녹음 유언(§1067) 대본 요건 판정 파이프라인."""
+    """녹음 유언(§1067) 대본 요건 판정 파이프라인.
+
+    ⚠️ transcript intake gate (2026-09-05): 실제 대본으로 볼 근거가 없으면
+    (_looks_like_recording_transcript) check_recording_requirements를 아예
+    돌리지 않고 대본을 요청한다 — handwritten의 document intake gate와 동일한
+    원칙. review가 이미 시작된 뒤(review_already_started — state.requirements가
+    비어있지 않음)에는 이 게이트를 적용하지 않는다 — 그래야 증인 관련 확인
+    답변 턴마다 다시 intake로 되돌아가지 않는다(handwritten과 동일한
+    continuation 원칙, review_already_started 참고).
+    """
+    review_already_started = bool(state.requirements)
+    if not review_already_started and not _looks_like_recording_transcript(
+        payload.user_message
+    ):
+        return _recording_intake_output(state, intent=intent)
+
+    # rec_witness_present_answer/rec_witness_eligible_answer 는 원래 ChoiceGroup
+    # 버튼 클릭이 구조화 context로 보내주지만, review 진행 중 자연어로도 명백히
+    # 확인되면 deterministic하게 반영한다(모호하면 그대로 미확인으로 둔다) —
+    # handwriting_answer/seal_answer와 동일한 원칙(위 _infer_rec_witness_present/
+    # _infer_rec_witness_eligible 참고). 이미 답변이 있으면(버튼이든 이전
+    # 자연어든) 덮어쓰지 않는다.
     rec_witness_present_answer = state.rec_witness_present_answer
+    if rec_witness_present_answer is None:
+        rec_witness_present_answer = _infer_rec_witness_present(payload.user_message)
     rec_witness_eligible_answer = state.rec_witness_eligible_answer
+    if rec_witness_eligible_answer is None:
+        rec_witness_eligible_answer = _infer_rec_witness_eligible(payload.user_message)
+    if (
+        rec_witness_present_answer != state.rec_witness_present_answer
+        or rec_witness_eligible_answer != state.rec_witness_eligible_answer
+    ):
+        state = state.model_copy(
+            update={
+                "rec_witness_present_answer": rec_witness_present_answer,
+                "rec_witness_eligible_answer": rec_witness_eligible_answer,
+            }
+        )
 
     results = check_recording_requirements(
         payload.user_message,
         rec_witness_present_answer=rec_witness_present_answer,
         rec_witness_eligible_answer=rec_witness_eligible_answer,
     )
+    if review_already_started:
+        results = _preserve_established_requirements(
+            results, state.requirements, _RECORDING_TEXT_DERIVED_REQUIREMENT_IDS
+        )
 
     next_action = _next_action_recording(results)
 
@@ -759,16 +1197,14 @@ def _run_recording_pipeline(
             rec_witness_eligible_answer=rec_witness_eligible_answer,
         ),
     }
-    if next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR:
-        data["handoff_reason"] = "가정법원 검인 절차 안내 필요"
 
     reply = format_result(
         results,
         formal_ids=FORMAL_RECORDING_REQUIREMENT_IDS,
         ordered_ids=list(FORMAL_RECORDING_REQUIREMENT_IDS),
         messages=RECORDING_SUMMARY_MESSAGES,
+        footer_notice=RECORDING_FOOTER_NOTICE,
     )
-    reply = f"{_RECORDING_TRANSCRIPT_NOTICE}\n\n{reply}"
 
     return AgentOutput(
         agent=AgentName.DECEDENT_ESTATE,
@@ -871,6 +1307,7 @@ def _run_recording_prepare_pipeline(
         list(FORMAL_RECORDING_REQUIREMENT_IDS),
         RECORDING_GUIDE_INTRO,
         include_closing=not has_draft,
+        footer_notice=RECORDING_FOOTER_NOTICE,
     )
     data: dict[str, Any] = {
         "will_type": _RECORDING_WILL_TYPE,
@@ -976,6 +1413,19 @@ def _run_pipeline(payload: AgentInput) -> AgentOutput:
     if will_type is None:
         inferred = _infer_will_type_from_message(payload.user_message)
         if inferred is None:
+            # will_type을 아직 몰라 방식 선택 질문으로 돌아가더라도, 이번 턴
+            # 메시지에 이미 명백한 prepare 의도가 있으면 잃지 않고 저장해둔다
+            # (2026-09-05) — 그래야 다음 턴에 will_type만 답해도(예: "직접
+            # 손으로 쓴 유언장") intent를 다시 물을 필요 없이 곧장 작성
+            # 가이드로 들어간다. 이미 explicit/저장된 intent가 있으면 덮지
+            # 않는다(명시값 우선 원칙 유지).
+            if (
+                state.intent is None
+                and _explicit_intent_this_turn(payload.context) is None
+            ):
+                inferred_intent = _infer_intent_from_message(payload.user_message)
+                if inferred_intent is not None:
+                    state.intent = inferred_intent
             return _will_type_question_output(state)
         # context/네임스페이스에 명시값이 없을 때만 여기 도달하므로, 추론값이
         # 기존 명시값을 덮어쓸 일은 없다(명시값 우선 원칙 유지).
@@ -1000,7 +1450,9 @@ def _run_pipeline(payload: AgentInput) -> AgentOutput:
         return _run_no_will_pipeline(state)
 
     if will_type in _FULL_SUPPORT_WILL_TYPES:
-        intent, intent_warnings = _resolve_intent(state)
+        intent, intent_warnings = _resolve_intent(
+            state, payload.context, payload.user_message
+        )
         if intent is None:  # 화이트리스트 밖 값 — will_type 게이트와 동일하게 재질문
             return _intent_question_output(state, will_type, warnings=intent_warnings)
 
@@ -1027,12 +1479,15 @@ def _run_pipeline(payload: AgentInput) -> AgentOutput:
     will_type_info = get_will_type(will_type)  # notarial / secret / oral
 
     if will_type == _NOTARIAL_WILL_TYPE:
+        # 자동 handoff 없음(2026-09-06) — handwritten/recording의 #126/#127과
+        # 동일 원칙. 공정증서 안내 완료가 곧 사용자의 유언 관련 질문이 전부
+        # 끝났다는 뜻은 아니다 — "이 유언장은 따로 확인할 건 없나요?" 같은
+        # 후속 질문이 decedent_estate를 벗어나지 않게, 실제 "상속 절차" 의도가
+        # 나왔을 때만 LLM-first 라우터가 heir_navigator를 선택하게 둔다.
         return _guidance_only_output(
             state,
             will_type_info,
             include_requirements_summary=False,
-            next_action=NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR,
-            handoff_reason="공정증서 유언 확인 완료 — 검인 절차 없이 상속 절차 안내로 연결",
         )
 
     # secret / oral: 요건 요약 + "자동 점검 미지원" 안내만 하고 종료.

@@ -123,6 +123,13 @@ class SessionState:
     will_status: Optional[WillStatus] = None
     pending_handoff: Optional[AgentName] = None
     last_agent: Optional[AgentName] = None
+    #: 직전 턴 응답이 "사용자 답변을 기다리는 중"이었던 에이전트(router.py의
+    #: _WAITING_NEXT_ACTIONS 계약값을 next_action으로 반환한 경우). 다음 턴
+    #: classify()에서 키워드 후보보다 우선한다 — 특정 에이전트가 자료를
+    #: 요청해놓고 다음 턴 키워드 때문에 다른 에이전트로 흘러가는 것을 막는다.
+    #: pending_handoff/last_agent와 달리 DB 컬럼이 아니라 to_json_context의
+    #: "_shared" 아래에 직렬화한다(컬럼/마이그레이션 추가 없이).
+    pending_reply_agent: Optional[AgentName] = None
     #: 이 세션을 소유한 사용자 id. None이면 비로그인 세션입니다.
     #: 보관 기간(session_ttl_seconds)과 접근 권한(can_be_accessed_by)이
     #: 이 값 하나로 갈립니다.
@@ -208,6 +215,9 @@ class SessionState:
         if self.history:
             shared["history"] = self.history
 
+        if self.pending_reply_agent is not None:
+            shared["pending_reply_agent"] = self.pending_reply_agent.value
+
         if shared:
             data[self.SHARED_KEY] = shared
         return data
@@ -241,11 +251,20 @@ class SessionState:
             ):
                 history.append({"role": item["role"], "content": item["content"]})
 
+        pending_reply_agent: Optional[AgentName] = None
+        pending_reply_agent_raw = shared.get("pending_reply_agent")
+        if pending_reply_agent_raw:
+            try:
+                pending_reply_agent = AgentName(pending_reply_agent_raw)
+            except ValueError:
+                logger.warning("세션의 pending_reply_agent 값이 알 수 없어 비웁니다.")
+
         return cls(
             per_agent_context=raw,
             financial_profile=profile,
             will_status=will_status,
             history=_trim_history(history),
+            pending_reply_agent=pending_reply_agent,
             **kwargs,
         )
 
