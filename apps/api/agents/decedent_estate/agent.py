@@ -204,10 +204,7 @@ _FULL_SUPPORT_WILL_TYPES = (
     _RECORDING_WILL_TYPE,
 )
 
-_RECORDING_TRANSCRIPT_NOTICE = (
-    "📼 녹음하신 내용을 그대로 적어주세요. 아직 녹음 전이라면, 예정된 대본으로 "
-    "미리 점검할 수도 있습니다."
-)
+_RECORDING_REVIEW_INTAKE_NOTICE = "📼 녹음하신 내용을 그대로 적어주세요."
 
 # next_action 힌트 값. 오케스트레이터/프론트가 참조하는 문자열 상수라 자유 형식이지만,
 # 이 두 값만 이 에이전트가 실제로 내보낸다.
@@ -1083,7 +1080,7 @@ def _recording_intake_output(
     """
     return AgentOutput(
         agent=AgentName.DECEDENT_ESTATE,
-        reply=_RECORDING_TRANSCRIPT_NOTICE,
+        reply=_RECORDING_REVIEW_INTAKE_NOTICE,
         next_action=NEXT_ACTION_AWAIT_USER,
         data=_namespaced(
             state,
@@ -1152,7 +1149,6 @@ def _run_recording_pipeline(
         ordered_ids=list(FORMAL_RECORDING_REQUIREMENT_IDS),
         messages=RECORDING_SUMMARY_MESSAGES,
     )
-    reply = f"{_RECORDING_TRANSCRIPT_NOTICE}\n\n{reply}"
 
     return AgentOutput(
         agent=AgentName.DECEDENT_ESTATE,

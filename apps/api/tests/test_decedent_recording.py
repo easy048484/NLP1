@@ -80,10 +80,9 @@ def test_voice_memo_first_turn_goes_straight_to_transcript_intake() -> None:
     assert output.agent.value == "decedent_estate"
     assert output.data["decedent_estate"]["will_type"] == "recording"
     assert "어떤 형태의 유언인가요?" not in output.reply
-    assert output.reply == (
-        "📼 녹음하신 내용을 그대로 적어주세요. 아직 녹음 전이라면, 예정된 대본으로 "
-        "미리 점검할 수도 있습니다."
-    )
+    assert output.reply == "📼 녹음하신 내용을 그대로 적어주세요."
+    assert "아직 녹음 전" not in output.reply
+    assert "예정된 대본" not in output.reply
     assert "requirements" not in output.data
     assert output.data["decedent_estate"]["requirements"] == {}
     assert output.data["decedent_estate"]["pending_questions"] == []
@@ -113,10 +112,7 @@ def test_ui_will_type_selection_phrase_is_not_treated_as_transcript() -> None:
     )
 
     assert selected.data["decedent_estate"]["will_type"] == "recording"
-    assert selected.reply == (
-        "📼 녹음하신 내용을 그대로 적어주세요. 아직 녹음 전이라면, 예정된 대본으로 "
-        "미리 점검할 수도 있습니다."
-    )
+    assert selected.reply == "📼 녹음하신 내용을 그대로 적어주세요."
     assert "requirements" not in selected.data
     assert "5/7" not in selected.reply
     assert "증인" not in selected.reply
@@ -179,10 +175,7 @@ def test_witness_answer_turn_does_not_reset_transcript_derived_grades() -> None:
 
     # 두 번째 턴은 답변만 담겨 있고 대본을 다시 보내지 않았지만, intake gate로
     # 돌아가지 않고(대본 재요청 없음) review가 계속된다.
-    assert witness_turn.reply != (
-        "📼 녹음하신 내용을 그대로 적어주세요. 아직 녹음 전이라면, 예정된 대본으로 "
-        "미리 점검할 수도 있습니다."
-    )
+    assert witness_turn.reply != "📼 녹음하신 내용을 그대로 적어주세요."
     after = witness_turn.data["requirements"]
     for rid in (
         "rec_content",
@@ -301,8 +294,8 @@ def test_complete_transcript_all_green_does_not_auto_handoff() -> None:
     assert "handoff_reason" not in output.data
     assert "형식 요건상 문제가 발견되지 않았습니다" in output.reply
     assert "녹음 유언의 7가지 요건" in output.reply
-    # 대본 입력 안내가 항상 맨 앞에 붙는다.
-    assert output.reply.startswith("📼 녹음하신 내용을 그대로 적어주세요")
+    # 대본을 이미 판정한 결과 화면에는 intake 안내가 더 이상 붙지 않는다.
+    assert "📼 녹음하신 내용을 그대로 적어주세요" not in output.reply
 
 
 def test_date_missing_is_red_with_precedent_citation() -> None:
