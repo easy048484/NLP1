@@ -190,3 +190,56 @@ def unlocked(completed: set[StepId]) -> list[Step]:
 def blocked_by(step: Step, completed: set[StepId]) -> list[Step]:
     """이 단계를 막고 있는 선행 단계들."""
     return [STEP_BY_ID[req] for req in step.requires if req not in completed]
+
+
+def prerequisite_chain(step: Step, completed: set[StepId]) -> list[Step]:
+    """이 단계를 하려면 아직 끝내야 하는 선행 단계 전체 — 가까운 것부터.
+
+    상속등기 ← 분할협의 ← 승인/포기 결정 처럼 선행의 선행까지 따라갑니다.
+    사용자가 "등기 서류 뭐 필요해요?"라고 물었을 때 "그 전에 이것들이 먼저"를
+    한 번에 보여주기 위한 것. 이미 끝낸 단계는 건너뜁니다.
+    """
+    chain: list[Step] = []
+    seen: set[StepId] = set()
+    frontier = list(step.requires)
+    while frontier:
+        req = frontier.pop(0)
+        if req in completed or req in seen:
+            continue
+        seen.add(req)
+        prev = STEP_BY_ID[req]
+        chain.append(prev)
+        frontier.extend(prev.requires)
+    return chain
+
+
+#: "묻는 말"로 볼 신호. 이게 없으면 단계 이름이 나와도 질문이 아니라 진행 보고
+#: ("상속세 신고했어요")일 가능성이 커서 asked_step 으로 잡지 않습니다 — 진행
+#: 보고는 slots.py 의 완료 패턴이 따로 처리합니다.
+_QUESTION_MARKERS = (
+    "?", "？", "뭐", "무엇", "어떻게", "어디", "언제", "얼마", "필요", "알려",
+    "궁금", "나요", "가요", "까요", "인가", "인지", "방법", "절차", "서류", "준비",
+)
+
+#: 짧아서 다른 문맥에 자주 걸리는 별칭. 다른 별칭이 하나도 안 맞을 때만 씁니다.
+_WEAK_ALIASES = frozenset({"포기", "승인", "등기", "유언"})
+
+
+def find_asked_step(text: str) -> Step | None:
+    """사용자 말이 특정 단계를 묻고 있으면 그 단계. 아니면 None.
+
+    각 Step.aliases 를 문자열 매칭합니다(LLM 없음). 질문 신호(_QUESTION_MARKERS)가
+    없으면 None — 절차를 "묻는" 발화만 잡고, 진행 보고나 잡담은 잡지 않습니다.
+    여러 단계가 걸리면 긴 별칭(더 구체적인 표현)이 걸린 단계를 우선합니다.
+    """
+    if not text or not any(marker in text for marker in _QUESTION_MARKERS):
+        return None
+    best: tuple[int, Step] | None = None
+    for step in STEPS:
+        for alias in step.aliases:
+            if alias not in text:
+                continue
+            score = len(alias) if alias not in _WEAK_ALIASES else 1
+            if best is None or score > best[0]:
+                best = (score, step)
+    return best[1] if best else None

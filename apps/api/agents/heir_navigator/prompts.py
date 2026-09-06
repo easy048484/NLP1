@@ -25,6 +25,7 @@ SYSTEM_COMPOSE = """당신은 한국에서 가족을 잃은 분에게 상속 절
 - 기한을 법적 확정으로 단정하지 않습니다. 사실 블록의 안내 문구를 답변 끝에 그대로 붙입니다.
 
 ## 쓰는 방식
+- <사실>에 [질문하신 단계] 블록이 있으면 **그 질문에 먼저 답합니다** — 그 단계의 서류·기관·기한을 앞에 두고, "그 전에 먼저 해야 하는 것"과 "지금 할 수 있는 일"은 그 뒤에 짧게 붙입니다. 사용자가 물은 것을 제쳐두고 첫 단계부터 다시 설명하지 않습니다.
 - 쉬운 말로 씁니다. 법률 용어를 쓸 때는 한 번은 풀어서 설명합니다.
 - 모바일에서 읽으므로 짧게 끊고, 문단은 2~3줄을 넘기지 않습니다.
 - 지금 당장 할 일 하나를 먼저 말하고, 나머지는 뒤에 둡니다.
@@ -100,6 +101,38 @@ def facts_block(plan: ProcedurePlan, state: HeirState, *, today: date) -> str:
             "상속개시를 안 날: 별도로 확인하지 않아 사망일로 갈음해 계산함 "
             "(한정승인·상속포기 기한의 실제 기산점은 '안 날'이므로 다를 수 있음)"
         )
+
+    asked = plan.asked_step
+    if asked is not None:
+        status_label = {
+            "done": "이미 완료한 단계",
+            "ready": "지금 바로 할 수 있는 단계",
+            "blocked": "아직 선행 단계가 남은 단계",
+        }[asked.status]
+        lines.append(f"\n[질문하신 단계: {asked.title}] — {status_label}")
+        lines.append(f"- 설명: {asked.summary}")
+        if asked.prerequisites:
+            lines.append(f"- 그 전에 먼저 해야 하는 것(순서대로): {' → '.join(reversed(asked.prerequisites))}")
+        if asked.documents:
+            lines.append(f"- 필요 서류: {', '.join(asked.documents)}")
+        if asked.agencies:
+            lines.append(f"- 접수 기관: {', '.join(asked.agencies)}")
+        for tip in asked.tips:
+            lines.append(f"- 참고: {tip}")
+        for link in asked.links:
+            lines.append(f"- 링크: {link['label']} {link['url']}")
+        if asked.deadline is not None:
+            d = asked.deadline
+            lines.append(
+                f"- 기한: {d.label} {d.due_date.isoformat()} ({d.days_left}일 남음) / 근거: {d.law}"
+            )
+        if asked.needs_verification:
+            lines.append("- (이 단계의 서류·기관 정보는 아직 팀 검증 전입니다 — 방문 전 확인 권고)")
+        if plan.death_date is None:
+            lines.append(
+                "- 사망일을 아직 모릅니다. 위 질문에 답한 뒤, 답변 맨 끝에 돌아가신 날짜를 "
+                "한 번만 물어보세요(기한 계산에 필요하다는 이유와 함께)."
+            )
 
     if plan.overdue:
         lines.append("\n[이미 지난 기한]")
@@ -178,7 +211,11 @@ def facts_block(plan: ProcedurePlan, state: HeirState, *, today: date) -> str:
     if plan.handoff_reason:
         lines.append(f"\n[다음 단계 연결]\n- {plan.handoff_reason}")
 
-    if plan.follow_up and plan.follow_up in QUESTIONS:
+    if plan.follow_up and plan.follow_up in QUESTIONS and not (
+        plan.asked_step is not None and plan.death_date is None
+    ):
+        # (특정 단계 질문 + 사망일 미상이면 위 [질문하신 단계] 블록의 지시대로
+        #  답 끝에 사망일을 물어야 하므로 이 금지 문구를 넣지 않는다.)
         lines.append(
             "\n[되묻지 말 것]\n"
             "안내만 하고 끝맺으세요. 추가로 확인할 내용은 화면이 별도 질문 블록으로 "
@@ -194,7 +231,34 @@ def deterministic_reply(plan: ProcedurePlan, state: HeirState) -> str:
     """LLM 없이 사실 블록을 그대로 렌더링한 답변."""
     parts: list[str] = []
 
+    asked = plan.asked_step
+    if asked is not None:
+        parts.append(f"**{asked.title}**")
+        parts.append(asked.summary)
+        if asked.documents:
+            parts.append("\n필요한 서류")
+            parts.extend(f"- {doc}" for doc in asked.documents)
+        if asked.agencies:
+            parts.append("\n접수하는 곳")
+            parts.extend(f"- {agency}" for agency in asked.agencies)
+        for tip in asked.tips:
+            parts.append(f"\n참고: {tip}")
+        if asked.deadline is not None:
+            d = asked.deadline
+            parts.append(f"\n기한: {d.label} {d.due_date.isoformat()} ({d.days_left}일 남음)")
+        if asked.prerequisites:
+            parts.append(
+                "\n다만 이 단계 전에 먼저 끝내야 하는 것이 있습니다: "
+                + " → ".join(reversed(asked.prerequisites))
+            )
+        if asked.needs_verification:
+            parts.append("\n(서류·기관 정보는 아직 팀 검증 전입니다. 방문 전 해당 기관에 확인하세요.)")
+        parts.append("")
+
     if plan.death_date is None:
+        if asked is not None:
+            parts.append(QUESTIONS["death_date"])
+            return "\n".join(parts).strip()
         return QUESTIONS["death_date"]
 
     if plan.overdue:
@@ -232,7 +296,9 @@ def deterministic_reply(plan: ProcedurePlan, state: HeirState) -> str:
 
     if plan.next_actions:
         action = plan.next_actions[0]
-        parts.append(f"**지금 하실 일 — {action.title}**")
+        parts.append(
+            f"**{'지금 하실 일' if plan.asked_step is None else '지금 단계에서 먼저 하실 일'} — {action.title}**"
+        )
         parts.append(action.summary)
         if action.documents:
             parts.append("\n필요한 서류")
