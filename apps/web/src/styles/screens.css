@@ -1107,6 +1107,11 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
+  background: var(--surface-page);
+  color: var(--ink);
+}
+.amount-direct-input::placeholder {
+  color: var(--ink-faint);
 }
 .amount-input-actions {
   display: flex;
@@ -1257,6 +1262,11 @@
   padding: 0 var(--sp-2);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
+  background: var(--surface-card);
+  color: var(--ink);
+}
+.fp-add-row input::placeholder {
+  color: var(--ink-faint);
 }
 .fp-add-row input {
   flex: 1;
@@ -1336,6 +1346,12 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   font-size: var(--text-body);
+  background: var(--surface-card);
+  color: var(--ink);
+}
+.family-anchor-input:focus-visible {
+  outline: none;
+  border-color: var(--brand-navy);
 }
 .family-anchor-hint {
   margin-top: var(--sp-2);
@@ -1357,6 +1373,16 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
+  background: var(--surface-card);
+  color: var(--ink);
+}
+.family-name-input:focus-visible {
+  outline: none;
+  border-color: var(--brand-navy);
+}
+.family-anchor-input::placeholder,
+.family-name-input::placeholder {
+  color: var(--ink-faint);
 }
 .family-minor-check {
   display: inline-flex;
