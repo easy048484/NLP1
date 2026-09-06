@@ -62,3 +62,34 @@ def known_will_type_ids() -> tuple[str, ...]:
     """실제 민법상 5방식 id만 (UI의 "unknown" 선택지는 이 방식들 중 하나가 아니라
     별도 sentinel이라 포함하지 않는다)."""
     return tuple(wt["id"] for wt in _load()["will_types"])
+
+
+def infer_will_type_from_message(user_message: str) -> Optional[str]:
+    """자연어에서 명백한 will_type을 rules/will_types.json 의 각
+    will_types[].inference_markers 를 generic하게 순회해 추론한다.
+
+    핵심 invariant: 사용자가 민법상 유언 방식을 명백하게 특정했다면, 그
+    방식이 full-support(handwritten/recording)인지 guidance-only(notarial/
+    secret/oral)인지와 무관하게 방식 선택 질문을 다시 하지 않는다 — support
+    (자동 점검 가능 여부)와 inference(방식을 자연어로 알아챌 수 있는지)는
+    서로 다른 축이다. agent.py 는 더 이상 방식별 marker 상수를 갖지 않고
+    이 함수 하나만 호출한다.
+
+    marker는 방식마다 "명백한" 표현만 담아야 한다(예: "자필증서"/"공정증서"/
+    "비밀증서"/"구수증서" 같은 법정 방식명 자체, 또는 "음성메모"처럼 그
+    방식임이 분명한 구어체 표현) — "서류"/"증서"/"공증"처럼 여러 방식에
+    공통될 수 있는 단어는 넣지 않는다(rules/will_types.json 자체가 단일
+    출처이므로 marker 선정 기준도 그 파일의 주석을 따른다).
+
+    충돌 방어: 하나의 메시지가 서로 다른 두 방식의 marker에 동시에 걸리면
+    (예: "자필증서인지 공정증서인지 모르겠습니다") 임의로 하나를 고르지
+    않고 None을 반환해 기존 방식 선택 질문으로 돌아간다. 정확히 하나의
+    방식만 hit일 때만 그 값을 반환한다."""
+    matched_ids = {
+        wt["id"]
+        for wt in _load()["will_types"]
+        if any(marker in user_message for marker in wt.get("inference_markers", []))
+    }
+    if len(matched_ids) == 1:
+        return next(iter(matched_ids))
+    return None

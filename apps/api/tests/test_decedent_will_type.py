@@ -383,6 +383,106 @@ def test_explicit_handwritten_wins_over_notarized_will_phrase_in_message() -> No
     assert output.data["will_type"] == "handwritten"
 
 
+# ---------------------------------------------------------------------------
+# rules 기반 generic will_type 자연어 추론 (2026-09-06)
+#
+# _infer_will_type_from_message()가 방식별 marker 상수를 하드코딩하는 대신
+# rules/will_types.json 의 will_types[].inference_markers 를 generic하게
+# 순회한다(will_types.infer_will_type_from_message). 핵심 invariant: 사용자가
+# 민법상 유언 방식을 명백하게 특정했다면, 그 방식이 full-support(handwritten/
+# recording)인지 guidance-only(notarial/secret/oral)인지와 무관하게 방식
+# 선택 질문을 다시 하지 않는다.
+# ---------------------------------------------------------------------------
+
+_FIVE_WAY_INFERENCE_CASES = [
+    ("handwritten", "아버지가 자필증서 유언을 남겼어요"),
+    ("recording", "어머니가 녹음 유언을 남겼어요"),
+    ("notarial", "공증받은 유언장을 발견했어요"),
+    ("secret", "비밀증서 유언이라고 적혀 있습니다"),
+    ("oral", "구수증서 유언이라고 들었습니다"),
+]
+
+
+@pytest.mark.parametrize("expected_will_type,message", _FIVE_WAY_INFERENCE_CASES)
+def test_all_five_statutory_will_types_are_inferred_without_reasking(
+    expected_will_type: str, message: str
+) -> None:
+    """민법 5방식 전체 table-driven regression — 명백한 자연어 표현이면
+    support 여부와 무관하게 방식 선택 질문 없이 곧장 해당 will_type으로
+    확정되고, 각자의 기존 pipeline/guidance로 들어가야 한다."""
+    output = decedent_estate.run(AgentInput(session_id="s1", user_message=message))
+
+    assert "어떤 형태의 유언인가요?" not in output.reply
+    assert output.data["will_type"] == expected_will_type
+    if expected_will_type in ("notarial", "secret", "oral"):
+        # guidance-only 방식은 요건 판정 파이프라인 자체를 안 돈다.
+        assert "requirements" not in output.data
+    get_will_type_info = get_will_type(expected_will_type)
+    assert get_will_type_info is not None
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "자필증서인지 공정증서인지 모르겠습니다",
+        "봉인된 유언장을 발견했습니다",
+        "고인이 말로 유언을 남겼습니다",
+        "공증받은 서류입니다",
+    ],
+)
+def test_ambiguous_or_underspecified_messages_do_not_infer_will_type(
+    message: str,
+) -> None:
+    """모호한 표현(둘 이상의 방식에 동시에 걸리거나, 어느 marker에도 명백히
+    걸리지 않는 표현)은 추론하지 않고 기존 방식 선택 질문으로 돌아간다.
+    "자필증서인지 공정증서인지 모르겠습니다"는 handwritten/notarial marker에
+    동시에 걸리는 충돌 케이스 — 임의로 하나를 고르지 않아야 한다."""
+    output = decedent_estate.run(AgentInput(session_id="s1", user_message=message))
+
+    assert "어떤 형태의 유언인가요?" in output.reply
+    assert "requirements" not in output.data
+
+
+def test_secret_exact_production_scenario_infers_secret_without_reasking() -> None:
+    """정확한 production 재현 — "봉인된 유언장"(모호) + "비밀증서 유언이라고
+    적혀 있어요"(명백한 방식 특정)가 함께 있는 문장에서, 명백한 방식 명칭이
+    있으므로 secret으로 확정되고 방식 재질문 없이 기존 비밀증서 guidance-only
+    안내(자동 점검 미지원)로 들어가야 한다. handwritten으로 잘못 폴백하면 안
+    된다."""
+    output = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message=(
+                "아버지가 돌아가시고 서류를 정리하다가 봉인된 유언장을 발견했는데, "
+                "겉에 비밀증서 유언이라고 적혀 있어요. 이것도 효력이 있는지 "
+                "확인할 수 있나요?"
+            ),
+        )
+    )
+
+    assert "어떤 형태의 유언인가요?" not in output.reply
+    assert output.data["will_type"] == "secret"
+    assert "requirements" not in output.data
+    assert "민법 제1069조" in output.reply
+    assert (
+        "이 방식은 증인 2인 이상이 필요합니다. 현재 자동 점검을 지원하지 않으니 "
+        "법률 전문가 확인을 권합니다."
+    ) in output.reply
+
+
+def test_oral_natural_language_mention_infers_oral_without_reasking() -> None:
+    """oral 최소 API smoke — "구수증서 유언이라고 적혀 있습니다"만으로도 방식
+    재질문 없이 곧장 구수증서 guidance-only 안내로 들어가야 한다."""
+    output = decedent_estate.run(
+        AgentInput(session_id="s1", user_message="구수증서 유언이라고 적혀 있습니다")
+    )
+
+    assert "어떤 형태의 유언인가요?" not in output.reply
+    assert output.data["will_type"] == "oral"
+    assert "requirements" not in output.data
+    assert "민법 제1070조" in output.reply
+
+
 def test_notarial_gives_guidance_without_auto_handoff() -> None:
     """notarial 안내 완료 후 자동 handoff가 없어야 한다(2026-09-06) —
     handwritten/recording의 #126/#127과 동일 원칙. 안내 자체(형식 요건
