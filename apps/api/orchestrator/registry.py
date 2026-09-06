@@ -38,7 +38,10 @@ class AgentSpec(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: AgentName
-    axis: AgentAxis
+    axes: list[AgentAxis] = Field(
+        min_length=1,
+        description="담당 상담 축 목록. 양쪽을 담당하면 pre_need와 post_death를 모두 선언",
+    )
     description: str = Field(description="라우팅 LLM용 한 줄 설명")
     example_utterances: list[str] = Field(
         default_factory=list, description="few-shot 라우팅 예시 문장"

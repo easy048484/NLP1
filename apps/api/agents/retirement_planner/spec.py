@@ -33,7 +33,7 @@ from .agent import run
 
 SPEC = AgentSpec(
     name=AgentName.RETIREMENT_PLANNER,
-    axis=AgentAxis.PRE_NEED,
+    axes=[AgentAxis.PRE_NEED],
     description="은퇴 시점까지 필요한 자금과 현재 준비 자금의 갭을 계산하고 보완 방향을 제안",
     example_utterances=[
         "은퇴 준비 자금이 얼마나 필요해요?",
