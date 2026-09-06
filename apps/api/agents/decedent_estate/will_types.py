@@ -9,6 +9,7 @@ agent.py 가 이 모듈로 rules/will_types.json 을 조회해서 방식별 분�
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
@@ -64,10 +65,30 @@ def known_will_type_ids() -> tuple[str, ...]:
     return tuple(wt["id"] for wt in _load()["will_types"])
 
 
+@lru_cache(maxsize=8)
+def _compile_patterns(patterns: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
+    """regex 문자열 목록을 컴파일한다. 잘못된 regex(re.error)가 섞여 있어도
+    로딩 전체가 죽지 않도록 그 항목만 조용히 건너뛴다 — rules/will_types.json
+    은 코드 배포와 분리해 수정될 수 있는 설정 파일이라, 오타 하나가 에이전트
+    전체를 죽이면 안 된다(다른 config 파일들과 동일한 안전 처리 원칙).
+    lru_cache의 키가 tuple이라 호출부에서 list를 tuple로 바꿔 넘긴다."""
+    compiled = []
+    for pattern in patterns:
+        try:
+            compiled.append(re.compile(pattern))
+        except re.error:
+            continue
+    return tuple(compiled)
+
+
+def _any_pattern_matches(patterns: list[str], text: str) -> bool:
+    return any(p.search(text) for p in _compile_patterns(tuple(patterns)))
+
+
 def infer_will_type_from_message(user_message: str) -> Optional[str]:
     """자연어에서 명백한 will_type을 rules/will_types.json 을 generic하게
     순회해 추론한다 — 대상은 민법 5방식(will_types[].inference_markers)과
-    no_will sentinel(no_will.inference_markers) 둘 다다.
+    no_will sentinel(no_will.inference_markers/inference_patterns) 둘 다다.
 
     핵심 invariant: 사용자가 민법상 유언 방식을 명백하게 특정했다면, 그
     방식이 full-support(handwritten/recording)인지 guidance-only(notarial/
@@ -80,25 +101,43 @@ def infer_will_type_from_message(user_message: str) -> Optional[str]:
     더 이상 방식별/sentinel별 marker 상수를 갖지 않고 이 함수 하나만
     호출한다.
 
-    marker는 각 후보마다 "명백한" 표현만 담아야 한다(예: "자필증서"/
-    "공정증서"/"비밀증서"/"구수증서" 같은 법정 방식명 자체, "음성메모"처럼
-    그 방식임이 분명한 구어체 표현, "유언장이 있는지 확실하지 않아요"처럼
-    존재 자체가 불확실함이 명백한 표현) — "서류"/"증서"/"공증"/"잘
-    모르겠어요"처럼 여러 후보에 공통될 수 있거나 존재/방식 어느 쪽인지
-    불명확한 표현은 넣지 않는다(rules/will_types.json 자체가 단일 출처이므로
-    marker 선정 기준도 그 파일의 주석을 따른다).
+    marker(exact substring)는 각 후보마다 "명백한" 표현만 담아야 한다(예:
+    "자필증서"/"공정증서"/"비밀증서"/"구수증서" 같은 법정 방식명 자체,
+    "음성메모"처럼 그 방식임이 분명한 구어체 표현) — "서류"/"증서"/"공증"
+    처럼 여러 후보에 공통될 수 있는 표현은 넣지 않는다.
 
-    충돌 방어: 하나의 메시지가 서로 다른 두 후보의 marker에 동시에 걸리면
-    (예: "자필증서인지 공정증서인지 모르겠습니다") 임의로 하나를 고르지
-    않고 None을 반환해 기존 방식 선택 질문으로 돌아간다. 정확히 하나의
-    후보만 hit일 때만 그 값을 반환한다."""
+    no_will만 추가로 inference_patterns(regex)/exclusion_patterns(regex)를
+    쓴다(#150) — "유언장이 없는 건지, 못 찾았는 건지 잘 모르겠어요"처럼
+    조사·어미·띄어쓰기가 자유롭게 섞이는 "존재 자체가 불확실함" 표현은
+    exact substring marker로 다 나열할 수 없어서다. inference_patterns 중
+    하나라도 매치하고 exclusion_patterns가 하나도 매치하지 않으면 "none"
+    후보로 추가한다 — exclusion은 "유언장은 있는데"처럼 존재를 이미 확정한
+    문구가 함께 있을 때를 위한 defense-in-depth다(정교하게 짠
+    inference_patterns 자체는 그런 문장과 안 겹치도록 설계했다). 방식(어떤
+    유언인지)에 대한 불확실 표현("어떤 방식인지 모르겠어요" 등)은 "있/없"가
+    "유언장" 근처에 붙어 나오지 않아 이 패턴에 걸리지 않는다 — rules/
+    will_types.json 의 inference_patterns_note 참고. 컴파일 실패하는 regex는
+    조용히 건너뛴다(_compile_patterns).
+
+    충돌 방어: 하나의 메시지가 서로 다른 두 후보의 marker/pattern에 동시에
+    걸리면(예: "자필증서인지 공정증서인지 모르겠습니다") 임의로 하나를
+    고르지 않고 None을 반환해 기존 방식 선택 질문으로 돌아간다. 정확히
+    하나의 후보만 hit일 때만 그 값을 반환한다."""
     matched_ids = {
         wt["id"]
         for wt in _load()["will_types"]
         if any(marker in user_message for marker in wt.get("inference_markers", []))
     }
     no_will = _load()["no_will"]
-    if any(marker in user_message for marker in no_will.get("inference_markers", [])):
+    no_will_hit = any(
+        marker in user_message for marker in no_will.get("inference_markers", [])
+    ) or (
+        _any_pattern_matches(no_will.get("inference_patterns", []), user_message)
+        and not _any_pattern_matches(
+            no_will.get("exclusion_patterns", []), user_message
+        )
+    )
+    if no_will_hit:
         matched_ids.add("none")
     if len(matched_ids) == 1:
         return next(iter(matched_ids))
