@@ -60,6 +60,7 @@ from .requirement_checker import (
 )
 from .result_formatter import (
     HANDWRITTEN_GUIDE_INTRO,
+    RECORDING_FOOTER_NOTICE,
     RECORDING_GUIDE_INTRO,
     RECORDING_SUMMARY_MESSAGES,
     cited_precedents_for_requirement,
@@ -1148,6 +1149,7 @@ def _run_recording_pipeline(
         formal_ids=FORMAL_RECORDING_REQUIREMENT_IDS,
         ordered_ids=list(FORMAL_RECORDING_REQUIREMENT_IDS),
         messages=RECORDING_SUMMARY_MESSAGES,
+        footer_notice=RECORDING_FOOTER_NOTICE,
     )
 
     return AgentOutput(
@@ -1251,6 +1253,7 @@ def _run_recording_prepare_pipeline(
         list(FORMAL_RECORDING_REQUIREMENT_IDS),
         RECORDING_GUIDE_INTRO,
         include_closing=not has_draft,
+        footer_notice=RECORDING_FOOTER_NOTICE,
     )
     data: dict[str, Any] = {
         "will_type": _RECORDING_WILL_TYPE,
