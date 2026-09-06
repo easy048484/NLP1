@@ -322,14 +322,14 @@ def test_llm_select_receives_last_agent_hint(monkeypatch):
 
 def test_llm_select_returns_single_agent(monkeypatch):
     _fake_extract_enum(monkeypatch, {"agents": ["heir_navigator"]})
-    result = planner._llm_route("아버지가 돌아가셨는데 뭘 해야 하나요", **_route_kwargs())
+    result = planner._llm_route(
+        "아버지가 돌아가셨는데 뭘 해야 하나요", **_route_kwargs()
+    )
     assert result == [AgentName.HEIR_NAVIGATOR]
 
 
 def test_llm_select_returns_multiple_agents(monkeypatch):
-    _fake_extract_enum(
-        monkeypatch, {"agents": ["decedent_estate", "heir_navigator"]}
-    )
+    _fake_extract_enum(monkeypatch, {"agents": ["decedent_estate", "heir_navigator"]})
     result = planner._llm_route(
         "유언장 효력도 확인하고 상속 절차도 알고 싶어", **_route_kwargs()
     )
