@@ -98,11 +98,16 @@ def extract(
     messages: list[Message] | None = None,
     max_tokens: int = 8000,
     effort: str = "low",
+    model: str | None = None,
 ) -> dict[str, Any]:
     """도구 호출을 강제해서 구조화된 입력을 뽑아옵니다.
 
     tool은 {"name", "description", "input_schema"} 형태여야 하고,
     반환값은 그 스키마에 따른 dict입니다. 검증은 호출부(pydantic) 책임입니다.
+
+    model 을 주면 그 모델로, 비우면 CLAUDE_MODEL(기본값)로 호출합니다 — 라우팅
+    분류처럼 호출부가 모델을 따로 고르고 싶을 때 씁니다(orchestrator/llm_policy
+    의 router_model 참고).
 
     messages 로 대화 이력 전체를 넘기면 그걸 쓰고, user_text 하나만 넘기면
     단일 턴으로 처리합니다. 이력이 필요한 이유는 슬롯 추출 때문입니다 —
@@ -119,7 +124,7 @@ def extract(
         raise LLMUnavailable("추출에 쓸 user 메시지가 없습니다.")
 
     response = _client().messages.create(
-        model=_model(),
+        model=model or _model(),
         max_tokens=max_tokens,
         system=system,
         tools=[tool],

@@ -59,7 +59,7 @@ from schemas import (
 )
 
 from . import registry
-from .llm_policy import llm_enabled, llm_required
+from .llm_policy import llm_enabled, llm_required, router_model
 from .handoff import build_agent_context
 
 logger = logging.getLogger(__name__)
@@ -176,6 +176,7 @@ def _llm_select(
             tool=tool,
             max_tokens=1024,
             effort="low",
+            model=router_model(),
         )
     except Exception:  # noqa: BLE001 — LLMUnavailable 포함, 어떤 실패든 폴백
         if llm_required():

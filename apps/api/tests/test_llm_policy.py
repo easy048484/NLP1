@@ -10,8 +10,15 @@ from __future__ import annotations
 
 import pytest
 
+from llm import claude
 from orchestrator import compose, planner
-from orchestrator.llm_policy import llm_enabled, llm_mode, llm_required, llm_status
+from orchestrator.llm_policy import (
+    llm_enabled,
+    llm_mode,
+    llm_required,
+    llm_status,
+    router_model,
+)
 from schemas import AgentName, AgentOutput
 
 
@@ -109,3 +116,62 @@ def test_planner_on_falls_back(monkeypatch) -> None:
         )
         is None
     )
+
+
+# ------------------------------------------------------- CLAUDE_ROUTER_MODEL
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, None),
+        ("", None),
+        ("   ", None),
+        ("claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"),
+        ("  claude-haiku-4-5-20251001  ", "claude-haiku-4-5-20251001"),
+    ],
+)
+def test_router_model(monkeypatch, raw, expected) -> None:
+    if raw is None:
+        monkeypatch.delenv("CLAUDE_ROUTER_MODEL", raising=False)
+    else:
+        monkeypatch.setenv("CLAUDE_ROUTER_MODEL", raw)
+    assert router_model() == expected
+
+
+def test_llm_select_passes_router_model_to_extract(monkeypatch) -> None:
+    """CLAUDE_ROUTER_MODEL 이 있으면 라우팅 분류 호출에 그 모델이 실린다."""
+    monkeypatch.setenv("ORCHESTRATOR_USE_LLM", "on")
+    monkeypatch.setenv("CLAUDE_ROUTER_MODEL", "claude-haiku-4-5-20251001")
+    seen: dict = {}
+
+    def _fake_extract(**kwargs):
+        seen.update(kwargs)
+        return {"agents": [AgentName.TAX_CALCULATOR.value]}
+
+    monkeypatch.setattr(claude, "extract", _fake_extract)
+
+    planner._llm_select(
+        "상속세 얼마예요",
+        [AgentName.TAX_CALCULATOR, AgentName.DECEDENT_ESTATE],
+    )
+    assert seen["model"] == "claude-haiku-4-5-20251001"
+
+
+def test_llm_select_defaults_model_to_none(monkeypatch) -> None:
+    """CLAUDE_ROUTER_MODEL 이 없으면 model=None 으로 넘어가 claude 가 기본값을 쓴다."""
+    monkeypatch.setenv("ORCHESTRATOR_USE_LLM", "on")
+    monkeypatch.delenv("CLAUDE_ROUTER_MODEL", raising=False)
+    seen: dict = {}
+
+    def _fake_extract(**kwargs):
+        seen.update(kwargs)
+        return {"agents": [AgentName.TAX_CALCULATOR.value]}
+
+    monkeypatch.setattr(claude, "extract", _fake_extract)
+
+    planner._llm_select(
+        "상속세 얼마예요",
+        [AgentName.TAX_CALCULATOR, AgentName.DECEDENT_ESTATE],
+    )
+    assert seen["model"] is None
