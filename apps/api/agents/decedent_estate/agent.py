@@ -8,7 +8,8 @@
 - unknown(그 외·모르겠음) → 자필증서를 기본값으로 안내하며 같은 파이프라인 실행
 - recording(녹음, §1067) → 대본(전사) 텍스트 기반 요건 판정 파이프라인
   (recording_checker → result_formatter) 실행
-- notarial(공정증서) → 검증·검인 모두 불필요 안내 후 heir_navigator로 핸드오프
+- notarial(공정증서) → 검증·검인 모두 불필요 안내 (자동 handoff 없음 — 2026-09-06,
+  handwritten/recording의 #126/#127과 동일 원칙)
 - secret/oral → 요건 요약만 안내, 자동 점검 미지원
 
 will_type이 full 지원(handwritten/unknown/recording)이면 두 번째로 intent(이용
@@ -115,6 +116,19 @@ _RECORDING_MESSAGE_MARKERS = (
     "녹음해둔",
 )
 
+# notarial(공정증서, §1068)도 동일 원칙(2026-09-06) — 실측 재현: "공증받은
+# 유언장을 발견했어요"처럼 이미 명백히 공정증서임을 밝혔는데도 방식 선택
+# 질문을 다시 했다. "공증"/"서류"/"증서"/"공증사무소" 같은 단어 하나만으로는
+# 추론하지 않는다 — "공증받은 서류"는 유언 방식 자체가 불명확해 제외했다.
+_NOTARIAL_MESSAGE_MARKERS = (
+    "공정증서 유언",
+    "공정증서로 작성한 유언",
+    "공증받은 유언장",
+    "공증 받은 유언장",
+    "공증받은 유언",
+    "공증 받은 유언",
+)
+
 
 def _infer_will_type_from_message(user_message: str) -> Optional[str]:
     """자연어에서 명백한 will_type만 추론한다 (우선순위 C — 이 함수는
@@ -124,6 +138,8 @@ def _infer_will_type_from_message(user_message: str) -> Optional[str]:
         return _HANDWRITTEN_WILL_TYPE
     if any(marker in user_message for marker in _RECORDING_MESSAGE_MARKERS):
         return _RECORDING_WILL_TYPE
+    if any(marker in user_message for marker in _NOTARIAL_MESSAGE_MARKERS):
+        return _NOTARIAL_WILL_TYPE
     return None
 
 
@@ -1493,12 +1509,15 @@ def _run_pipeline(payload: AgentInput) -> AgentOutput:
     will_type_info = get_will_type(will_type)  # notarial / secret / oral
 
     if will_type == _NOTARIAL_WILL_TYPE:
+        # 자동 handoff 없음(2026-09-06) — handwritten/recording의 #126/#127과
+        # 동일 원칙. 공정증서 안내 완료가 곧 사용자의 유언 관련 질문이 전부
+        # 끝났다는 뜻은 아니다 — "이 유언장은 따로 확인할 건 없나요?" 같은
+        # 후속 질문이 decedent_estate를 벗어나지 않게, 실제 "상속 절차" 의도가
+        # 나왔을 때만 LLM-first 라우터가 heir_navigator를 선택하게 둔다.
         return _guidance_only_output(
             state,
             will_type_info,
             include_requirements_summary=False,
-            next_action=NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR,
-            handoff_reason="공정증서 유언 확인 완료 — 검인 절차 없이 상속 절차 안내로 연결",
         )
 
     # secret / oral: 요건 요약 + "자동 점검 미지원" 안내만 하고 종료.

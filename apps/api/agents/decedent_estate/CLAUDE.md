@@ -137,9 +137,14 @@
       웹 UI가 로그인 후 채팅창에서 라우터가 적합한 에이전트를 선택하는 구조로
       확정되면서, #20에서 넣었던 handoff:heir_navigator 스텁은 받는 쪽이 없어
       막다른 길이 됐다. 대신 rules/will_types.json의 no_will.chat_return_notice
-      로 "처음 화면에서 다시 문의해 주세요"만 안내한다. notarial 분기는 여전히
-      같은 상수(NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR)로 핸드오프한다 — 이건
-      no_will과 별개 경로라 건드리지 않았다.
+      로 "처음 화면에서 다시 문의해 주세요"만 안내한다. **notarial도 2026-09-06에
+      같은 이유로 자동 핸드오프를 제거했다** — 공정증서 안내가 곧 유언 관련
+      질문이 전부 끝났다는 뜻은 아니라서, 안내 직후 "이 유언장은 따로 확인할
+      거 없나요?" 같은 후속 질문에도 다음 턴이 heir_navigator에 선점되던 버그가
+      있었다(handwritten/recording의 #126/#127과 동일 원칙). notarial은 이제
+      handwritten/recording과 마찬가지로 next_action=None으로 끝나고, 실제
+      "상속 절차" 의도가 나왔을 때만 기존 LLM-first 라우팅이 heir_navigator를
+      선택한다.
   - result_formatter.py 는 summarize()/pending_questions()/format_result() 가
     formal_ids·messages(SummaryMessages)를 파라미터로 받도록 일반화되어
     handwritten·recording 두 요건 집합을 하나의 §3 렌더링 로직으로 처리한다
