@@ -142,3 +142,41 @@ def infer_will_type_from_message(user_message: str) -> Optional[str]:
     if len(matched_ids) == 1:
         return next(iter(matched_ids))
     return None
+
+
+def infer_will_type_switch_from_message(user_message: str) -> Optional[str]:
+    """이미 will_type이 저장된 뒤에도, 이번 턴 자연어에 명백한 "다른 방식으로
+    바꾸겠다"는 선택/변경 의도가 있으면 그 새 will_type을 반환한다(2026-09-07).
+
+    실측 재현: handwritten이 저장된 상태에서 "아아 녹음으로 하려고"라고 답해도
+    will_type이 None일 때만 자연어를 보던 기존 로직 때문에 계속 handwritten
+    가이드가 반복됐다. infer_will_type_from_message()(초기 추론)와는 의도적으로
+    분리된 별도 함수다 — "녹음 유언은 자필이랑 뭐가 달라?" 같은 단순 언급/비교
+    질문에서 state가 바뀌면 안 되므로, will_types[].switch_markers(방식별
+    "명백한 이름" 토큰) 바로 뒤에 rules/will_types.json 의
+    type_switch.intent_suffix_pattern(선택/변경을 확정하는 어미: "~로 하려고/
+    할게/할래/바꿀게/바꾸려고/하겠습니다" 등)이 곧장 붙어야만 switch로 인정한다.
+
+    switch_markers가 initial inference용 inference_markers와 다른 별도
+    필드인 이유: recording의 "녹음"은 단독으로는 "녹음 파일이 있어요"처럼
+    오탐 위험이 커 initial inference marker에서 의도적으로 뺐지만(파일/메모와
+    혼동), "녹음으로 하려고"처럼 선택 어미가 바로 붙으면 명백한 의도라 switch
+    판별에만 한정해 허용한다 — 초기 추론 결과는 이 함수가 건드리지 않는다.
+
+    충돌 방어: 두 후보 이상의 switch 패턴이 동시에 걸리면(사실상 거의 없지만)
+    임의로 고르지 않고 None을 반환해 저장된 state.will_type을 그대로 둔다.
+    """
+    suffix_pattern = _load().get("type_switch", {}).get("intent_suffix_pattern")
+    if not suffix_pattern:
+        return None
+    matched_ids: set[str] = set()
+    for wt in _load()["will_types"]:
+        for marker in wt.get("switch_markers", []):
+            pattern = re.escape(marker) + suffix_pattern
+            compiled = _compile_patterns((pattern,))
+            if compiled and compiled[0].search(user_message):
+                matched_ids.add(wt["id"])
+                break
+    if len(matched_ids) == 1:
+        return next(iter(matched_ids))
+    return None

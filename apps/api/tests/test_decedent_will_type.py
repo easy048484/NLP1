@@ -483,6 +483,128 @@ def test_oral_natural_language_mention_infers_oral_without_reasking() -> None:
     assert "민법 제1070조" in output.reply
 
 
+# ---------------------------------------------------------------------------
+# will_type 자연어 변경(type switch, 2026-09-07)
+#
+# 실측 재현: handwritten이 이미 저장된 뒤 "아아 녹음으로 하려고"처럼 명백히
+# 다른 방식을 선택해도, 자연어 추론이 state.will_type이 None일 때만 실행돼
+# 계속 handwritten 가이드가 반복됐다. "단순 언급/비교"(예: "녹음 유언은
+# 자필이랑 뭐가 달라?")와 "명백한 변경 의도"(예: "녹음으로 하려고")를
+# 구분해야 하므로, 방식명 뒤에 선택/변경 어미가 곧장 붙은 경우만 switch로
+# 인정한다(rules/will_types.json 의 type_switch.intent_suffix_pattern +
+# will_types[].switch_markers).
+# ---------------------------------------------------------------------------
+
+
+def _stored(will_type: str, **extra: str) -> dict:
+    """already-stored 상태를 만들기 위한 1턴짜리 namespaced 상태 dict."""
+    output = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="",
+            context={"will_type": will_type, **extra},
+        )
+    )
+    return output.data["decedent_estate"]
+
+
+def _run_with_stored(stored: dict, message: str):
+    return decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message=message,
+            context={"decedent_estate": stored},
+        )
+    )
+
+
+_TYPE_SWITCH_CASES = [
+    ("handwritten", "아아 녹음으로 하려고", "recording"),
+    ("recording", "자필로 바꿀게", "handwritten"),
+    ("handwritten", "공정증서로 하려고", "notarial"),
+    ("notarial", "비밀증서 유언으로 바꿀게", "secret"),
+    ("secret", "구수증서로 하겠습니다", "oral"),
+]
+
+
+@pytest.mark.parametrize("stored_type,message,expected_type", _TYPE_SWITCH_CASES)
+def test_explicit_type_change_switches_stored_will_type(
+    stored_type: str, message: str, expected_type: str
+) -> None:
+    """민법 5방식 table-driven switch regression — 명백한 변경 문장이면
+    저장된 will_type과 무관하게 새 will_type으로 전환돼야 한다."""
+    stored = _stored(stored_type)
+    output = _run_with_stored(stored, message)
+
+    assert output.data["decedent_estate"]["will_type"] == expected_type
+
+
+def test_type_switch_resets_previous_type_progress_state() -> None:
+    """방식이 실제로 바뀌면 이전 방식 전용 진행 상태(요건 판정·확인 답변)가
+    새 방식에 오염되지 않도록 초기화돼야 한다."""
+    stored = _stored(
+        "handwritten",
+        handwriting_answer="yes",
+        seal_answer="seal_or_fingerprint",
+    )
+    # handwritten review가 실제로 진행돼 requirements/pending_questions가
+    # 채워진 상태를 재현한다.
+    progressed = _run_with_stored(stored, _WILL_TEXT_COMPLETE).data["decedent_estate"]
+    assert progressed["requirements"]
+
+    switched = _run_with_stored(progressed, "아아 녹음으로 하려고").data[
+        "decedent_estate"
+    ]
+
+    assert switched["will_type"] == "recording"
+    assert switched["requirements"] == {}
+    assert switched["pending_questions"] == []
+    assert switched["handwriting_answer"] is None
+    assert switched["seal_answer"] is None
+    assert switched["address_envelope_answer"] is None
+    assert switched["rec_witness_present_answer"] is None
+    assert switched["rec_witness_eligible_answer"] is None
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "녹음 유언은 자필이랑 뭐가 달라?",
+        "공정증서 유언도 있나요?",
+        "다른 방식도 궁금해요",
+        "다른 방식으로 할까 고민 중이야",
+    ],
+)
+def test_mention_or_ambiguous_change_does_not_switch_stored_will_type(
+    message: str,
+) -> None:
+    """단순 언급/비교 질문이나 모호한 변경 의도는 저장된 will_type을 바꾸지
+    않는다 — "~로 하려고/할게/바꿀게" 같은 선택·변경 어미가 방식명 바로 뒤에
+    붙어야만 switch로 인정한다."""
+    stored = _stored("handwritten")
+    output = _run_with_stored(stored, message)
+
+    assert output.data["decedent_estate"]["will_type"] == "handwritten"
+
+
+def test_explicit_context_will_type_wins_over_switch_phrase_in_message() -> None:
+    """이번 턴 explicit context.will_type이 있으면, 문장에 다른 방식으로의
+    명백한 변경 표현이 섞여 있어도 명시값이 우선해야 한다(우선순위 A > B)."""
+    stored = _stored("recording")
+    output = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="자필로 바꿀게",
+            context={
+                "will_type": "notarial",
+                "decedent_estate": stored,
+            },
+        )
+    )
+
+    assert output.data["decedent_estate"]["will_type"] == "notarial"
+
+
 def test_notarial_gives_guidance_without_auto_handoff() -> None:
     """notarial 안내 완료 후 자동 handoff가 없어야 한다(2026-09-06) —
     handwritten/recording의 #126/#127과 동일 원칙. 안내 자체(형식 요건

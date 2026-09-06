@@ -217,6 +217,36 @@ def test_exact_three_turn_regression_ends_in_prepare_without_document_intake() -
     assert "requirements" not in final.data
 
 
+def test_exact_three_turn_will_type_switch_keeps_prepare_intent() -> None:
+    """정확한 production 재현(2026-09-07) — will_type이 확정된 뒤에도 이번
+    턴 자연어에 명백한 방식 변경 의도가 있으면 전환돼야 한다.
+
+    Turn 1 "유언장을 쓰려고 하는데 어떤 요건들이 있지?" — will_type 미확정,
+    prepare 의도는 저장됨.
+    Turn 2 "직접 손으로 쓴 유언장" — will_type=handwritten, 자필증서
+    prepare guide.
+    Turn 3 "아아 녹음으로 하려고" — 명백한 방식 변경 문장이므로
+    will_type=recording으로 전환되고, intent=prepare는 유지되어 곧장 녹음
+    유언 prepare guide가 나와야 한다(자필증서 가이드 반복 금지)."""
+    turn1, turn2, turn3 = _run_turns(
+        [
+            "유언장을 쓰려고 하는데 어떤 요건들이 있지?",
+            "직접 손으로 쓴 유언장",
+            "아아 녹음으로 하려고",
+        ]
+    )
+
+    assert turn1.data["decedent_estate"]["intent"] == "prepare"
+
+    assert turn2.data["decedent_estate"]["will_type"] == "handwritten"
+    assert "**자필증서 유언 작성 가이드입니다.**" in turn2.reply
+
+    assert turn3.data["decedent_estate"]["will_type"] == "recording"
+    assert turn3.data["decedent_estate"]["intent"] == "prepare"
+    assert "**녹음 유언 작성 가이드입니다.**" in turn3.reply
+    assert "**자필증서 유언 작성 가이드입니다.**" not in turn3.reply
+
+
 def test_stored_review_yields_to_explicit_natural_language_prepare() -> None:
     """이미 document intake가 실행돼 state.intent=review로 저장된 뒤에도,
     이번 턴 자연어가 명백히 prepare를 가리키면 review를 유지하지 않는다
