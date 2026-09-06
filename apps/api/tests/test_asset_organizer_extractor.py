@@ -1114,3 +1114,216 @@ def test_same_amount_deposit_and_loan_both_preserved_without_dedup():
         )
     ]
     assert missing == []
+
+
+# ============== P0(2차): 사후 모드 disclosure 경로에서도 부채-기타 중복 (실측 재현)
+
+
+class _FakeDisclosureClient:
+    """실제 anthropic.Anthropic()을 대체하는 fake — 받은 프롬프트 텍스트
+    안에 "카드대출"/"대출"이 있으면 악성/오분류 LLM처럼 그 항목을 "기타"
+    자산으로 반환한다. 필터가 제대로 동작하면(수정 후) 이 조건이 절대
+    참이 되지 않아야 한다 — 즉 이 fake가 "기타" 응답을 낸 적이 없어야
+    수정이 제대로 된 것이다(호출 텍스트 자체를 기록해 사후 검증)."""
+
+    def __init__(self) -> None:
+        self.received_texts: list[str] = []
+
+    def __call__(self, **_kwargs):
+        return self
+
+    @property
+    def messages(self):
+        return self
+
+    def create(self, **kwargs):
+        text = kwargs["messages"][0]["content"]
+        self.received_texts.append(text)
+        if "카드대출" in text or "대출" in text:
+            payload = {
+                "disclosures": [
+                    {"type": "기타", "confidence": "confirmed", "value": 20_000_000},
+                ]
+            }
+        else:
+            payload = {
+                "disclosures": [
+                    {"type": "예금", "confidence": "confirmed", "value": 80_000_000},
+                    {"type": "부동산", "confidence": "confirmed", "value": 500_000_000},
+                ]
+            }
+        return _FakeResponse(json.dumps(payload))
+
+
+_P0_DISCLOSURE_REPRO_TEXT = (
+    "안심상속 조회 결과 예금 8천만 원, 아파트 5억 원, "
+    "카드대출 2천만 원이 확인됐어요. 자산과 부채를 정리해주세요."
+)
+
+
+def test_p0_disclosure_liability_segment_excluded_before_llm_call(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """근본 원인 증명: extract_disclosures()는 원문 전체를 세그먼트
+    필터링 없이 LLM에 그대로 보내고 있었다 — 수정 후에는 "카드대출..."
+    세그먼트가 LLM 호출에서 빠져야 한다. fake LLM은 "카드대출"/"대출"이
+    포함된 텍스트를 받으면 "기타" 20,000,000을 반환하도록 구성했으므로,
+    실제로 그 텍스트가 전달되지 않았다면 fake도 "기타"를 반환하지 않는다."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-test-key")
+    fake_client = _FakeDisclosureClient()
+    monkeypatch.setattr(extractor.anthropic, "Anthropic", fake_client)
+
+    items = extractor.extract_disclosures(_P0_DISCLOSURE_REPRO_TEXT)
+
+    assert len(fake_client.received_texts) == 1
+    assert "카드대출" not in fake_client.received_texts[0]
+    assert "대출" not in fake_client.received_texts[0]
+    assert not any(item.asset_type == "기타" for item in items)
+    assert any(item.asset_type == "예금" and item.value == 80_000_000 for item in items)
+    assert any(
+        item.asset_type == "부동산" and item.value == 500_000_000 for item in items
+    )
+
+
+def test_p0_disclosure_branch_end_to_end_no_duplicate(monkeypatch: pytest.MonkeyPatch):
+    """agent.py가 disclosures + extract_liabilities()를 병합하는 실제
+    경로까지 통과해 자산에 "기타" 20,000,000이 중복 등록되지 않는지,
+    그리고 대출 부채는 여전히 정상적으로 잡히는지 확인한다."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-test-key")
+    monkeypatch.setattr(extractor.anthropic, "Anthropic", _FakeDisclosureClient())
+
+    disclosures = extractor.extract_disclosures(_P0_DISCLOSURE_REPRO_TEXT)
+    liabilities, liability_missing = extractor.extract_liabilities(
+        _P0_DISCLOSURE_REPRO_TEXT
+    )
+
+    assert not any(item.asset_type == "기타" for item in disclosures)
+    assert liabilities == [
+        extractor.Liability(
+            type="대출",
+            remaining_balance=20_000_000,
+            monthly_payment=None,
+            end_age=None,
+            note=None,
+            confidence="confirmed",
+        )
+    ]
+    assert liability_missing == []
+
+
+def test_disclosure_liability_filter_preserves_legitimate_gita_disclosure(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """부채와 무관한 "기타" disclosure는 그대로 보존돼야 한다 — 이번
+    수정이 disclosure의 기존 "기타" 보존 정책 자체를 막으면 안 된다."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-test-key")
+
+    def _fake(**_kwargs):
+        class _Client:
+            @property
+            def messages(self):
+                return self
+
+            def create(self, **kwargs):
+                text = kwargs["messages"][0]["content"]
+                assert "대출" not in text  # 필터가 실제로 걸렀는지 재확인
+                return _FakeResponse(
+                    json.dumps(
+                        {
+                            "disclosures": [
+                                {
+                                    "type": "기타",
+                                    "confidence": "confirmed",
+                                    "value": 30_000_000,
+                                },
+                            ]
+                        }
+                    )
+                )
+
+        return _Client()
+
+    monkeypatch.setattr(extractor.anthropic, "Anthropic", _fake)
+
+    items = extractor.extract_disclosures(
+        "안심상속 조회 결과 골동품 3천만원, 대출 2천만원이 확인됐어요"
+    )
+
+    assert any(item.asset_type == "기타" and item.value == 30_000_000 for item in items)
+
+
+def test_disclosure_all_segments_liability_only_returns_empty_list_not_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """원문 전체가 부채 언급뿐이면(디스클로저로 다룰 자산이 없음) LLM을
+    부르지 않고 빈 리스트를 돌려준다 — None(LLM 사용 불가)과는 의미가
+    다르지만 호출부(agent.py)에서는 둘 다 폴백으로 처리되므로 동작은
+    동일하다."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-test-key")
+
+    def _fail_if_called(**_kwargs):
+        raise AssertionError("부채뿐인 문장에서는 LLM을 호출하면 안 됨")
+
+    monkeypatch.setattr(extractor.anthropic, "Anthropic", _fail_if_called)
+
+    items = extractor.extract_disclosures("카드대출 2천만원이 확인됐어요")
+
+    assert items == []
+
+
+def test_disclosure_legitimate_gita_and_same_amount_liability_both_preserved(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """금액이 우연히 같아도(둘 다 2천만원) 부채와 무관한 정상 "기타"
+    disclosure와 실제 부채는 둘 다 독립적으로 보존돼야 한다 — 금액
+    기반 dedupe는 하지 않는다는 원칙이 disclosure 경로에도 동일하게
+    적용된다."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-test-key")
+
+    def _fake(**_kwargs):
+        class _Client:
+            @property
+            def messages(self):
+                return self
+
+            def create(self, **kwargs):
+                text = kwargs["messages"][0]["content"]
+                assert "대출" not in text
+                return _FakeResponse(
+                    json.dumps(
+                        {
+                            "disclosures": [
+                                {
+                                    "type": "기타",
+                                    "confidence": "confirmed",
+                                    "value": 20_000_000,
+                                },
+                            ]
+                        }
+                    )
+                )
+
+        return _Client()
+
+    monkeypatch.setattr(extractor.anthropic, "Anthropic", _fake)
+
+    text = "안심상속 조회 결과 회원권 2천만원, 대출 2천만원이 확인됐어요"
+    disclosures = extractor.extract_disclosures(text)
+    liabilities, liability_missing = extractor.extract_liabilities(text)
+
+    assert disclosures == [
+        extractor.DisclosureItem(
+            asset_type="기타", confidence="confirmed", value=20_000_000
+        )
+    ]
+    assert liabilities == [
+        extractor.Liability(
+            type="대출",
+            remaining_balance=20_000_000,
+            monthly_payment=None,
+            end_age=None,
+            note=None,
+            confidence="confirmed",
+        )
+    ]
+    assert liability_missing == []
