@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import time
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from threading import Lock
@@ -291,6 +292,21 @@ class SessionStore:
         """만료된 세션을 실제로 지우고 지운 개수를 돌려줍니다."""
         return 0
 
+    def turn_lock(self, session_id: str) -> AbstractContextManager:
+        """같은 session_id에 대한 요청 전체(load→...→save)를 직렬화하는 락.
+
+        InMemorySessionStore.load()는 저장된 SessionState 객체를 복사 없이
+        그대로 돌려준다 — 같은 session_id로 실제 동시 요청이 들어오면 두
+        요청이 하나의 mutable 객체를 공유한 채 각자 파이프라인을 진행하게
+        되어, 나중에 끝난 쪽의 응답이 먼저 끝난 쪽의 변경 이전 상태를 반환할
+        수 있다(2026-09-07, 23회 동시성 재현 시험으로 확인 — 최종 저장값은
+        매번 정상이었지만 응답 자체가 12/23회 stale했다). 기본 구현은
+        no-op(nullcontext)이고, 이 결함이 실증된 InMemorySessionStore만
+        override 한다 — router.route()가 요청마다 이 컨텍스트로
+        _compiled().invoke()를 감싸 파이프라인 전체를 세션 단위로
+        직렬화한다."""
+        return nullcontext()
+
     def latest_for_user(self, user_id: str) -> Optional[tuple[str, SessionState]]:
         """이 사용자의 가장 최근 세션 (session_id, 상태). 없으면 None.
 
@@ -307,6 +323,13 @@ class InMemorySessionStore(SessionStore):
     def __init__(self) -> None:
         self._sessions: dict[str, SessionState] = {}
         self._lock = Lock()
+        #: session_id별 turn_lock. self._lock과는 별개다 — self._lock은
+        #: self._sessions 딕셔너리 자체의 원자성만 지키고(개별 load/save
+        #: 호출 동안만 잡힌다), 이 딕셔너리는 그 사이 시간(파이프라인 실행
+        #: 전체)을 세션 단위로 직렬화하기 위한 것이다. 세션이 만료되어
+        #: purge_expired()가 지워질 때 같이 정리해 무한 증가를 막는다.
+        self._turn_locks: dict[str, Lock] = {}
+        self._turn_locks_guard = Lock()
 
     def load(self, session_id: str, user_id: Optional[str] = None) -> SessionState:
         with self._lock:
@@ -337,7 +360,19 @@ class InMemorySessionStore(SessionStore):
             ]
             for sid in expired:
                 del self._sessions[sid]
-            return len(expired)
+        if expired:
+            with self._turn_locks_guard:
+                for sid in expired:
+                    self._turn_locks.pop(sid, None)
+        return len(expired)
+
+    def turn_lock(self, session_id: str) -> AbstractContextManager:
+        with self._turn_locks_guard:
+            lock = self._turn_locks.get(session_id)
+            if lock is None:
+                lock = Lock()
+                self._turn_locks[session_id] = lock
+        return lock
 
     def latest_for_user(self, user_id: str) -> Optional[tuple[str, SessionState]]:
         with self._lock:

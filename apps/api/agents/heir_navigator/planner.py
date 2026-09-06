@@ -23,6 +23,7 @@ from .procedure import (
     StepId,
     blocked_by,
     compute_deadlines,
+    prerequisite_chain,
     guide_for,
     unlocked,
 )
@@ -48,6 +49,30 @@ class NextAction(BaseModel):
     tips: list[str] = Field(default_factory=list)
     deadline: Optional[DeadlineItem] = None
     #: 이 단계의 서류·기관 정보가 아직 팀 검증 전이면 True
+    needs_verification: bool = False
+
+
+class AskedStep(BaseModel):
+    """사용자가 이번 턴에 콕 집어 물은 단계.
+
+    "상속등기 하려면 서류가 뭐가 필요해요?"처럼 특정 단계를 물으면, 그 단계가
+    아직 못 하는(blocked) 단계여도 서류·기관 정보를 먼저 보여주고 "그 전에 이게
+    먼저"를 붙입니다. 이게 없던 동안은 현재 상태에서 할 수 있는 단계만 사실
+    블록에 실려서, 무엇을 묻든 "먼저 사망신고"로 시작하는 같은 답이 나갔습니다.
+    """
+
+    step: StepId
+    title: str
+    summary: str
+    #: done | ready | blocked
+    status: str
+    #: 아직 안 끝낸 선행 단계 제목들 — 가까운 것부터 (선행의 선행까지)
+    prerequisites: list[str] = Field(default_factory=list)
+    documents: list[str] = Field(default_factory=list)
+    agencies: list[str] = Field(default_factory=list)
+    links: list[dict[str, str]] = Field(default_factory=list)
+    tips: list[str] = Field(default_factory=list)
+    deadline: Optional[DeadlineItem] = None
     needs_verification: bool = False
 
 
@@ -79,6 +104,8 @@ class ProcedurePlan(BaseModel):
     known_date_estimated: bool = False
     timeline: list[TimelineEntry] = Field(default_factory=list)
     next_actions: list[NextAction] = Field(default_factory=list)
+    #: 사용자가 이번 턴에 특정 단계를 물었으면 그 단계 (compose 가 이걸 먼저 답함)
+    asked_step: Optional[AskedStep] = None
     deadlines: list[DeadlineItem] = Field(default_factory=list)
     urgent: list[DeadlineItem] = Field(default_factory=list)
     overdue: list[DeadlineItem] = Field(default_factory=list)
@@ -207,6 +234,37 @@ def _next_actions(state: HeirState, deadlines: list[DeadlineItem]) -> list[NextA
     return actions
 
 
+def _asked_step(
+    state: HeirState, step_id: Optional[StepId], deadlines: list[DeadlineItem]
+) -> Optional[AskedStep]:
+    if step_id is None:
+        return None
+    step = STEP_BY_ID[step_id]
+    guide = guide_for(step.id)
+    if step.id in state.completed:
+        status = "done"
+    elif blocked_by(step, state.completed):
+        status = "blocked"
+    else:
+        status = "ready"
+    return AskedStep(
+        step=step.id,
+        title=step.title,
+        summary=step.summary,
+        status=status,
+        prerequisites=[s.title for s in prerequisite_chain(step, state.completed)],
+        documents=list(guide.documents) if guide else [],
+        agencies=list(guide.agencies) if guide else [],
+        links=[
+            {"label": label, "url": url}
+            for label, url in (guide.links if guide else ())
+        ],
+        tips=list(guide.tips) if guide else [],
+        deadline=next((d for d in deadlines if d.step == step.id), None),
+        needs_verification=not guide.verified if guide else True,
+    )
+
+
 def _handoff(state: HeirState) -> tuple[Optional[str], Optional[str]]:
     """다른 에이전트로 넘길 지점 판정 (연동 지점 5번)."""
     if StepId.ASSET_SEARCH in state.completed:
@@ -232,6 +290,7 @@ def build_plan(
     family_graph: dict[str, Any] | None = None,
     today: date | None = None,
     estate: FinancialProfile | None = None,
+    asked_step: StepId | None = None,
 ) -> ProcedurePlan:
     today = today or date.today()
     deadlines = compute_deadlines(
@@ -260,6 +319,7 @@ def build_plan(
         known_date_estimated=state.known_date is None and state.death_date is not None,
         timeline=_timeline(state),
         next_actions=_next_actions(state, deadlines),
+        asked_step=_asked_step(state, asked_step, deadlines),
         deadlines=deadlines,
         urgent=[item for item in pending if 0 <= item.days_left <= URGENT_DAYS],
         overdue=[item for item in pending if item.days_left < 0],

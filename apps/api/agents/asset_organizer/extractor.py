@@ -965,10 +965,37 @@ def extract_disclosures(text: str) -> Optional[list[DisclosureItem]]:
     인프라 — _client()/_parse_json_response()/_strip_code_fence() —
     는 그대로 재사용한다).
 
+    ⚠️ P0(2차) 실측 재현된 버그: extract_financial_slots()의 asset LLM
+    폴백에는 이미 부채로 식별되는 세그먼트를 후보에서 빼는 방어가 있는데,
+    이 함수는 원문 전체를 그대로(세그먼트 필터링 없이) LLM에 보내고
+    있었다 — "안심상속 조회 결과 예금 8천만 원, 아파트 5억 원, 카드대출
+    2천만 원이 확인됐어요..."에서 LLM이 "카드대출"을 DisclosureItem
+    화이트리스트(_VALID_ASSET_TYPES, 부채 유형이 아예 없음)에 맞는 유형이
+    없다는 이유로 "기타"로 반환할 수 있었고, 같은 원문을 독립적으로 보는
+    extract_liabilities()가 이미 "대출"로 정확히 잡은 항목이 자산에도
+    중복 등록됐다(agent.py._merge_disclosures는 반환된 항목을 그대로
+    다 반영하므로). extract_financial_slots()와 동일한 원칙 — 부채로
+    식별되는 세그먼트는 이 LLM 호출 후보에서도 제외한다. 그 세그먼트는
+    extract_liabilities()가 같은 원문을 독립적으로 재처리하므로 정보
+    유실이 아니다.
+
     키가 없거나 호출이 실패하면 None을 돌려준다 — 호출부(agent.py)가
     이 신호를 보고 기존 extract_financial_slots() 일반 추출 경로로
     폴백해서, 사후 모드에서도 이 전용 파서가 못 잡는 문장을 조용히
     버리지 않는다."""
+    segments = [s.strip() for s in _SEGMENT_SPLIT_RE.split(text) if s.strip()]
+    disclosure_segments = [
+        segment for segment in segments if _match_liability_type(segment) is None
+    ]
+    if not disclosure_segments:
+        # 전부 부채로 식별되는 세그먼트였다 — 이 함수가 다룰 대상(자산
+        # 조회 결과)이 없다. 성공적으로 아무것도 못 찾은 것과 동일하게
+        # 빈 리스트를 돌려준다(None은 "LLM 자체를 못 씀"의 의미라 다름) —
+        # 호출부는 disclosures가 빈 리스트든 뭐든 liability_missing과
+        # 별개로 extract_liabilities()를 그대로 호출해 부채를 잡는다.
+        return []
+    filtered_text = " ".join(disclosure_segments)
+
     client = _client()
     if client is None:
         return None
@@ -978,7 +1005,7 @@ def extract_disclosures(text: str) -> Optional[list[DisclosureItem]]:
             model=_MODEL,
             max_tokens=_DISCLOSURE_MAX_TOKENS,
             system=_build_disclosure_system_prompt(),
-            messages=[{"role": "user", "content": text}],
+            messages=[{"role": "user", "content": filtered_text}],
             timeout=_TIMEOUT_SECONDS,
         )
         payload = _parse_json_response(response.content[0].text)

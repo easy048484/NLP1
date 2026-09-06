@@ -78,6 +78,7 @@ from .state import STATE_KEY, DecedentState, dump_state, load_state
 from .will_types import (
     get_will_type,
     infer_will_type_from_message,
+    infer_will_type_switch_from_message,
     intent_question,
     known_will_type_ids,
     no_will_guidance,
@@ -111,6 +112,54 @@ def _infer_will_type_from_message(user_message: str) -> Optional[str]:
     _run_pipeline에서 state.will_type이 이미 None일 때만, 즉 이번 턴 explicit
     context.will_type(A)도 저장된 값(B)도 없을 때만 호출된다)."""
     return infer_will_type_from_message(user_message)
+
+
+def _explicit_will_type_this_turn(context: Optional[dict[str, Any]]) -> Optional[str]:
+    """이번 턴에 클라이언트가 명시적으로 보낸 will_type(평면 최상위 키)만 본다.
+
+    state.py의 평면 폴백 정의(_flat_overrides)와 정확히 같은 판정 기준(None/빈
+    문자열은 미지정)이다. _explicit_intent_this_turn과 동일한 원칙 — 네임스페이스
+    (context["decedent_estate"]["will_type"])는 "지난 턴에 저장된 값"이라 여기서는
+    보지 않는다. _run_pipeline이 이번 턴에 will_type 변경(자연어 switch 포함)을
+    시도해도 되는지 판단할 때만 쓴다: 이번 턴 explicit가 있으면 이미 그 값이
+    state.will_type에 반영돼 있으므로(load_state의 평면 우선 원칙) switch 판별을
+    건너뛴다 — explicit가 자연어 switch보다 항상 우선(우선순위 A)이기 때문이다.
+    """
+    context = context or {}
+    value = context.get("will_type")
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+# type switch(2026-09-07) 시 이전 방식 전용 진행 상태가 새 방식 파이프라인에
+# 잘못 재사용되지 않도록 최소 reset한다. 방식이 실제로 바뀌었을 때만(같은
+# 값으로 "바뀐" 경우는 no-op) 적용되며, intent(review/prepare)는 유지한다 —
+# "유언 안내 완료"와 "이용 목적"은 서로 다른 축이라 방식이 바뀌어도 사용자가
+# 이미 밝힌 준비/점검 의도까지 초기화할 이유가 없다. 유형별 if/else 없이
+# 모든 방식 전용 답변 필드를 무조건 초기화한다 — 새 방식이 안 쓰는 필드에
+# None/빈 값이 남아도 해가 없고(각 파이프라인은 자기 필드만 읽는다), 반대로
+# "이전 방식이 A였으니 A 필드만 지운다"는 유형별 분기를 새로 만들 필요가 없다.
+_TYPE_SWITCH_RESET_FIELDS: dict[str, Any] = {
+    "requirements": {},
+    "pending_questions": [],
+    "handwriting_answer": None,
+    "seal_answer": None,
+    "address_envelope_answer": None,
+    "photo_draft": {},
+    "photo_confirm_answers": {},
+    "rec_witness_present_answer": None,
+    "rec_witness_eligible_answer": None,
+}
+
+
+def _apply_will_type_switch(state: DecedentState, new_will_type: str) -> DecedentState:
+    """will_type이 실제로 바뀔 때 상태를 새로 만든다 — _TYPE_SWITCH_RESET_FIELDS
+    로 이전 방식의 진행 상태를 지우고 will_type만 새 값으로 세팅한다. intent는
+    updates에 없으므로 model_copy가 기존 값을 그대로 보존한다."""
+    return state.model_copy(
+        update={**_TYPE_SWITCH_RESET_FIELDS, "will_type": new_will_type}
+    )
 
 
 # intent가 명시되지 않았을 때 review로 기본 동작하던 것과 별개로, 자연어로
@@ -1431,6 +1480,18 @@ def _run_pipeline(payload: AgentInput) -> AgentOutput:
         # 기존 명시값을 덮어쓸 일은 없다(명시값 우선 원칙 유지).
         state.will_type = inferred
         will_type = inferred
+    elif _explicit_will_type_this_turn(payload.context) is None:
+        # will_type이 이미 저장돼 있어도(우선순위 B), 이번 턴 explicit
+        # override가 없다면(우선순위 A 없음) 자연어로 명백한 방식 변경 의도가
+        # 있는지 확인한다(2026-09-07, 되물음이 아니라 "고쳐 말했는데도 이전
+        # 방식이 유지되는" 반대 방향 버그 수정). "녹음 유언은 자필이랑 뭐가
+        # 달라?" 같은 단순 언급/비교는 switch 대상이 아니다 —
+        # infer_will_type_switch_from_message가 "~로 하려고/할게/바꿀게" 같은
+        # 선택·변경 어미가 방식명 바로 뒤에 붙은 경우만 인정한다.
+        switched = infer_will_type_switch_from_message(payload.user_message)
+        if switched is not None and switched != will_type:
+            state = _apply_will_type_switch(state, switched)
+            will_type = switched
 
     if will_type not in _valid_will_type_values():
         return _will_type_question_output(

@@ -24,6 +24,7 @@ from llm.claude import LLMUnavailable, complete
 from . import guardrails, prompts, slots
 from .ics import build_calendar
 from .planner import ProcedurePlan, build_plan
+from .procedure import StepId, find_asked_step
 from .state import HeirState
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,9 @@ class GraphState(TypedDict, total=False):
     guard_hit: Optional[guardrails.GuardrailHit]
     plan: Optional[ProcedurePlan]
     asked_slot: Optional[str]
+    #: 사용자가 이번 턴에 콕 집어 물은 절차 단계 (별칭 매칭, LLM 없음). 이게
+    #: 있으면 사망일을 몰라도 그 단계 정보부터 답하고 사망일은 뒤에 묻습니다.
+    asked_step: Optional[StepId]
 
     reply: str
     next_action: Optional[str]
@@ -104,7 +108,8 @@ def node_extract(state: GraphState) -> GraphState:
         history=state.get("history"),
         confirmed=heir.confirmed_values(),
     )
-    return {"heir": heir.merge(update)}
+    asked = find_asked_step(state.get("user_message", ""))
+    return {"heir": heir.merge(update), "asked_step": asked.id if asked else None}
 
 
 def node_resolve(state: GraphState) -> GraphState:
@@ -113,6 +118,7 @@ def node_resolve(state: GraphState) -> GraphState:
         family_graph=state.get("family_graph"),
         today=state["today"],
         estate=state.get("estate"),
+        asked_step=state.get("asked_step"),
     )
     return {"plan": plan}
 
@@ -146,6 +152,13 @@ def node_compose(state: GraphState) -> GraphState:
             update={"asked": set(heir.asked) | {plan.follow_up}}
         )
         updates["asked_slot"] = plan.follow_up
+    # 특정 단계를 물어서 사망일 없이도 compose 로 왔으면, 답 끝에 사망일을 묻는다
+    # (facts_block / deterministic_reply 가 그 문구를 붙인다). 물어봤음도 표시.
+    if plan.asked_step is not None and plan.blocking_slot:
+        updates["heir"] = (updates.get("heir") or heir).model_copy(
+            update={"asked": set(heir.asked) | {plan.blocking_slot}}
+        )
+        updates["asked_slot"] = plan.blocking_slot
 
     if not state.get("use_llm", True):
         return {**updates, "reply": fallback}
@@ -180,6 +193,15 @@ def node_compose(state: GraphState) -> GraphState:
             "reply": guardrails.fallback_reply(breach),
             "data": {"boundary": breach.value},
         }
+
+    # 특정 단계 질문에 답하느라 사망일 되묻기를 건너뛴 턴: 모델이 끝에 물으라는
+    # 지시를 빠뜨려도 여기서 확정적으로 붙인다(다음 턴 기한 계산에 필요).
+    if (
+        plan.asked_step is not None
+        and plan.blocking_slot in prompts.QUESTIONS
+        and "돌아가신 날짜" not in reply
+    ):
+        reply = f"{reply}\n\n{prompts.QUESTIONS[plan.blocking_slot]}"
 
     if plan.disclaimer not in reply:
         reply = f"{reply}\n\n> {plan.disclaimer}"
@@ -233,7 +255,14 @@ def _after_guard(state: GraphState) -> str:
 
 def _after_resolve(state: GraphState) -> str:
     plan = state.get("plan")
-    if plan is not None and prompts.blocking_question(plan) is not None:
+    if plan is None:
+        return "compose"
+    # 특정 단계를 물었으면 사망일을 몰라도 그 단계 정보부터 답한다 — "등기 서류
+    # 뭐 필요해요?"에 "돌아가신 날짜가 언제인가요?"만 돌려주면 동문서답이다.
+    # 사망일은 답변 끝에 붙여 묻는다(node_compose).
+    if plan.asked_step is not None:
+        return "compose"
+    if prompts.blocking_question(plan) is not None:
         return "ask"
     return "compose"
 

@@ -45,6 +45,11 @@
     ]
   },
 
+  "type_switch": {
+    "note": "2026-09-07 추가. will_type이 이미 저장된 뒤에도, 이번 턴 자연어에 '다른 방식으로 바꾸겠다'는 명백한 선택/변경 의도가 있으면 저장된 값을 갱신한다(예: handwritten 저장 상태에서 '아아 녹음으로 하려고'). 단순 언급/비교('녹음 유언은 자필이랑 뭐가 달라?')는 switch 대상이 아니다 — will_types[].switch_markers(방식별 짧은 이름 토큰) 바로 뒤에 intent_suffix_pattern(선택/변경을 확정하는 어미)이 붙어야만 switch로 인정한다. switch_markers는 initial inference용 inference_markers와 별개 필드다 — recording의 '녹음'은 단독으로는 오탐 위험이 커(파일/메모 등과 혼동) initial inference marker에서 의도적으로 뺐지만, '녹음으로 하려고'처럼 선택 어미가 바로 붙으면 명백한 의도라 switch 전용으로만 허용한다.",
+    "intent_suffix_pattern": "[^.?!\\n]{0,4}(?:으로|로)\\s*(?:하려고|할게|할래|바꿀게|바꾸려고|하겠습니다|바꾸겠습니다|하기로\\s*했|바꾸기로\\s*했|정했어요|정했습니다)"
+  },
+
   "intent_question": {
     "confirm_field": "intent",
     "question": "지금 필요하신 게 어떤 건가요?",
@@ -64,7 +69,8 @@
       "requirements_summary": "유언자가 그 전문과 연월일, 주소, 성명을 자서하고 날인하여야 한다",
       "support": "full",
       "guidance": null,
-      "inference_markers": ["자필", "직접 손으로 쓴", "손으로 직접 쓴"]
+      "inference_markers": ["자필", "직접 손으로 쓴", "손으로 직접 쓴"],
+      "switch_markers": ["자필"]
     },
     {
       "id": "recording",
@@ -81,7 +87,8 @@
         "녹음으로 남긴",
         "녹음해 둔",
         "녹음해둔"
-      ]
+      ],
+      "switch_markers": ["녹음"]
     },
     {
       "id": "notarial",
@@ -101,7 +108,8 @@
         "공증 받은 유언장",
         "공증받은 유언",
         "공증 받은 유언"
-      ]
+      ],
+      "switch_markers": ["공정증서"]
     },
     {
       "id": "secret",
@@ -111,7 +119,8 @@
       "requirements_summary": "유언자가 필자의 성명을 기입한 증서를 엄봉날인하고 이를 2인 이상의 증인의 면전에 제출하여 자기의 유언서임을 표시한 후 그 봉서 표면에 제출 연월일을 기재하고 유언자와 증인이 각자 서명 또는 기명날인하여야 한다",
       "support": "none",
       "guidance": "이 방식은 증인 2인 이상이 필요합니다. 현재 자동 점검을 지원하지 않으니 법률 전문가 확인을 권합니다.",
-      "inference_markers": ["비밀증서 유언", "비밀증서"]
+      "inference_markers": ["비밀증서 유언", "비밀증서"],
+      "switch_markers": ["비밀증서"]
     },
     {
       "id": "oral",
@@ -121,7 +130,8 @@
       "requirements_summary": "질병 기타 급박한 사유로 인하여 다른 4가지 방식에 의할 수 없는 경우에, 유언자가 2인 이상의 증인의 참여로 그 1인에게 유언의 취지를 구수하고, 그 구수를 받은 자가 이를 필기낭독하여 유언자와 증인이 그 정확함을 승인한 후 각자 서명 또는 기명날인하여야 한다",
       "support": "none",
       "guidance": "이 방식은 증인 2인 이상이 필요합니다. 현재 자동 점검을 지원하지 않으니 법률 전문가 확인을 권합니다. 유언자가 직접 말로 유언 내용을 전달해야 하며, 미리 작성된 서면을 확인하며 고개를 끄덕이거나 간단한 답변만 한 경우는 '유언취지의 구수'로 인정되지 않은 사례가 있습니다 (대법원 2006. 3. 9. 선고 2005다57899).",
-      "inference_markers": ["구수증서 유언", "구수증서"]
+      "inference_markers": ["구수증서 유언", "구수증서"],
+      "switch_markers": ["구수증서"]
     }
   ]
 }
