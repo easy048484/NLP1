@@ -26,3 +26,7 @@ build/
 
 # Logs
 *.log
+
+# 로컬 프론트 미리보기 harness (백엔드 없이 fixture로 채팅 카드 확인)
+apps/web/_mock/
+
