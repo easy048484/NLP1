@@ -18,7 +18,6 @@ import pytest
 from agents import decedent_estate
 from agents.decedent_estate.agent import (
     NEXT_ACTION_AWAIT_USER,
-    NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR,
     _DOCUMENT_INTAKE_NOTICE,
     _looks_like_draft,
 )
@@ -166,7 +165,7 @@ def test_notarial_ignores_intent_entirely() -> None:
         "공증인이 작성한 유언은 형식 요건 검증이 필요하지 않습니다. "
         "가정법원 검인 절차도 필요하지 않습니다."
     )
-    assert output.next_action == NEXT_ACTION_HANDOFF_HEIR_NAVIGATOR
+    assert output.next_action is None  # 자동 handoff 없음(2026-09-06)
     assert "guide" not in output.data
 
 
