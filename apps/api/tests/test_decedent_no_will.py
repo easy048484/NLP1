@@ -77,6 +77,96 @@ def test_intent_does_not_affect_no_will_path() -> None:
 
 
 # ---------------------------------------------------------------------------
+# [1-1] 유언장 존재 자체가 불확실한 자연어 → none 자동 추론 (2026-09-06)
+#
+# 실측 재현: "유언장이 있는지 확실하지 않아요"처럼 유언장 존재 자체가
+# 명백히 불확실한데도 방식(핸드/녹음/공증...)부터 물었다. "어떤 방식인지
+# 모르겠다"(유언장은 있음 — unknown이 답할 질문)와는 다른 축이라 섞이면
+# 안 된다. rules/will_types.json 의 no_will.inference_markers 를 단일
+# 출처로 삼아 will_types.infer_will_type_from_message() 가 5방식과 함께
+# generic하게 처리한다.
+# ---------------------------------------------------------------------------
+
+
+def test_uncertain_existence_message_is_inferred_as_none_without_reasking() -> None:
+    """테스트 A — 정확한 production 재현."""
+    output = decedent_estate.run(
+        AgentInput(session_id="s1", user_message="유언장이 있는지 확실하지 않아요")
+    )
+
+    assert "어떤 형태의 유언인가요?" not in output.reply
+    assert output.data["will_type"] == "none"
+    assert "requirements" not in output.data
+
+
+def test_could_not_find_will_message_is_inferred_as_none() -> None:
+    """테스트 B."""
+    output = decedent_estate.run(
+        AgentInput(session_id="s1", user_message="유언장을 찾지 못했습니다")
+    )
+
+    assert "어떤 형태의 유언인가요?" not in output.reply
+    assert output.data["will_type"] == "none"
+
+
+def test_seems_like_no_will_message_is_inferred_as_none() -> None:
+    """테스트 C."""
+    output = decedent_estate.run(
+        AgentInput(session_id="s1", user_message="유언장이 없는 것 같아요")
+    )
+
+    assert "어떤 형태의 유언인가요?" not in output.reply
+    assert output.data["will_type"] == "none"
+
+
+def test_will_exists_but_type_unknown_message_is_not_inferred_as_none() -> None:
+    """테스트 D — "유언장은 있는데 어떤 방식인지는 모르겠다"는 존재는 확실하고
+    방식만 불확실한 문장이라, none으로 분류되면 안 된다. none marker와
+    문자 단위로 다르므로(예: "유언장이 있는지" vs "유언장은 있는데") 매칭되지
+    않고, 기존처럼 방식 선택 질문으로 돌아간다."""
+    output = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="유언장은 있는데 어떤 방식인지는 모르겠어요",
+        )
+    )
+
+    assert output.data.get("will_type") != "none"
+    assert "어떤 형태의 유언인가요?" in output.reply
+
+
+def test_ambiguous_existence_or_type_message_does_not_infer_none() -> None:
+    """테스트 E — "유언장에 대해 잘 모르겠어요"는 존재 여부인지 방식인지 알 수
+    없는 모호한 표현이라, 임의로 none을 추론하지 않고 기존 방식 선택
+    질문으로 돌아가야 한다."""
+    output = decedent_estate.run(
+        AgentInput(session_id="s1", user_message="유언장에 대해 잘 모르겠어요")
+    )
+
+    assert output.data.get("will_type") != "none"
+    assert "어떤 형태의 유언인가요?" in output.reply
+
+
+def test_explicit_handwritten_wins_over_no_will_phrase_in_message() -> None:
+    """테스트 G — context에 will_type=handwritten이 이미 명시돼 있으면,
+    문장에 "유언장이 없는 것 같아요" 같은 none 표현이 섞여 있어도 명시값이
+    우선해야 한다(우선순위 A)."""
+    output = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="유언장이 없는 것 같긴 한데, 이 손으로 쓴 유언장부터 봐주세요.",
+            context={
+                "will_type": "handwritten",
+                "handwriting_answer": "yes",
+                "seal_answer": "seal_or_fingerprint",
+            },
+        )
+    )
+
+    assert output.data["will_type"] == "handwritten"
+
+
+# ---------------------------------------------------------------------------
 # [2] 공정증서 고지 — 1회, 탐색 안내 아님
 # ---------------------------------------------------------------------------
 
