@@ -154,6 +154,9 @@ def test_actual_transcript_after_intake_runs_checker_normally() -> None:
     assert reqs["rec_witness_present"]["grade"] == "PENDING"
     assert reqs["rec_witness_eligible"]["grade"] == "PENDING"
     assert reviewed.data["progress"] == {"checked": 5, "total": 7}
+    # recording(§1067) footer — handwritten(§1066)과 다른 조문이어야 한다.
+    assert "민법 제1067조" in reviewed.reply
+    assert "민법 제1066조" not in reviewed.reply
 
 
 def test_witness_answer_turn_does_not_reset_transcript_derived_grades() -> None:
@@ -229,6 +232,9 @@ def test_witness_structured_answers_after_transcript_yield_final_seven() -> None
         "rec_witness_name",
     ):
         assert reqs[rid]["grade"] == "GREEN", rid
+    # 최종 7/7 화면도 recording(§1067) footer를 써야 한다.
+    assert "민법 제1067조" in output.reply
+    assert "민법 제1066조" not in output.reply
 
 
 # ---------------------------------------------------------------------------

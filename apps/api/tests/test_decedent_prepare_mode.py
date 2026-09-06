@@ -390,6 +390,9 @@ def test_prepare_recording_without_draft_returns_guide_only() -> None:
         f"{eligible_citation}. 조문상 유언집행자는 증인 결격사유로 열거되어 "
         f"있지 않습니다."
     ) in output.reply
+    # recording(§1067) prepare footer — handwritten(§1066)과 조문이 달라야 한다.
+    assert "민법 제1067조" in output.reply
+    assert "민법 제1066조" not in output.reply
 
 
 # ---------------------------------------------------------------------------
@@ -477,6 +480,9 @@ def test_prepare_recording_with_draft_also_includes_review_result() -> None:
     assert output.data["review"]["requirements"]["rec_content"]["grade"] == "GREEN"
     # 종결돼도 더 이상 자동 handoff 없음(2026-09-05).
     assert output.next_action is None
+    # 가이드+점검 결과가 이어붙는 화면도 recording(§1067) footer를 써야 한다.
+    assert "민법 제1067조" in output.reply
+    assert "민법 제1066조" not in output.reply
 
 
 def test_prepare_has_draft_context_flag_overrides_heuristic() -> None:

@@ -13,8 +13,10 @@ from pathlib import Path
 
 from agents.decedent_estate.requirement_checker import check_requirements
 from agents.decedent_estate.result_formatter import (
+    RECORDING_FOOTER_NOTICE,
     cited_precedents,
     cited_precedents_for_requirement,
+    format_guide,
     format_requirement_line,
     format_result,
     pending_questions,
@@ -437,6 +439,30 @@ def test_consultation_and_footer_lines_always_present() -> None:
         "이 점검은 민법 제1066조의 형식 요건에 대한 참고용 확인이며, 법률 자문이 아닙니다. "
         "유언의 유효성에 대한 최종 판단은 법원과 법률 전문가의 영역입니다."
     ) in output
+
+
+def test_format_result_footer_notice_param_overrides_default() -> None:
+    """footer_notice 파라미터를 명시하면(recording 호출부) 기본값(§1066)
+    대신 그 문구가 쓰인다 — recording review/최종 화면이 §1067을 쓰도록
+    agent.py가 이 파라미터로 전달한다."""
+    text = _will_text(_NAME_LINE, _ADDRESS_LINE, _DATE_LINE)
+    results = check_requirements(
+        text, handwriting_answer="yes", seal_answer="seal_or_fingerprint"
+    )
+
+    output = format_result(results, footer_notice=RECORDING_FOOTER_NOTICE)
+    assert RECORDING_FOOTER_NOTICE in output
+    assert "민법 제1066조" not in output
+    assert "민법 제1067조" in output
+
+
+def test_format_guide_footer_notice_param_overrides_default() -> None:
+    output = format_guide(
+        ["date"], "가이드 인트로", footer_notice=RECORDING_FOOTER_NOTICE
+    )
+    assert RECORDING_FOOTER_NOTICE in output
+    assert "민법 제1066조" not in output
+    assert "민법 제1067조" in output
 
 
 def test_executor_not_disqualified_is_statute_not_unverified_precedent() -> None:

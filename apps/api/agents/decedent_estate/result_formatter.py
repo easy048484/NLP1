@@ -161,6 +161,14 @@ _FOOTER_NOTICE = (
     "이 점검은 민법 제1066조의 형식 요건에 대한 참고용 확인이며, 법률 자문이 아닙니다. "
     "유언의 유효성에 대한 최종 판단은 법원과 법률 전문가의 영역입니다."
 )
+# recording(§1067)은 handwritten(§1066)과 조문이 달라 footer만 별도로 둔다 —
+# format_result/format_guide 의 footer_notice 파라미터로 recording 호출부(agent.py)만
+# 명시적으로 이 값을 넘긴다. 기본값은 그대로 _FOOTER_NOTICE(제1066조)라 handwritten
+# 등 기존 호출부는 회귀 없이 그대로 동작한다.
+RECORDING_FOOTER_NOTICE = (
+    "이 점검은 민법 제1067조의 형식 요건에 대한 참고용 확인이며, 법률 자문이 아닙니다. "
+    "유언의 유효성에 대한 최종 판단은 법원과 법률 전문가의 영역입니다."
+)
 
 
 def closing_lines() -> list[str]:
@@ -447,7 +455,11 @@ def format_guide_line(requirement_id: str) -> Optional[str]:
 
 
 def format_guide(
-    ordered_ids: list[str], intro: str, *, include_closing: bool = True
+    ordered_ids: list[str],
+    intro: str,
+    *,
+    include_closing: bool = True,
+    footer_notice: str = _FOOTER_NOTICE,
 ) -> str:
     """가이드 모드 전체 화면 문구를 조립한다: 안내 인트로 → 요건별 가이드 → 상담 연결 → 하단 고지.
 
@@ -456,6 +468,9 @@ def format_guide(
     이미 같은 두 줄을 붙이기 때문에 한 화면에 두 번 반복되는 것을 막기 위해서다.
     가이드만 단독으로 보여줄 때는 기본값(True) 그대로 두어야 §3-3/§3-4가 모든 결과
     화면에 들어간다는 스펙을 유지한다.
+
+    footer_notice 기본값은 handwritten(§1066)이다 — recording(§1067) 호출부만
+    RECORDING_FOOTER_NOTICE 를 명시적으로 넘긴다.
     """
     sections = [intro]
     for requirement_id in ordered_ids:
@@ -464,7 +479,7 @@ def format_guide(
             sections.append(line)
     if include_closing:
         sections.append(_CONSULTATION_LINE)
-        sections.append(_FOOTER_NOTICE)
+        sections.append(footer_notice)
     return "\n\n".join(sections)
 
 
@@ -667,6 +682,7 @@ def format_result(
     ordered_ids: Optional[list[str]] = None,
     messages: SummaryMessages = _HANDWRITTEN_SUMMARY_MESSAGES,
     include_precedent_cards: bool = True,
+    footer_notice: str = _FOOTER_NOTICE,
 ) -> str:
     """전체 화면 문구를 조립한다: 요약 → (확인 질문) → 요건별 문구 → 상담 연결 → 하단 고지.
 
@@ -678,6 +694,9 @@ def format_result(
     (format_requirement_line 참고) — P0-1의 body 가 이 옵션으로
     reply 와 같은 함수를 재사용해서, 판례 카드는 precedents 배열로만
     중복 없이 나가게 한다.
+
+    footer_notice 기본값은 handwritten(§1066)이다 — recording(§1067) 호출부만
+    RECORDING_FOOTER_NOTICE 를 명시적으로 넘긴다.
     """
     if ordered_ids is None:
         rules = _load_rules()
@@ -709,6 +728,6 @@ def format_result(
         sections.append(supplemental)
 
     sections.append(_CONSULTATION_LINE)
-    sections.append(_FOOTER_NOTICE)
+    sections.append(footer_notice)
 
     return "\n\n".join(sections)
