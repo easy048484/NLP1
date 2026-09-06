@@ -1939,6 +1939,78 @@ def test_confirm_review_finalizes_and_emits_financial_profile():
     assert output.financial_profile.financial_assets == 10_000_000
 
 
+def test_p0_liability_never_duplicated_as_gita_asset_end_to_end():
+    """테스트 C: P0 실측 재현 — 사후 모드에서 안심상속 조회 결과 문장(카드
+    대출 포함)과 남은 카테고리 일괄 부재 응답, 그 뒤 review->확정까지
+    정확히 두 사용자 발화로 이어지는 실제 흐름을 그대로 재현한다. 카드
+    대출(2천만원)이 liabilities에 정확히 한 번만 등록되고, assets에는
+    "기타" 20,000,000이 절대 중복 등록되지 않아야 한다 — 최종 자산
+    합계 580,000,000 / 부채 합계 20,000,000 / 순자산 560,000,000."""
+    session_id = "p0-e2e"
+    state = agent.run(
+        AgentInput(
+            session_id=session_id,
+            user_message=(
+                "안심상속 조회 결과 예금 8천만 원, 아파트 5억 원, "
+                "카드대출 2천만 원이 확인됐어요. 자산과 부채를 정리해주세요."
+            ),
+            context={"mode": "post_death"},
+        )
+    ).data[STATE_KEY]
+
+    # 중간 상태에서도 이미 "기타" 자산이 없어야 한다 — 조기 검증.
+    assert not any(a["type"] == "기타" for a in state["assets"])
+    assert len(state["liabilities"]) == 1
+    assert state["liabilities"][0]["remaining_balance"] == 20_000_000
+
+    state = agent.run(
+        _continue(session_id, "주식·펀드·자동차·퇴직연금·보험은 없어요.", state)
+    ).data[STATE_KEY]
+    assert state["status"] == "reviewing"
+    assert not any(a["type"] == "기타" for a in state["assets"])
+    assert not any(item["label"] == "기타" for item in state["review_items"])
+
+    output = agent.run(_confirm(session_id, state))
+    final_state = output.data[STATE_KEY]
+    assert final_state["status"] == "finalized"
+    assert not any(a["type"] == "기타" for a in final_state["assets"])
+
+    profile = output.financial_profile
+    total_assets = (
+        profile.real_estate_value + profile.financial_assets + profile.other_assets
+    )
+    assert total_assets == 580_000_000
+    assert profile.total_debts == 20_000_000
+    assert total_assets - profile.total_debts == 560_000_000
+    assert profile.other_assets == 0  # "기타" 잘못된 20,000,000이 없음을 재확인
+    assert profile.extra["asset_organizer"]["assets"] == [
+        {
+            "type": "예금",
+            "value": 80_000_000,
+            "liquid": None,
+            "return_rate": None,
+            "confidence": "confirmed",
+        },
+        {
+            "type": "부동산",
+            "value": 500_000_000,
+            "liquid": None,
+            "return_rate": None,
+            "confidence": "confirmed",
+        },
+    ]
+    assert profile.extra["asset_organizer"]["liabilities"] == [
+        {
+            "type": "대출",
+            "remaining_balance": 20_000_000,
+            "monthly_payment": None,
+            "end_age": None,
+            "note": None,
+            "confidence": "confirmed",
+        }
+    ]
+
+
 def test_unrecognized_input_during_review_redisplays_review_without_mutating_state():
     session_id = "rv7"
     state = agent.run(
