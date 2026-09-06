@@ -2011,6 +2011,110 @@ def test_p0_liability_never_duplicated_as_gita_asset_end_to_end():
     ]
 
 
+class _DisclosureAwareFakeClient:
+    """실제 production처럼 ANTHROPIC_API_KEY가 있을 때 사후 모드가 타는
+    extract_disclosures() LLM 경로를 그대로 실행시키는 fake — 받은
+    텍스트에 "카드대출"/"대출"이 있으면 악성/오분류 응답("기타" 20m)을
+    돌려주도록 구성해, 그 텍스트가 실제로 전달됐는지(=필터가 뚫렸는지)를
+    응답 내용으로 검증할 수 있게 한다. 호출된 텍스트를 전부 기록해
+    "disclosure non-empty branch를 실제로 탔는지"도 함께 증명한다."""
+
+    def __init__(self) -> None:
+        self.received_texts: list[str] = []
+
+    def __call__(self, **_kwargs):
+        return self
+
+    @property
+    def messages(self):
+        return self
+
+    def create(self, **kwargs):
+        text = kwargs["messages"][0]["content"]
+        self.received_texts.append(text)
+        # 실제 LLM처럼 "이 텍스트에 실제로 있는 내용"만 반영한다 — 필터가
+        # 제대로 동작하면 "카드대출"/"대출"은 이 텍스트에 애초에 없어야
+        # 하므로(그 경우만 재현용으로 "기타" 오분류를 흉내낸다), 두 번째
+        # 턴("...없어요.")처럼 아무 disclosure 대상이 없는 문장에는 빈
+        # 리스트를 돌려줘 agent.py가 정상적으로 일반 fallback 경로로
+        # 넘어가게 한다.
+        disclosures: list[dict[str, object]] = []
+        if "카드대출" in text or "대출" in text:
+            disclosures.append(
+                {"type": "기타", "confidence": "confirmed", "value": 20_000_000}
+            )
+        if "예금" in text:
+            disclosures.append(
+                {"type": "예금", "confidence": "confirmed", "value": 80_000_000}
+            )
+        if "아파트" in text or "부동산" in text:
+            disclosures.append(
+                {"type": "부동산", "confidence": "confirmed", "value": 500_000_000}
+            )
+        return _FakeResponse(json.dumps({"disclosures": disclosures}))
+
+
+def test_p0_disclosure_branch_end_to_end_no_duplicate_with_real_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """실측 재현(2차): production은 ANTHROPIC_API_KEY가 있어 사후 모드
+    첫 턴이 extract_financial_slots()가 아니라 extract_disclosures()
+    경로를 탄다 — 위 test_p0_liability_never_duplicated_as_gita_asset_
+    end_to_end는 키를 설정하지 않아 실제로는 이 disclosure 경로를 전혀
+    타지 않고 fallback(extract_financial_slots) 경로만 검증하고
+    있었다(로컬에서 버그가 재현되지 않았던 이유). 이 테스트는 fake
+    Anthropic 클라이언트로 실제 disclosure 경로를 강제로 태워 같은
+    시나리오를 재현·검증한다."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-test-key")
+    fake_client = _DisclosureAwareFakeClient()
+    monkeypatch.setattr(agent.extractor.anthropic, "Anthropic", fake_client)
+
+    session_id = "p0b-e2e"
+    state = agent.run(
+        AgentInput(
+            session_id=session_id,
+            user_message=(
+                "안심상속 조회 결과 예금 8천만 원, 아파트 5억 원, "
+                "카드대출 2천만 원이 확인됐어요. 자산과 부채를 정리해주세요."
+            ),
+            context={"mode": "post_death"},
+        )
+    ).data[STATE_KEY]
+
+    # disclosure non-empty branch를 실제로 탔는지 증명 — LLM이 호출됐고,
+    # 카드대출/대출 텍스트가 전달되지 않았어야 한다.
+    assert len(fake_client.received_texts) == 1
+    assert "카드대출" not in fake_client.received_texts[0]
+    assert "대출" not in fake_client.received_texts[0]
+
+    assert not any(a["type"] == "기타" for a in state["assets"])
+    assert any(
+        a["type"] == "예금" and a["value"] == 80_000_000 for a in state["assets"]
+    )
+    assert any(
+        a["type"] == "부동산" and a["value"] == 500_000_000 for a in state["assets"]
+    )
+    assert len(state["liabilities"]) == 1
+    assert state["liabilities"][0]["type"] == "대출"
+    assert state["liabilities"][0]["remaining_balance"] == 20_000_000
+
+    state = agent.run(
+        _continue(session_id, "주식·펀드·자동차·퇴직연금·보험은 없어요.", state)
+    ).data[STATE_KEY]
+    assert state["status"] == "reviewing"
+    assert not any(a["type"] == "기타" for a in state["assets"])
+
+    output = agent.run(_confirm(session_id, state))
+    profile = output.financial_profile
+    total_assets = (
+        profile.real_estate_value + profile.financial_assets + profile.other_assets
+    )
+    assert total_assets == 580_000_000
+    assert profile.total_debts == 20_000_000
+    assert total_assets - profile.total_debts == 560_000_000
+    assert profile.other_assets == 0
+
+
 def test_unrecognized_input_during_review_redisplays_review_without_mutating_state():
     session_id = "rv7"
     state = agent.run(
