@@ -238,6 +238,202 @@ def test_witness_structured_answers_after_transcript_yield_final_seven() -> None
 
 
 # ---------------------------------------------------------------------------
+# 증인 참여/결격 자연어 확인 답변 (production 재현 버그 수정)
+#
+# 버튼(구조화 context) 대신 자연어로 "증인은 실제로 참여했고, 결격사유에는
+# 해당하지 않습니다" 처럼 답해도 명백한 표현이면 반영되어야 한다.
+# handwriting_answer/seal_answer의 자연어 확인과 동일한 원칙 —
+# _infer_rec_witness_present/_infer_rec_witness_eligible 참고.
+# ---------------------------------------------------------------------------
+
+
+def test_natural_language_answers_both_fields_yield_final_seven() -> None:
+    """테스트 A — 한 문장에 참여/결격 두 답변이 모두 담겨 있으면 둘 다 반영돼
+    최종 7/7 GREEN이 된다."""
+    transcript_turn = _run(_COMPLETE_TRANSCRIPT)
+
+    witness_turn = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="증인은 녹음에 실제로 참여했고, 결격사유에는 해당하지 않습니다.",
+            context={"decedent_estate": transcript_turn.data["decedent_estate"]},
+        )
+    )
+
+    assert witness_turn.data["decedent_estate"]["rec_witness_present_answer"] == "yes"
+    assert (
+        witness_turn.data["decedent_estate"]["rec_witness_eligible_answer"]
+        == "not_disqualified"
+    )
+    reqs = witness_turn.data["requirements"]
+    for rid in (
+        "rec_content",
+        "rec_testator_name",
+        "rec_date",
+        "rec_witness_accuracy",
+        "rec_witness_name",
+        "rec_witness_present",
+        "rec_witness_eligible",
+    ):
+        assert reqs[rid]["grade"] == "GREEN", rid
+    assert witness_turn.data["progress"] == {"checked": 7, "total": 7}
+    assert "형식 요건상 문제가 발견되지 않았습니다" in witness_turn.reply
+
+
+def test_natural_language_present_only_leaves_eligible_pending() -> None:
+    """테스트 B — 참여만 답하면 참여만 반영되고 결격은 PENDING을 유지한다."""
+    transcript_turn = _run(_COMPLETE_TRANSCRIPT)
+
+    witness_turn = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="증인은 실제로 참여했습니다.",
+            context={"decedent_estate": transcript_turn.data["decedent_estate"]},
+        )
+    )
+
+    assert witness_turn.data["decedent_estate"]["rec_witness_present_answer"] == "yes"
+    assert witness_turn.data["decedent_estate"]["rec_witness_eligible_answer"] is None
+    reqs = witness_turn.data["requirements"]
+    assert reqs["rec_witness_present"]["grade"] == "GREEN"
+    assert reqs["rec_witness_eligible"]["grade"] == "PENDING"
+
+
+def test_natural_language_eligible_only_leaves_present_pending() -> None:
+    """테스트 C — 결격만 답하면 결격만 반영되고 참여는 PENDING을 유지한다."""
+    transcript_turn = _run(_COMPLETE_TRANSCRIPT)
+
+    witness_turn = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="결격사유에는 해당하지 않습니다.",
+            context={"decedent_estate": transcript_turn.data["decedent_estate"]},
+        )
+    )
+
+    assert witness_turn.data["decedent_estate"]["rec_witness_present_answer"] is None
+    assert (
+        witness_turn.data["decedent_estate"]["rec_witness_eligible_answer"]
+        == "not_disqualified"
+    )
+    reqs = witness_turn.data["requirements"]
+    assert reqs["rec_witness_present"]["grade"] == "PENDING"
+    assert reqs["rec_witness_eligible"]["grade"] == "GREEN"
+
+
+def test_natural_language_negative_present_is_recognized() -> None:
+    """테스트 D — 명백한 부정 표현("참여하지 않았습니다")도 인식한다."""
+    transcript_turn = _run(_COMPLETE_TRANSCRIPT)
+
+    witness_turn = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="증인은 녹음에 참여하지 않았습니다.",
+            context={"decedent_estate": transcript_turn.data["decedent_estate"]},
+        )
+    )
+
+    assert witness_turn.data["decedent_estate"]["rec_witness_present_answer"] == "no"
+
+
+def test_natural_language_negative_eligible_is_recognized() -> None:
+    """테스트 E — 명백한 결격 인정 표현("결격사유에 해당합니다")도 인식한다."""
+    transcript_turn = _run(_COMPLETE_TRANSCRIPT)
+
+    witness_turn = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="증인이 결격사유에 해당합니다.",
+            context={"decedent_estate": transcript_turn.data["decedent_estate"]},
+        )
+    )
+
+    assert (
+        witness_turn.data["decedent_estate"]["rec_witness_eligible_answer"]
+        == "disqualified"
+    )
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["증인은 있었던 것 같아요", "문제는 없었던 것 같습니다"],
+)
+def test_ambiguous_witness_wording_does_not_infer(message: str) -> None:
+    """테스트 F — 모호한 표현("~것 같아요")은 추론하지 않고 PENDING을 유지한다."""
+    transcript_turn = _run(_COMPLETE_TRANSCRIPT)
+
+    witness_turn = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message=message,
+            context={"decedent_estate": transcript_turn.data["decedent_estate"]},
+        )
+    )
+
+    assert witness_turn.data["decedent_estate"]["rec_witness_present_answer"] is None
+    assert witness_turn.data["decedent_estate"]["rec_witness_eligible_answer"] is None
+    reqs = witness_turn.data["requirements"]
+    assert reqs["rec_witness_present"]["grade"] == "PENDING"
+    assert reqs["rec_witness_eligible"]["grade"] == "PENDING"
+
+
+def test_explicit_structured_answer_overrides_natural_language() -> None:
+    """테스트 G — 이번 턴 explicit structured context 값이 있으면, 문장에 담긴
+    자연어 신호와 무관하게(여기서는 신호가 없는 문장) 명시값이 그대로 쓰인다."""
+    transcript_turn = _run(_COMPLETE_TRANSCRIPT)
+
+    witness_turn = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="확인했습니다",
+            context={
+                "decedent_estate": {
+                    **transcript_turn.data["decedent_estate"],
+                    "rec_witness_present_answer": "yes",
+                    "rec_witness_eligible_answer": "not_disqualified",
+                }
+            },
+        )
+    )
+
+    assert witness_turn.data["decedent_estate"]["rec_witness_present_answer"] == "yes"
+    assert (
+        witness_turn.data["decedent_estate"]["rec_witness_eligible_answer"]
+        == "not_disqualified"
+    )
+    reqs = witness_turn.data["requirements"]
+    assert reqs["rec_witness_present"]["grade"] == "GREEN"
+    assert reqs["rec_witness_eligible"]["grade"] == "GREEN"
+
+
+def test_stored_valid_answer_is_not_overwritten_by_later_ambiguous_message() -> None:
+    """테스트 7 — 이미 저장된 정상 answer는 이후 턴의 모호한 문장으로
+    덮어써지지 않는다(그대로 유지)."""
+    transcript_turn = _run(_COMPLETE_TRANSCRIPT)
+    confirmed_turn = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="증인은 실제로 참여했습니다.",
+            context={"decedent_estate": transcript_turn.data["decedent_estate"]},
+        )
+    )
+    assert confirmed_turn.data["decedent_estate"]["rec_witness_present_answer"] == "yes"
+
+    ambiguous_turn = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="증인은 있었던 것 같아요",
+            context={"decedent_estate": confirmed_turn.data["decedent_estate"]},
+        )
+    )
+
+    assert ambiguous_turn.data["decedent_estate"]["rec_witness_present_answer"] == "yes"
+    assert (
+        ambiguous_turn.data["requirements"]["rec_witness_present"]["grade"] == "GREEN"
+    )
+
+
+# ---------------------------------------------------------------------------
 # _looks_like_recording_transcript 단위 테스트
 # ---------------------------------------------------------------------------
 
