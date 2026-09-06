@@ -316,6 +316,14 @@ def route(payload: AgentInput, *, user_id: Optional[str] = None) -> ChatResponse
 
     user_id 는 요청을 보낸 사람입니다(비로그인이면 None). 남의 세션을 이어받지
     못하게 막고, 비로그인으로 시작한 세션을 계정에 붙이는 데 씁니다.
+
+    같은 session_id에 대한 요청은 default_store.turn_lock()으로 파이프라인
+    전체(load_session→...→persist_session)를 직렬화한다 — 개별 store의
+    load()/save()만 원자적이어도, 그 사이에 동일 session_id로 진짜 동시
+    요청이 들어오면 나중에 끝난 쪽이 먼저 끝난 쪽의 변경 이전 상태를 응답할
+    수 있다(2026-09-07, InMemorySessionStore에서 실증). turn_lock 기본
+    구현은 no-op이라 이 결함이 없는 store에는 영향이 없다.
     """
-    result = _compiled().invoke({"payload": payload, "user_id": user_id})
-    return result["output"]
+    with default_store.turn_lock(payload.session_id):
+        result = _compiled().invoke({"payload": payload, "user_id": user_id})
+        return result["output"]
