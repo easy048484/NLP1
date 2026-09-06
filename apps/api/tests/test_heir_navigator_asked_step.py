@@ -169,3 +169,26 @@ def test_general_question_still_asks_death_date_first():
         )
     )
     assert out.reply.startswith("안내를 드리려면 먼저 여쭐 게 있습니다")
+
+
+def test_llm_compose_gets_death_date_question_appended_when_model_omits_it(monkeypatch):
+    """LLM 경로: 모델이 '끝에 사망일을 물으라'는 지시를 빠뜨려도 코드가 붙인다."""
+    from agents.heir_navigator import graph
+
+    monkeypatch.delenv("HEIR_NAVIGATOR_DISABLE_LLM", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(graph, "complete", lambda **kw: "등기에는 이런 서류가 필요합니다.")
+    # 슬롯 추출기의 LLM 폴백은 규칙이 실패할 때만 부르므로, 여기서는 규칙으로 끝난다.
+    monkeypatch.setattr(
+        "agents.heir_navigator.slots.llm_based", lambda *a, **k: None
+    )
+    out = heir_navigator.run(
+        AgentInput(
+            session_id="asked-llm",
+            user_message="상속등기 하려면 서류가 뭐가 필요해요?",
+            context={"today": TODAY.isoformat()},
+        )
+    )
+    assert out.reply.startswith("등기에는 이런 서류가 필요합니다.")
+    assert "돌아가신 날짜" in out.reply
+    assert out.reply.index("돌아가신 날짜") < out.reply.index("안내 기준입니다")

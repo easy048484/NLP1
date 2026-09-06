@@ -194,6 +194,15 @@ def node_compose(state: GraphState) -> GraphState:
             "data": {"boundary": breach.value},
         }
 
+    # 특정 단계 질문에 답하느라 사망일 되묻기를 건너뛴 턴: 모델이 끝에 물으라는
+    # 지시를 빠뜨려도 여기서 확정적으로 붙인다(다음 턴 기한 계산에 필요).
+    if (
+        plan.asked_step is not None
+        and plan.blocking_slot in prompts.QUESTIONS
+        and "돌아가신 날짜" not in reply
+    ):
+        reply = f"{reply}\n\n{prompts.QUESTIONS[plan.blocking_slot]}"
+
     if plan.disclaimer not in reply:
         reply = f"{reply}\n\n> {plan.disclaimer}"
     return {**updates, "reply": reply}
