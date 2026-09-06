@@ -386,6 +386,54 @@ _DRAFT_TITLE_LINE_RE = re.compile(r"^\s*(?:유언장|유언)\s*$")
 _HANDWRITING_CONFIRMED_RE = re.compile(r"직접\s*손으로\s*(?:쓰|썼|쓰신|쓰셨)")
 _SEAL_CONFIRMED_RE = re.compile(r"(?:도장|지장|손도장)\S{0,3}\s*찍(?:혀|혔)")
 
+# review 진행 중 자연어 확인 답변 — recording witness 2문항(rec_witness_present_answer/
+# rec_witness_eligible_answer)도 handwriting/seal과 같은 원칙: 명백한 표현만
+# deterministic하게 인정하고(LLM 없음), 모호한 표현("있었던 것 같아요" 등)은
+# 추측하지 않고 기존 PENDING을 유지한다. 부정 표현이 긍정 표현의 부분 문자열을
+# 우연히 포함할 수 있어(예: "참여하지 않았"에 "참여"가 들어있음) 호출부에서
+# negative를 먼저 확인한 뒤 positive를 확인하는 순서로 오분류를 막는다.
+_REC_WITNESS_PRESENT_NEGATIVE_RE = re.compile(
+    r"증인[^.?!\n]{0,15}참여\s*(?:하지\s*않|안\s*했)|증인\s*없이\s*녹음"
+)
+_REC_WITNESS_PRESENT_POSITIVE_RE = re.compile(
+    r"증인[^.?!\n]{0,15}(?:실제로\s*참여|참여\s*했|같이\s*있었)"
+)
+_REC_WITNESS_ELIGIBLE_DISQUALIFIED_RE = re.compile(
+    r"결격\s*사유[^.?!\n]{0,8}해당(?:합니다|한다|해요|됩니다|된다)"
+)
+_REC_WITNESS_ELIGIBLE_NOT_DISQUALIFIED_RE = re.compile(
+    r"결격\s*사유[^.?!\n]{0,8}(?:해당하지\s*않|없)"
+)
+
+
+def _infer_rec_witness_present(text: str) -> Optional[str]:
+    """자연어에서 명백한 증인 참여 여부만 잡는다 (negative 우선 확인).
+
+    "참여하지 않았"처럼 부정 표현이 "참여"라는 긍정 표현의 부분 문자열을
+    포함하므로, positive 정규식을 먼저 보면 부정 문장도 긍정으로 오분류될 수
+    있다 — 그래서 negative를 먼저 확인한다.
+    """
+    if _REC_WITNESS_PRESENT_NEGATIVE_RE.search(text):
+        return "no"
+    if _REC_WITNESS_PRESENT_POSITIVE_RE.search(text):
+        return "yes"
+    return None
+
+
+def _infer_rec_witness_eligible(text: str) -> Optional[str]:
+    """자연어에서 명백한 증인 결격 여부만 잡는다.
+
+    "결격사유에는 해당하지 않습니다"처럼 결격(disqualified) 정규식이 먼저면
+    "해당" 부분만 보고 오분류할 위험이 있어, not_disqualified(부정문)를 먼저
+    확인한다 — 두 정규식은 "해당" 뒤에 오는 말이 달라(하지 않음 vs 합니다 류)
+    서로 겹치지 않지만, 우선순위를 명시적으로 둬 유지보수 중 실수를 막는다.
+    """
+    if _REC_WITNESS_ELIGIBLE_NOT_DISQUALIFIED_RE.search(text):
+        return "not_disqualified"
+    if _REC_WITNESS_ELIGIBLE_DISQUALIFIED_RE.search(text):
+        return "disqualified"
+    return None
+
 
 def _looks_like_draft(text: str) -> bool:
     """유언장 초안(또는 녹음 대본)으로 볼 만한 신호가 있는지 판별한다.
@@ -1112,8 +1160,28 @@ def _run_recording_pipeline(
     ):
         return _recording_intake_output(state, intent=intent)
 
+    # rec_witness_present_answer/rec_witness_eligible_answer 는 원래 ChoiceGroup
+    # 버튼 클릭이 구조화 context로 보내주지만, review 진행 중 자연어로도 명백히
+    # 확인되면 deterministic하게 반영한다(모호하면 그대로 미확인으로 둔다) —
+    # handwriting_answer/seal_answer와 동일한 원칙(위 _infer_rec_witness_present/
+    # _infer_rec_witness_eligible 참고). 이미 답변이 있으면(버튼이든 이전
+    # 자연어든) 덮어쓰지 않는다.
     rec_witness_present_answer = state.rec_witness_present_answer
+    if rec_witness_present_answer is None:
+        rec_witness_present_answer = _infer_rec_witness_present(payload.user_message)
     rec_witness_eligible_answer = state.rec_witness_eligible_answer
+    if rec_witness_eligible_answer is None:
+        rec_witness_eligible_answer = _infer_rec_witness_eligible(payload.user_message)
+    if (
+        rec_witness_present_answer != state.rec_witness_present_answer
+        or rec_witness_eligible_answer != state.rec_witness_eligible_answer
+    ):
+        state = state.model_copy(
+            update={
+                "rec_witness_present_answer": rec_witness_present_answer,
+                "rec_witness_eligible_answer": rec_witness_eligible_answer,
+            }
+        )
 
     results = check_recording_requirements(
         payload.user_message,
