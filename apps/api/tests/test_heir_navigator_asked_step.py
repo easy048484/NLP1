@@ -77,7 +77,10 @@ def test_plan_carries_asked_step_even_when_blocked():
     asked = plan.asked_step
     assert asked is not None
     assert asked.status == "blocked"
-    assert asked.prerequisites == ["상속재산분할협의", "단순승인 / 한정승인 / 상속포기 결정"]
+    assert asked.prerequisites == [
+        "상속재산분할협의",
+        "단순승인 / 한정승인 / 상속포기 결정",
+    ]
     assert "소유권이전등기 신청서" in asked.documents
     assert any("등기소" in a for a in asked.agencies)
     # 등기는 next_actions(지금 할 수 있는 일)에는 여전히 없다 — 그건 상태 기반.
@@ -177,11 +180,11 @@ def test_llm_compose_gets_death_date_question_appended_when_model_omits_it(monke
 
     monkeypatch.delenv("HEIR_NAVIGATOR_DISABLE_LLM", raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    monkeypatch.setattr(graph, "complete", lambda **kw: "등기에는 이런 서류가 필요합니다.")
-    # 슬롯 추출기의 LLM 폴백은 규칙이 실패할 때만 부르므로, 여기서는 규칙으로 끝난다.
     monkeypatch.setattr(
-        "agents.heir_navigator.slots.llm_based", lambda *a, **k: None
+        graph, "complete", lambda **kw: "등기에는 이런 서류가 필요합니다."
     )
+    # 슬롯 추출기의 LLM 폴백은 규칙이 실패할 때만 부르므로, 여기서는 규칙으로 끝난다.
+    monkeypatch.setattr("agents.heir_navigator.slots.llm_based", lambda *a, **k: None)
     out = heir_navigator.run(
         AgentInput(
             session_id="asked-llm",

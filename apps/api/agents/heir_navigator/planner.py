@@ -255,7 +255,10 @@ def _asked_step(
         prerequisites=[s.title for s in prerequisite_chain(step, state.completed)],
         documents=list(guide.documents) if guide else [],
         agencies=list(guide.agencies) if guide else [],
-        links=[{"label": l, "url": u} for l, u in (guide.links if guide else ())],
+        links=[
+            {"label": label, "url": url}
+            for label, url in (guide.links if guide else ())
+        ],
         tips=list(guide.tips) if guide else [],
         deadline=next((d for d in deadlines if d.step == step.id), None),
         needs_verification=not guide.verified if guide else True,

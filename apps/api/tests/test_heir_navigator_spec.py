@@ -41,7 +41,12 @@ def test_description_states_boundaries():
     담당 영역이 명시돼야 LLM 이 경계를 지킨다."""
     description = SPEC.description
     assert "추천하지는 않" in description
-    for agent in ("decedent_estate", "asset_organizer", "tax_calculator", "heir_share_analyzer"):
+    for agent in (
+        "decedent_estate",
+        "asset_organizer",
+        "tax_calculator",
+        "heir_share_analyzer",
+    ):
         assert agent in description, f"경계 문구에 '{agent}'가 없음"
 
 

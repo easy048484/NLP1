@@ -112,7 +112,9 @@ def facts_block(plan: ProcedurePlan, state: HeirState, *, today: date) -> str:
         lines.append(f"\n[질문하신 단계: {asked.title}] — {status_label}")
         lines.append(f"- 설명: {asked.summary}")
         if asked.prerequisites:
-            lines.append(f"- 그 전에 먼저 해야 하는 것(순서대로): {' → '.join(reversed(asked.prerequisites))}")
+            lines.append(
+                f"- 그 전에 먼저 해야 하는 것(순서대로): {' → '.join(reversed(asked.prerequisites))}"
+            )
         if asked.documents:
             lines.append(f"- 필요 서류: {', '.join(asked.documents)}")
         if asked.agencies:
@@ -127,7 +129,9 @@ def facts_block(plan: ProcedurePlan, state: HeirState, *, today: date) -> str:
                 f"- 기한: {d.label} {d.due_date.isoformat()} ({d.days_left}일 남음) / 근거: {d.law}"
             )
         if asked.needs_verification:
-            lines.append("- (이 단계의 서류·기관 정보는 아직 팀 검증 전입니다 — 방문 전 확인 권고)")
+            lines.append(
+                "- (이 단계의 서류·기관 정보는 아직 팀 검증 전입니다 — 방문 전 확인 권고)"
+            )
         if plan.death_date is None:
             lines.append(
                 "- 사망일을 아직 모릅니다. 위 질문에 답한 뒤, 답변 맨 끝에 돌아가신 날짜를 "
@@ -211,8 +215,10 @@ def facts_block(plan: ProcedurePlan, state: HeirState, *, today: date) -> str:
     if plan.handoff_reason:
         lines.append(f"\n[다음 단계 연결]\n- {plan.handoff_reason}")
 
-    if plan.follow_up and plan.follow_up in QUESTIONS and not (
-        plan.asked_step is not None and plan.death_date is None
+    if (
+        plan.follow_up
+        and plan.follow_up in QUESTIONS
+        and not (plan.asked_step is not None and plan.death_date is None)
     ):
         # (특정 단계 질문 + 사망일 미상이면 위 [질문하신 단계] 블록의 지시대로
         #  답 끝에 사망일을 물어야 하므로 이 금지 문구를 넣지 않는다.)
@@ -245,14 +251,18 @@ def deterministic_reply(plan: ProcedurePlan, state: HeirState) -> str:
             parts.append(f"\n참고: {tip}")
         if asked.deadline is not None:
             d = asked.deadline
-            parts.append(f"\n기한: {d.label} {d.due_date.isoformat()} ({d.days_left}일 남음)")
+            parts.append(
+                f"\n기한: {d.label} {d.due_date.isoformat()} ({d.days_left}일 남음)"
+            )
         if asked.prerequisites:
             parts.append(
                 "\n다만 이 단계 전에 먼저 끝내야 하는 것이 있습니다: "
                 + " → ".join(reversed(asked.prerequisites))
             )
         if asked.needs_verification:
-            parts.append("\n(서류·기관 정보는 아직 팀 검증 전입니다. 방문 전 해당 기관에 확인하세요.)")
+            parts.append(
+                "\n(서류·기관 정보는 아직 팀 검증 전입니다. 방문 전 해당 기관에 확인하세요.)"
+            )
         parts.append("")
 
     if plan.death_date is None:
