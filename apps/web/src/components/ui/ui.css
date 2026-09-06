@@ -143,7 +143,7 @@
   border-left: 3px solid var(--brand-gold);
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
   padding: var(--sp-3) var(--sp-4);
-  margin: var(--sp-3) 0;
+  margin: var(--sp-2) 0;
 }
 .result-card-title {
   font-family: var(--font-sans);
@@ -423,11 +423,11 @@
 
 /* ============ 금액 표시 ============ */
 .amount-display {
-  padding: var(--sp-5);
+  padding: var(--sp-4);
   border-radius: var(--radius-lg);
   background: var(--brand-navy);
   color: var(--ink-inverse);
-  margin: var(--sp-3) 0;
+  margin: var(--sp-2) 0;
 }
 .amount-default {
   background: var(--surface-card);
@@ -442,10 +442,11 @@
 }
 .amount-value {
   font-family: var(--font-serif);
-  font-size: 2rem;
+  font-size: 1.55rem;
   font-weight: 600;
   letter-spacing: -0.02em;
-  margin-top: var(--sp-2);
+  line-height: 1.25;
+  margin-top: var(--sp-1);
 }
 .amount-note {
   margin-top: var(--sp-2);
@@ -470,8 +471,9 @@
 }
 .tax-breakdown th,
 .tax-breakdown td {
-  padding: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
   font-size: var(--text-caption);
+  line-height: 1.4;
   text-align: left;
   border-bottom: 1px solid var(--line);
 }

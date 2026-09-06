@@ -80,6 +80,12 @@ WARNING_MESSAGES = {
     ),
 }
 
+PRE_NEED_WARNING_MESSAGES = {
+    "상속개시일이 없어 신고기한을 계산하지 않았습니다.": (
+        "생전 시뮬레이션이므로 실제 상속개시일에 따른 신고기한은 " "계산하지 않았어요."
+    ),
+}
+
 
 def won(value: int) -> str:
     """원 단위 금액을 읽기 쉬운 형식으로 표시한다."""
@@ -87,13 +93,17 @@ def won(value: int) -> str:
     return f"{value:,}원"
 
 
-def friendly_warning(message: str) -> str:
+def friendly_warning(message: str, axis: str | None = None) -> str:
     """내부 경고를 사용자에게 보여줄 쉬운 문장으로 바꾼다."""
 
+    if axis == "pre_need":
+        return PRE_NEED_WARNING_MESSAGES.get(
+            message, WARNING_MESSAGES.get(message, message)
+        )
     return WARNING_MESSAGES.get(message, message)
 
 
-def result_reply(result: Any) -> str:
+def result_reply(result: Any, axis: str | None = None) -> str:
     """상속세 계산 결과를 쉬운 항목명으로 표시한다."""
 
     lines = [
@@ -122,7 +132,7 @@ def result_reply(result: Any) -> str:
         lines.append("확인할 사항:")
 
         for warning in result.warnings:
-            lines.append(f"- {friendly_warning(warning)}")
+            lines.append(f"- {friendly_warning(warning, axis)}")
 
     lines.extend(
         [

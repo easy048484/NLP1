@@ -72,6 +72,22 @@ textarea {
   color: inherit;
 }
 
+/**
+ * 브라우저 자동완성 채움은 배경을 흰색(또는 옅은 노랑)으로 강제하고 글자색을
+ * 검정으로 바꾼다 — 어두운 테마에서 "흰 바탕 + 흰 글씨"로 안 보이던 문제.
+ * inset 그림자로 배경을 팔레트 색으로 덮고, text-fill-color로 글자색을 되돌린다.
+ */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-text-fill-color: var(--ink);
+  -webkit-box-shadow: 0 0 0 1000px var(--surface-card) inset;
+  box-shadow: 0 0 0 1000px var(--surface-card) inset;
+  caret-color: var(--ink);
+}
+
 button {
   cursor: pointer;
   background: none;

@@ -9,6 +9,12 @@
 .app-shell {
   --font-scale: 1.08;
 }
+.app-shell[data-app-theme="light"] {
+  color-scheme: light;
+}
+.app-shell[data-app-theme="dark"] {
+  color-scheme: dark;
+}
 
 /* ============ 두 버전 공통 ============ */
 
@@ -466,4 +472,20 @@
 .app-shell[data-app-theme="dark"] .ledger-card {
   background: linear-gradient(150deg, rgba(46, 62, 108, 0.75), rgba(24, 38, 68, 0.6));
   border: 1px solid var(--line-strong);
+}
+
+/**
+ * --brand-navy(#1b2a4a)는 라이트 톤 강조색이라 어두운 배경에서 묻힌다.
+ * 다크 테마는 금색이 포인트이므로, 전경(텍스트)으로 쓰이는 자리만 금색으로.
+ * "금액을 몰라요" 버튼(.btn-ghost)·금액 미리보기 숫자가 안 보이던 문제.
+ */
+.app-shell[data-app-theme="dark"] .btn-ghost {
+  color: var(--brand-gold);
+}
+.app-shell[data-app-theme="dark"] .btn-ghost:hover:not(:disabled) {
+  background: var(--surface-sunken);
+  color: var(--brand-gold-hover);
+}
+.app-shell[data-app-theme="dark"] .amount-preview-ko {
+  color: var(--brand-gold);
 }

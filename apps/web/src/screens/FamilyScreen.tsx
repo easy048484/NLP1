@@ -126,7 +126,7 @@ export function FamilyScreen() {
         {/* ── 기준 인물 앵커 ── */}
         <div className="family-anchor">
           <label className="family-anchor-label" htmlFor="centerName">
-            {isPreNeed ? "기준: 나" : "누구의 상속인가요?"}
+            {isPreNeed ? "재산을 남길 사람" : "누구의 상속인가요?"}
           </label>
           <input
             id="centerName"
@@ -134,12 +134,14 @@ export function FamilyScreen() {
             value={centerName}
             onChange={(e) => setCenterName(e.target.value)}
             placeholder={
-              isPreNeed ? "내 이름 (선택)" : "고인 성함 (선택, 예: 김O수)"
+              isPreNeed
+                ? "본인의 이름 또는 별칭 (선택)"
+                : "고인 성함 (선택, 예: 김O수)"
             }
           />
           <p className="family-anchor-hint">
             {isPreNeed
-              ? "내가 세상을 떠났을 때를 기준으로 준비합니다."
+              ? "내가 세상을 떠났을 때를 기준으로 준비합니다. 비워두면 ‘나’로 표시되며, 배우자·자녀 이름은 아래에서 입력해주세요."
               : "이분이 상속의 기준입니다. 아래 가족은 이분의 배우자·자녀·부모."}
           </p>
         </div>
@@ -281,21 +283,18 @@ export function FamilyScreen() {
                   자녀 추가
                 </Button>
               </div>
-              <div className="intake-actions">
+              <div className="intake-actions intake-actions--split">
+                <Button variant="outline" disabled={busy} onClick={done}>
+                  건너뛰기
+                </Button>
                 <Button
-                  variant="outline"
                   disabled={busy}
                   onClick={() =>
-                    setPhase(children.length === 0 ? "parents" : "children")
+                    children.length === 0 ? setPhase("parents") : done()
                   }
                 >
-                  {children.length === 0 ? "자녀 없음" : "자녀 다 입력했어요"}
+                  입력완료
                 </Button>
-                {children.length > 0 && (
-                  <Button disabled={busy} onClick={done}>
-                    완료하고 상담 시작
-                  </Button>
-                )}
               </div>
             </>
           )}
@@ -343,10 +342,6 @@ export function FamilyScreen() {
             </>
           )}
         </div>
-
-        <button type="button" className="onboarding-skip" onClick={done}>
-          나중에 하고 상담 먼저 시작
-        </button>
       </div>
     </div>
   );
