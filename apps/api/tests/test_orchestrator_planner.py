@@ -369,13 +369,69 @@ def test_pending_handoff_is_fast_path_when_llm_unavailable(monkeypatch):
     assert plan.layers == [[AgentName.DECEDENT_ESTATE]]
 
 
-def test_pending_reply_agent_never_calls_llm(monkeypatch):
-    def _boom(*args, **kwargs):
-        raise AssertionError("pending_reply_agent 상태에서는 LLM을 호출하면 안 된다")
+def test_pending_reply_agent_delegates_to_llm_route_as_continue_candidate(monkeypatch):
+    """#125 새 계약 — pending_reply_agent가 있으면 LLM 호출 자체를 막는 대신,
+    그 에이전트를 last_agent로 넘기고 pending_reply=True를 표시해 _llm_route
+    (기존 continuation 규칙)에 판단을 위임한다. 별도 분류기를 새로 만들지
+    않고 last_agent/CONTINUE 배관을 그대로 재사용하는지 확인한다."""
+    captured: dict = {}
 
-    monkeypatch.setattr(planner, "_llm_route", _boom)
+    def _capture(user_message, **kwargs):
+        captured.update(kwargs)
+        return [kwargs["last_agent"]]
+
+    monkeypatch.setattr(planner, "_llm_route", _capture)
     plan = planner.classify(
         "아무 말이나",
+        pending_handoff=None,
+        pending_reply_agent=AgentName.DECEDENT_ESTATE,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert captured["last_agent"] == AgentName.DECEDENT_ESTATE
+    assert captured["pending_reply"] is True
+    assert plan.path == "standard"
+    assert plan.layers == [[AgentName.DECEDENT_ESTATE]]
+
+
+def test_pending_reply_agent_llm_explicit_switch_moves_to_new_agent(monkeypatch):
+    """실제 재현 버그(#125) — decedent_estate가 답변 대기 중이어도, LLM이 명백한
+    새 주제("유언 얘기는 알겠고 이제 상속 신고는 어떻게 해야 돼?")를 감지하면
+    그 에이전트로 전환해야 한다. pending_reply_agent가 더 이상 결정론적으로
+    LLM 판단을 뒤집지 않는지 확인한다."""
+    monkeypatch.setattr(
+        planner, "_llm_route", lambda *a, **k: [AgentName.HEIR_NAVIGATOR]
+    )
+    plan = planner.classify(
+        "유언 얘기는 알겠고 이제 상속 신고는 어떻게 해야 돼?",
+        pending_handoff=None,
+        pending_reply_agent=AgentName.DECEDENT_ESTATE,
+        last_agent=None,
+        default_agent=AgentName.HEIR_NAVIGATOR,
+    )
+    assert plan.path == "standard"
+    assert plan.layers == [[AgentName.HEIR_NAVIGATOR]]
+    assert plan.llm_used is True
+
+
+def test_pending_reply_agent_llm_none_falls_back_to_pending_not_rule_classify(
+    monkeypatch,
+):
+    """LLM을 못 쓰거나 실패하면(_llm_route가 None) pending_reply_agent로
+    안전하게 폴백한다 — #110이 지키려던 "진행 중인 답변 보호"는 여전히
+    지켜지지만, _rule_classify(키워드 규칙)로는 내려가지 않는다. 키워드
+    규칙은 후보가 1개면 다른 에이전트를 고를 수 있어(예: "예금" → asset
+    계열) 이 상태의 보호 목적과 맞지 않기 때문이다."""
+
+    def _boom(*args, **kwargs):
+        raise AssertionError(
+            "_rule_classify는 pending_reply_agent 상태에서 호출되면 안 된다"
+        )
+
+    monkeypatch.setattr(planner, "_llm_route", lambda *a, **k: None)
+    monkeypatch.setattr(planner, "_rule_classify", _boom)
+    plan = planner.classify(
+        "예금이 얼마나 있는지도 궁금해요",
         pending_handoff=None,
         pending_reply_agent=AgentName.DECEDENT_ESTATE,
         last_agent=None,
@@ -825,6 +881,115 @@ def test_waiting_agent_pending_clears_after_non_waiting_response(monkeypatch):
     )
     assert turn3.agents == [AgentName.ASSET_ORGANIZER]
     assert len(asset_organizer.captured) == 1
+
+
+# ---------------------------------------------------------------------------
+# #125 — pending_reply_agent 상태에서도 LLM이 켜져 있으면 continuation vs
+# 명백한 새 주제를 구분해야 한다(예전엔 LLM 자체를 호출하지 않고 무조건
+# pending_reply_agent로 고정했다). 위 테스트들은 LLM이 꺼진(ANTHROPIC_API_KEY
+# 없음) 환경의 폴백 경로를 검증하고, 아래는 LLM이 실제로 판단에 관여하는
+# 경로(monkeypatch로 결과를 통제)를 세션 단위(router.route)로 검증한다.
+# ---------------------------------------------------------------------------
+
+
+def test_waiting_agent_llm_continue_keeps_pending_despite_asset_keywords(
+    monkeypatch,
+):
+    """시나리오 A — LLM이 켜져 있어도, pending_reply_agent에 대한 답변에
+    다른 에이전트 키워드(아파트/예금)가 섞여 있으면 LLM이 __continue__를
+    골라 decedent_estate를 유지해야 한다(_llm_route가 CONTINUE를
+    pending_reply_agent로 치환)."""
+    decedent_waiting = _fake(
+        AgentName.DECEDENT_ESTATE,
+        reply=_DECEDENT_INTAKE_REPLY,
+        next_action=_AWAIT_REPLY,
+    )
+    asset_organizer = _fake(AgentName.ASSET_ORGANIZER)
+    _patch(monkeypatch, decedent_waiting, asset_organizer)
+
+    monkeypatch.setattr(planner, "_llm_route", lambda *a, **k: None)
+    router.route(
+        AgentInput(session_id="wait-llm-1", user_message="유언장 확인하고 싶어요")
+    )
+
+    # LLM이 이번 턴엔 __continue__(= pending_reply_agent)를 고른다고 가정.
+    monkeypatch.setattr(
+        planner, "_llm_route", lambda *a, **k: [AgentName.DECEDENT_ESTATE]
+    )
+    turn2 = router.route(
+        AgentInput(session_id="wait-llm-1", user_message=_WILL_BODY_WITH_ASSET_KEYWORDS)
+    )
+    assert turn2.agents == [AgentName.DECEDENT_ESTATE]
+    assert not asset_organizer.captured
+
+
+def test_waiting_agent_llm_explicit_switch_moves_to_new_agent(monkeypatch):
+    """시나리오 C(핵심 재현) — decedent_estate가 답변 대기 중이어도, LLM이
+    명백한 새 주제("유언 얘기는 알겠고 이제 상속 신고는 어떻게 해야 돼?")를
+    heir_navigator로 판단하면 그쪽으로 전환돼야 한다."""
+    decedent_waiting = _fake(
+        AgentName.DECEDENT_ESTATE,
+        reply=_DECEDENT_INTAKE_REPLY,
+        next_action=_AWAIT_REPLY,
+    )
+    heir = _fake(AgentName.HEIR_NAVIGATOR, reply="상속 신고 절차를 안내해드릴게요.")
+    _patch(monkeypatch, decedent_waiting, heir)
+
+    monkeypatch.setattr(planner, "_llm_route", lambda *a, **k: None)
+    router.route(
+        AgentInput(session_id="wait-llm-2", user_message="유언장 확인하고 싶어요")
+    )
+
+    monkeypatch.setattr(
+        planner, "_llm_route", lambda *a, **k: [AgentName.HEIR_NAVIGATOR]
+    )
+    turn2 = router.route(
+        AgentInput(
+            session_id="wait-llm-2",
+            user_message="유언 얘기는 알겠고 이제 상속 신고는 어떻게 해야 돼?",
+        )
+    )
+    assert turn2.agents == [AgentName.HEIR_NAVIGATOR]
+    assert len(heir.captured) == 1
+
+
+def test_pending_reply_agent_does_not_revive_after_explicit_switch(monkeypatch):
+    """시나리오 I — 명백한 topic switch로 heir_navigator가 실행된 뒤, 다음
+    턴에도 이전 decedent_estate의 pending_reply_agent가 되살아나 turn을
+    가로채면 안 된다."""
+    decedent_waiting = _fake(
+        AgentName.DECEDENT_ESTATE,
+        reply=_DECEDENT_INTAKE_REPLY,
+        next_action=_AWAIT_REPLY,
+    )
+    heir = _fake(AgentName.HEIR_NAVIGATOR, reply="상속 신고 절차를 안내해드릴게요.")
+    _patch(monkeypatch, decedent_waiting, heir)
+
+    monkeypatch.setattr(planner, "_llm_route", lambda *a, **k: None)
+    router.route(
+        AgentInput(session_id="wait-llm-3", user_message="유언장 확인하고 싶어요")
+    )
+    stored = router.default_store.load("wait-llm-3")
+    assert stored.pending_reply_agent == AgentName.DECEDENT_ESTATE
+
+    monkeypatch.setattr(
+        planner, "_llm_route", lambda *a, **k: [AgentName.HEIR_NAVIGATOR]
+    )
+    router.route(
+        AgentInput(
+            session_id="wait-llm-3",
+            user_message="유언 얘기는 알겠고 이제 상속 신고는 어떻게 해야 돼?",
+        )
+    )
+    stored = router.default_store.load("wait-llm-3")
+    assert stored.pending_reply_agent != AgentName.DECEDENT_ESTATE
+
+    # 다음 턴도 heir_navigator 흐름이 이어져야 한다 — decedent로 되돌아가지 않는다.
+    turn3 = router.route(
+        AgentInput(session_id="wait-llm-3", user_message="필요한 서류부터 알려줘")
+    )
+    assert turn3.agents == [AgentName.HEIR_NAVIGATOR]
+    assert len(heir.captured) == 2
 
 
 def test_red_requirement_keeps_pending_reply_agent_for_correction_turn():

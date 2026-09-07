@@ -11,7 +11,9 @@
 - classify (planner.classify): 이번 턴에 실행할 에이전트와 경로 등급을 정합니다.
   LLM-first — LLM 이 전체 에이전트를 후보로 놓고, 직전 에이전트 · 직전 질문 ·
   핸드오프 예정 · 키워드 힌트를 보고 고릅니다 (planner.py 독스트링 참고).
-    Standard  답변 대기 중인 에이전트(pending_reply_agent)가 있으면 그 1개 (LLM 미호출)
+    Standard  답변 대기 중인 에이전트(pending_reply_agent)가 있으면 그 에이전트를
+              last_agent 삼아 LLM에게 위임(__continue__ vs 새 주제) — LLM 없거나
+              실패 시에만 그 에이전트로 결정론적 폴백 (#125)
               / LLM 이 1개 고름 / LLM 없을 때 키워드 후보 1개 (없으면 직전 → 기본)
     Full      LLM 이 2개 이상 고름 / LLM 없을 때 키워드 후보 2개 이상 → DAG
     Fast      LLM 없을 때만: 직전 턴 핸드오프 대상 1개 (LLM 이 있으면 힌트로 강등)
