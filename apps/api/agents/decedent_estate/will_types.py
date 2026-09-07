@@ -106,17 +106,15 @@ def infer_will_type_from_message(user_message: str) -> Optional[str]:
     "음성메모"처럼 그 방식임이 분명한 구어체 표현) — "서류"/"증서"/"공증"
     처럼 여러 후보에 공통될 수 있는 표현은 넣지 않는다.
 
-    no_will만 추가로 inference_patterns(regex)/exclusion_patterns(regex)를
-    쓴다(#150) — "유언장이 없는 건지, 못 찾았는 건지 잘 모르겠어요"처럼
-    조사·어미·띄어쓰기가 자유롭게 섞이는 "존재 자체가 불확실함" 표현은
-    exact substring marker로 다 나열할 수 없어서다. inference_patterns 중
-    하나라도 매치하고 exclusion_patterns가 하나도 매치하지 않으면 "none"
-    후보로 추가한다 — exclusion은 "유언장은 있는데"처럼 존재를 이미 확정한
-    문구가 함께 있을 때를 위한 defense-in-depth다(정교하게 짠
-    inference_patterns 자체는 그런 문장과 안 겹치도록 설계했다). 방식(어떤
-    유언인지)에 대한 불확실 표현("어떤 방식인지 모르겠어요" 등)은 "있/없"가
-    "유언장" 근처에 붙어 나오지 않아 이 패턴에 걸리지 않는다 — rules/
-    will_types.json 의 inference_patterns_note 참고. 컴파일 실패하는 regex는
+    will_types[] 항목도 no_will과 동일하게 추가로 inference_patterns(regex)/
+    exclusion_patterns(regex)를 쓸 수 있다(2026-09-07 확장, #150에서 no_will
+    전용으로 생긴 걸 generic하게 넓힘) — "직접 손으로 쓰신"/"손수 쓰신"처럼
+    존댓말·용언 활용형이 자유롭게 섞이는 표현은 exact substring marker로 다
+    나열할 수 없어서다(실측: "직접 손으로 쓰신 유언장을 찾았는데..."가
+    marker "직접 손으로 쓴"/"손으로 직접 쓴"에 안 걸려 불필요한 방식
+    재질문으로 빠졌다). inference_patterns 중 하나라도 매치하고
+    exclusion_patterns가 하나도 매치하지 않으면 그 후보로 추가한다 —
+    exclusion은 오탐 방지용 defense-in-depth다. 컴파일 실패하는 regex는
     조용히 건너뛴다(_compile_patterns).
 
     충돌 방어: 하나의 메시지가 서로 다른 두 후보의 marker/pattern에 동시에
@@ -127,6 +125,10 @@ def infer_will_type_from_message(user_message: str) -> Optional[str]:
         wt["id"]
         for wt in _load()["will_types"]
         if any(marker in user_message for marker in wt.get("inference_markers", []))
+        or (
+            _any_pattern_matches(wt.get("inference_patterns", []), user_message)
+            and not _any_pattern_matches(wt.get("exclusion_patterns", []), user_message)
+        )
     }
     no_will = _load()["no_will"]
     no_will_hit = any(

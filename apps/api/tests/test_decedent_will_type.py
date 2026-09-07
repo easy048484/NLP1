@@ -245,6 +245,20 @@ def test_voice_memo_message_is_inferred_as_recording_without_reasking() -> None:
     assert output.reply.startswith("📼 녹음하신 내용을 그대로 적어주세요")
 
 
+def test_voice_recording_synonym_is_inferred_as_recording() -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "목소리 녹음"은 "음성메모"와
+    같은 뜻의 흔한 동의어인데 기존 marker에 없어 방식 재질문으로 빠졌다."""
+    output = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="핸드폰에 남겨진 목소리 녹음이 있는데 유산 얘기를 하신 것 같아요",
+        )
+    )
+
+    assert "어떤 형태의 유언인가요?" not in output.reply
+    assert output.data["will_type"] == "recording"
+
+
 def test_recorded_will_phrase_is_inferred_as_recording() -> None:
     payload = AgentInput(session_id="s1", user_message="녹음으로 남긴 유언이 있어요")
 
@@ -443,6 +457,79 @@ def test_ambiguous_or_underspecified_messages_do_not_infer_will_type(
     assert "requirements" not in output.data
 
 
+def test_conflict_guard_catches_elided_notarial_mention() -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "유언장이 자필인지 공증받은
+    건지 잘 모르겠어"는 "유언장"을 한 번만 말하고 "공증받은" 뒤에서는
+    생략하는 흔한 화법이라, 기존 notarial marker("공증받은 유언(장)")가 전혀
+    안 걸려 "자필"만 단독으로 매치되고 충돌 방어 없이 handwritten으로
+    확정됐다 — 사용자는 명백히 모르겠다고 말했는데도. "유언"과 "공증받은"이
+    순서 무관하게 같이 등장하면 후보로 잡도록 고쳐서 충돌 방어가 정상
+    작동해야 한다."""
+    output = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="유언장이 자필인지 공증받은 건지 잘 모르겠어",
+        )
+    )
+
+    assert "어떤 형태의 유언인가요?" in output.reply
+    assert "requirements" not in output.data
+
+
+def test_notarial_conjugation_variant_infers_without_reasking() -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "공증 받아서 만들어 둔
+    유언장이 나왔어요"처럼 "받은"이 아니라 "받아서" 활용형을 쓰면 기존
+    notarial marker/pattern("공증받은 유언(장)")에 안 걸려 방식 재질문으로
+    빠졌다."""
+    output = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="공증 받아서 만들어 둔 유언장이 나왔어요",
+        )
+    )
+
+    assert "어떤 형태의 유언인가요?" not in output.reply
+    assert output.data["will_type"] == "notarial"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "아버지가 돌아가시고 유품 정리하다가 직접 손으로 쓰신 유언장을 찾았는데, 효력이 있는지 궁금해요",
+        "돌아가신 아버지가 손수 쓰신 유언장이 나왔는데 효력이 있는지 봐주세요",
+        "돌아가시기 전에 직접 쓰신 유언장이라고 하더라고요",
+        "유언장을 손으로 쓰셨는데 효력있나요",  # 탐색적 QA — "직접" 없이 "손으로"만
+    ],
+)
+def test_handwritten_honorific_and_synonym_phrasings_infer_without_reasking(
+    message: str,
+) -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "직접 손으로 쓰신"/"손수 쓰신"처럼
+    존댓말(-시-)이 붙거나 "손수"/"본인이 직접" 같은 동의 표현을 쓰면
+    inference_markers의 exact substring("직접 손으로 쓴")에 안 걸려 불필요하게
+    방식 선택 질문으로 되돌아갔다. rules/will_types.json 의 handwritten
+    inference_patterns(regex)로 일반화해서 고쳤다 — "대필로 썼다"처럼 본인
+    행위 표현이 없는 문장과는 구분되어야 한다(아래 다른 테스트에서 확인)."""
+    output = decedent_estate.run(AgentInput(session_id="s1", user_message=message))
+
+    assert "어떤 형태의 유언인가요?" not in output.reply
+    assert output.data["will_type"] == "handwritten"
+
+
+def test_ghostwritten_mention_does_not_infer_handwritten() -> None:
+    """ "대필"(본인이 아닌 사람이 대신 씀)은 자필증서의 반대 개념이다 — handwritten
+    inference_patterns의 "직접/손수/본인이 직접/스스로" 행위 표현이 없으므로
+    매치되면 안 된다(오탐 방지 회귀)."""
+    output = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="아버지 유언장이 대필로 썼다고 하던데 효력이 있나요?",
+        )
+    )
+
+    assert "어떤 형태의 유언인가요?" in output.reply
+
+
 def test_secret_exact_production_scenario_infers_secret_without_reasking() -> None:
     """정확한 production 재현 — "봉인된 유언장"(모호) + "비밀증서 유언이라고
     적혀 있어요"(명백한 방식 특정)가 함께 있는 문장에서, 명백한 방식 명칭이
@@ -537,6 +624,48 @@ def test_explicit_type_change_switches_stored_will_type(
     output = _run_with_stored(stored, message)
 
     assert output.data["decedent_estate"]["will_type"] == expected_type
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "그냥 녹음해서 할래",
+        "녹음할래",
+        "녹음하려고",
+    ],
+)
+def test_switch_recognizes_marker_used_as_direct_verb_without_particle(
+    message: str,
+) -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — 기존 intent_suffix_pattern은
+    "(으로|로)" 조사를 필수로 요구해서 "자필로 할래"류는 잡아도 "녹음"처럼
+    '~하다'로 바로 동사화되는 marker의 "녹음할래"/"녹음해서 할래"/"녹음하려고"
+    (조사 없이 바로 어미가 붙는, 오히려 더 흔한 표현)를 놓쳤다 — 과제 예시
+    문구 "그냥 녹음해서 할래" 자체가 재현 실패했다."""
+    stored = _stored("handwritten")
+    output = _run_with_stored(stored, message)
+
+    assert output.data["decedent_estate"]["will_type"] == "recording"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "자필증서인지 공정증서인지 모르겠습니다",
+        "녹음 유언은 자필이랑 뭐가 달라?",
+        "녹음 파일이 있어요",
+    ],
+)
+def test_switch_suffix_widening_does_not_cause_new_false_positives(
+    message: str,
+) -> None:
+    """intent_suffix_pattern에서 (으로|로) 조사를 선택적으로 바꾼 뒤에도, 단순
+    언급/비교나 무관한 표현(파일 언급 등)은 여전히 switch로 오인하면 안 된다
+    (widening으로 인한 회귀 방지)."""
+    stored = _stored("handwritten")
+    output = _run_with_stored(stored, message)
+
+    assert output.data["decedent_estate"]["will_type"] == "handwritten"
 
 
 def test_type_switch_resets_previous_type_progress_state() -> None:

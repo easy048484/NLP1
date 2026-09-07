@@ -280,6 +280,31 @@ def test_natural_language_answers_both_fields_yield_final_seven() -> None:
     assert "형식 요건상 문제가 발견되지 않았습니다" in witness_turn.reply
 
 
+def test_natural_language_honorific_witness_present_phrasing_is_recognized() -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "증인은 옆에 같이 계셨고,
+    결격사유는 없으세요"처럼 높임말 "계셨"(있다의 높임)을 쓰면 기존
+    "같이 있었" 정규식에 안 걸려 결격 여부만 반영되고 참여 여부는 PENDING에
+    머물렀다."""
+    transcript_turn = _run(_COMPLETE_TRANSCRIPT)
+
+    witness_turn = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="증인은 옆에 같이 계셨고, 결격사유는 없으세요",
+            context={"decedent_estate": transcript_turn.data["decedent_estate"]},
+        )
+    )
+
+    assert witness_turn.data["decedent_estate"]["rec_witness_present_answer"] == "yes"
+    assert (
+        witness_turn.data["decedent_estate"]["rec_witness_eligible_answer"]
+        == "not_disqualified"
+    )
+    reqs = witness_turn.data["requirements"]
+    assert reqs["rec_witness_present"]["grade"] == "GREEN"
+    assert reqs["rec_witness_eligible"]["grade"] == "GREEN"
+
+
 def test_natural_language_present_only_leaves_eligible_pending() -> None:
     """테스트 B — 참여만 답하면 참여만 반영되고 결격은 PENDING을 유지한다."""
     transcript_turn = _run(_COMPLETE_TRANSCRIPT)

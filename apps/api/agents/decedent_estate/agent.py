@@ -199,6 +199,26 @@ _PREPARE_CREATE_INTENT_MARKERS = (
     "녹음하려고",
     "녹음하고 싶",
 )
+# 위 marker는 "유언장을 쓰려고"처럼 조사·부사가 끼어들지 않는 exact substring만
+# 잡는다 — 실측 재현(2026-09-07 자연어 QA): "유언장을 미리 써두려고 하는데 뭐
+# 챙겨야 돼?"(보조용언 삽입), "자필로 유언장 하나 남겨두려고 하는데"(다른
+# 동사 어간 + 중간에 다른 단어 삽입), "유언장 미리 준비해두고 싶은데 뭐부터
+# 봐야 해?"(준비하다 어간 자체가 marker에 없음)처럼 자연스럽게 말이 늘어지면
+# 안 걸려서,
+# 아직 will_type도 모르는 시점에 이미 명백했던 prepare 의도가 저장되지
+# 못하거나(will_type 미확정 turn) will_type이 같은 turn에 바로 확정돼도
+# review로 default되는 버그가 있었다. 위 marker를 지우지 않고(하위 호환)
+# "유언"이 먼저 나오고 그 뒤 가까운 곳에("[^.?!\n]{0,10}" — 문장 경계를 넘지
+# 않는 범위에서 다른 단어 삽입 허용, no_will.inference_patterns와 동일한
+# 관용구) 쓰기/작성/녹음/남기기 동사 어간 + "하려고/하고 싶/-려고/-고 싶" 류의
+# "아직 안 했지만 하겠다" 어미가 붙을 때만 매치한다. "직접 손으로 쓰신
+# 유언장을 찾았는데"처럼 동사가 "유언"보다 앞에 오거나, "유언장을
+# 남기셨는데"처럼 완료형 어미로 끝나는 review 표현과는 섞이지 않는다(둘 다
+# 어간 뒤 6자 이내에 미래/의도 어미가 없어 매치되지 않음).
+_PREPARE_CREATE_INTENT_PATTERN = re.compile(
+    r"유언[^.?!\n]{0,10}(?:쓰|써|작성|녹음|남기|남겨|준비)\S{0,6}"
+    r"(?:하려고|하고\s*싶|려고|고\s*싶)"
+)
 
 
 def _infer_intent_from_message(user_message: str) -> Optional[str]:
@@ -207,6 +227,8 @@ def _infer_intent_from_message(user_message: str) -> Optional[str]:
     if any(marker in user_message for marker in _PREPARE_NOT_YET_DONE_MARKERS):
         return _PREPARE_INTENT
     if any(marker in user_message for marker in _PREPARE_CREATE_INTENT_MARKERS):
+        return _PREPARE_INTENT
+    if _PREPARE_CREATE_INTENT_PATTERN.search(user_message):
         return _PREPARE_INTENT
     return None
 
@@ -418,7 +440,20 @@ _DRAFT_TITLE_LINE_RE = re.compile(r"^\s*(?:유언장|유언)\s*$")
 # 찍혀 있습니다"처럼 답할 수도 있다. 명백한 표현만 deterministic하게 인정하고
 # (LLM 분류 없음), 모호한 표현은 추측하지 않는다 — 기존 미확인(PENDING) 상태를
 # 그대로 유지한다.
-_HANDWRITING_CONFIRMED_RE = re.compile(r"직접\s*손으로\s*(?:쓰|썼|쓰신|쓰셨)")
+#
+# 2026-09-07 자연어 QA에서 발견 1: "손으로"와 동사 사이에 공백만 허용해서
+# "직접 손으로 다 썼고 도장도 찍혀있어"처럼 "다" 같은 부사가 끼어드는 매우
+# 흔한 화법을 놓쳤다 — 같은 문장의 도장 확인(_SEAL_CONFIRMED_RE, "도장도
+# 찍혀있어")은 이미 \S{0,3} 갭을 허용해서 정상 인식됐는데 자서 쪽만 놓쳐서,
+# 한 문장으로 두 항목을 동시에 답해도 하나만 반영되는 비대칭이 있었다.
+# _SEAL_CONFIRMED_RE와 동일하게 짧은 삽입어를 허용한다.
+#
+# 발견 2(탐색적 QA): "자필로 쓰셨고 도장도 찍혀있어요"처럼 "직접 손으로"
+# 대신 "자필로"만 쓰는 경우도 전문 자서 확인으로는 명백한데 놓쳤다 —
+# "자필로" + 쓰기 동사도 동일하게 인정한다.
+_HANDWRITING_CONFIRMED_RE = re.compile(
+    r"(?:직접\s*손으로|자필로)\s*\S{0,4}\s*(?:쓰|썼|쓰신|쓰셨)"
+)
 _SEAL_CONFIRMED_RE = re.compile(r"(?:도장|지장|손도장)\S{0,3}\s*찍(?:혀|혔)")
 
 # review 진행 중 자연어 확인 답변 — recording witness 2문항(rec_witness_present_answer/
@@ -430,8 +465,10 @@ _SEAL_CONFIRMED_RE = re.compile(r"(?:도장|지장|손도장)\S{0,3}\s*찍(?:혀
 _REC_WITNESS_PRESENT_NEGATIVE_RE = re.compile(
     r"증인[^.?!\n]{0,15}참여\s*(?:하지\s*않|안\s*했)|증인\s*없이\s*녹음"
 )
+# 2026-09-07 자연어 QA에서 "같이 계셨고"(높임말)가 "같이 있었"에 안 걸려
+# 놓친 것을 발견 — "계셨"(있다의 높임)/"함께"(같이의 동의어)를 추가했다.
 _REC_WITNESS_PRESENT_POSITIVE_RE = re.compile(
-    r"증인[^.?!\n]{0,15}(?:실제로\s*참여|참여\s*했|같이\s*있었)"
+    r"증인[^.?!\n]{0,15}(?:실제로\s*참여|참여\s*했|같이\s*있었|같이\s*계셨|함께\s*있었|함께\s*계셨)"
 )
 _REC_WITNESS_ELIGIBLE_DISQUALIFIED_RE = re.compile(
     r"결격\s*사유[^.?!\n]{0,8}해당(?:합니다|한다|해요|됩니다|된다)"
