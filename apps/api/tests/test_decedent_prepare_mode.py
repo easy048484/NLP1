@@ -247,6 +247,84 @@ def test_exact_three_turn_will_type_switch_keeps_prepare_intent() -> None:
     assert "**자필증서 유언 작성 가이드입니다.**" not in turn3.reply
 
 
+def test_prepare_intent_survives_particle_insertion_before_will_type_known() -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "유언장을 미리 써두려고
+    하는데 뭐 챙겨야 돼?"처럼 "미리"가 끼어들거나 "써두려고"처럼 보조용언이
+    붙으면 기존 exact substring marker("유언장을 쓰려고" 등)에 안 걸려서,
+    will_type이 아직 안 정해진 turn1에서 prepare 의도가 저장되지 못하고
+    turn2(will_type 버튼 선택)에서 review로 default되어 document intake
+    안내가 잘못 나갔다."""
+    turn1, turn2 = _run_turns(
+        [
+            "유언장을 미리 써두려고 하는데 뭐 챙겨야 돼?",
+            "직접 손으로 쓴 유언장",
+        ]
+    )
+
+    assert "어떤 형태의 유언인가요?" in turn1.reply
+    assert turn1.data["decedent_estate"]["intent"] == "prepare"
+
+    assert turn2.data["decedent_estate"]["will_type"] == "handwritten"
+    assert turn2.data["decedent_estate"]["intent"] == "prepare"
+    assert "**자필증서 유언 작성 가이드입니다.**" in turn2.reply
+    assert _DOCUMENT_INTAKE_NOTICE not in turn2.reply
+
+
+def test_prepare_intent_inferred_from_junbi_verb_stem() -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "유언장 미리 준비해두고
+    싶은데 뭐부터 봐야 해?"는 "준비하다" 어간을 기존 patterns/markers가 전혀
+    포함하지 않아 will_type도 모호한 turn1에서 prepare 의도가 저장되지
+    못했다."""
+    turn1, _ = _run_turns(
+        [
+            "유언장 미리 준비해두고 싶은데 뭐부터 봐야 해?",
+            "직접 손으로 쓴 유언장",
+        ]
+    )
+
+    assert "어떤 형태의 유언인가요?" in turn1.reply
+    assert turn1.data["decedent_estate"]["intent"] == "prepare"
+
+
+def test_already_prepared_will_mention_stays_review() -> None:
+    """ "유언장을 준비해봤는데"(완료형)는 이미 준비를 마친 문서를 점검해달라는
+    review 표현이다 — "준비" 어간을 prepare 트리거에 추가하면서 이 완료형과
+    섞이지 않는지 확인하는 오탐 방지 회귀."""
+    output = _run(
+        "아버지 유언장을 준비해봤는데 확인해주실래요?", will_type="handwritten"
+    )
+
+    assert output.data["decedent_estate"]["intent"] == "review"
+
+
+def test_prepare_intent_inferred_with_word_inserted_between_mention_and_verb() -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "자필로 유언장 하나
+    남겨두려고 하는데, 형식 요건이 어떻게 돼?"는 "유언장"과 동사("남겨두려고")
+    사이에 "하나"가 끼어 있고 동사 자체도 "남기다" 계열이라, will_type이
+    이 turn에 바로 "자필" marker로 확정되는데도 intent가 review로
+    default되어 작성 가이드 대신 기존 유언장 내용 제출 요구가 나갔다."""
+    output = _run(
+        "나중에 문제 안 생기게 자필로 유언장 하나 남겨두려고 하는데, 형식 요건이 어떻게 돼?"
+    )
+
+    assert output.data["decedent_estate"]["will_type"] == "handwritten"
+    assert output.data["decedent_estate"]["intent"] == "prepare"
+    assert "**자필증서 유언 작성 가이드입니다.**" in output.reply
+    assert _DOCUMENT_INTAKE_NOTICE not in output.reply
+
+
+def test_already_left_will_with_wanggyeoda_verb_stays_review() -> None:
+    """ "유언장을 남기셨는데"(완료형)는 이미 작성이 끝난 유언장을 가리키는
+    review 표현이다 — "남기다" 어간을 prepare 트리거에 추가하면서 이 완료형과
+    섞이지 않는지 확인하는 오탐 방지 회귀."""
+    output = _run(
+        "아버지가 유언장을 남기셨는데 내용을 좀 봐주세요",
+        will_type="handwritten",
+    )
+
+    assert output.data["decedent_estate"]["intent"] == "review"
+
+
 def test_stored_review_yields_to_explicit_natural_language_prepare() -> None:
     """이미 document intake가 실행돼 state.intent=review로 저장된 뒤에도,
     이번 턴 자연어가 명백히 prepare를 가리키면 review를 유지하지 않는다

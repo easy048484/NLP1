@@ -129,6 +129,66 @@ def test_established_requirement_is_preserved_when_followup_lacks_evidence() -> 
     assert requirements["seal"]["grade"] == "GREEN"
 
 
+def test_compound_confirmation_reflects_both_handwriting_and_seal() -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "직접 손으로 다 썼고 도장도
+    찍혀있어"처럼 한 문장으로 두 항목을 동시에 확인해도, 기존
+    _HANDWRITING_CONFIRMED_RE가 "손으로"와 동사 사이에 공백만 허용해서 "다"
+    같은 부사 삽입을 놓쳤다 — 같은 문장의 도장 확인(_SEAL_CONFIRMED_RE)은
+    이미 짧은 삽입어를 허용해서 정상 인식됐는데 자서만 놓쳐, 한 문장으로
+    둘 다 답했는데 하나만 반영되는 비대칭이 있었다."""
+    turn1 = decedent_estate.run(
+        AgentInput(
+            session_id="s2b",
+            user_message=(
+                "유언장\n유언자: 박민수\n주소: 대구광역시 수성구\n"
+                "2026년 7월 20일\n\n전 재산을 아내에게 준다."
+            ),
+            context={"decedent_estate": {"will_type": "handwritten"}},
+        )
+    )
+    assert turn1.data["requirements"]["handwriting"]["grade"] == "PENDING"
+    assert turn1.data["requirements"]["seal"]["grade"] == "PENDING"
+
+    turn2 = decedent_estate.run(
+        AgentInput(
+            session_id="s2b",
+            user_message="응, 직접 손으로 다 썼고 도장도 찍혀있어",
+            context=_ctx(turn1),
+        )
+    )
+    requirements = turn2.data["requirements"]
+    assert requirements["handwriting"]["grade"] == "GREEN"
+    assert requirements["seal"]["grade"] == "GREEN"
+
+
+def test_japil_phrasing_confirms_handwriting_requirement() -> None:
+    """탐색적 QA(2026-09-07)에서 발견 — "자필로 쓰셨고 도장도 찍혀있어요"처럼
+    "직접 손으로" 대신 "자필로"만 써도 전문 자서 확인으로는 명백한데, 기존
+    _HANDWRITING_CONFIRMED_RE가 "직접 손으로"만 인정해서 놓쳤다."""
+    turn1 = decedent_estate.run(
+        AgentInput(
+            session_id="s2c",
+            user_message=(
+                "유언장\n유언자: 박민수\n주소: 대구광역시 수성구\n"
+                "2026년 7월 20일\n\n전 재산을 아내에게 준다."
+            ),
+            context={"decedent_estate": {"will_type": "handwritten"}},
+        )
+    )
+    assert turn1.data["requirements"]["handwriting"]["grade"] == "PENDING"
+
+    turn2 = decedent_estate.run(
+        AgentInput(
+            session_id="s2c",
+            user_message="자필로 쓰셨고 도장도 찍혀있어요",
+            context=_ctx(turn1),
+        )
+    )
+    requirements = turn2.data["requirements"]
+    assert requirements["handwriting"]["grade"] == "GREEN"
+    assert requirements["seal"]["grade"] == "GREEN"
+
+
 def test_new_value_on_followup_turn_is_still_reevaluated() -> None:
     """review 진행 중이라도 이번 턴에 실제 새 값이 오면 rule engine이 그 값으로
     재판정한다 — 이전 값을 무조건 고집하지 않는다."""
