@@ -167,38 +167,85 @@ def test_llm_can_follow_pending_handoff(monkeypatch):
     assert plan.layers == [[AgentName.DECEDENT_ESTATE]]
 
 
-# ------------------------------------------------------- 답변 대기(하드 규칙)
+# ------------------------------------------------------- 답변 대기(LLM 위임, #125)
 
 
-def test_pending_reply_agent_preempts_llm(monkeypatch):
-    """pending_handoff 와 달리 pending_reply_agent 는 힌트가 아니라 선점이다 —
-    에이전트가 명시적으로 "답을 기다리는 중"(await_user_confirmation)이라고
-    선언한 상태를 LLM 판단이 뒤집으면 안 된다(#110 continuation 계약)."""
+def test_pending_reply_agent_delegates_to_llm_with_continue_option(monkeypatch):
+    """#125 새 계약 — pending_reply_agent가 있어도 이제 LLM 호출 자체를
+    막지 않는다. 그 에이전트를 last_agent 삼아 CONTINUE 선택지를 주고
+    판단을 맡긴다 — LLM이 명백한 새 주제(tax_calculator)를 고르면 그쪽으로
+    전환돼야 한다(예전엔 여기서 결정론적으로 decedent_estate가 이겼다)."""
     fake = _install(monkeypatch, {"agents": ["tax_calculator"]})
     plan = _classify(
-        "상속세는 얼마나 나와요?",  # 키워드도 LLM 도 tax_calculator 를 가리키지만
+        "상속세는 얼마나 나와요?",
         pending_reply_agent=AgentName.DECEDENT_ESTATE,
         last_agent=AgentName.DECEDENT_ESTATE,
         history=[{"role": "assistant", "content": "유언장 사진을 올려주세요."}],
     )
-    assert fake.calls == []  # LLM 미호출
+    assert len(fake.calls) == 1  # 이번엔 LLM이 실제로 호출된다
+    assert "__continue__" in fake.enum()  # CONTINUE 선택지가 제공된다
     assert plan.path == "standard"
-    assert plan.layers == [[AgentName.DECEDENT_ESTATE]]
-    assert plan.llm_used is False
+    assert plan.layers == [[AgentName.TAX_CALCULATOR]]
+    assert plan.llm_used is True
 
 
-def test_pending_reply_agent_outranks_pending_handoff_hint(monkeypatch):
-    """둘 다 있으면 답변 대기가 이긴다 — 핸드오프는 LLM 힌트라 LLM 까지 가야
-    효력이 있는데, 답변 대기는 그 전에 결정된다."""
-    fake = _install(monkeypatch, {"agents": ["heir_navigator"]})
+def test_pending_reply_agent_llm_continue_still_wins_over_handoff_hint(monkeypatch):
+    """pending_handoff와 pending_reply_agent가 동시에 있어도, LLM이 진행 중인
+    답변으로 판단해 __continue__ 를 고르면 decedent_estate가 유지된다 —
+    pending_handoff는 여전히 프롬프트에 힌트로만 전달될 뿐 강제하지 않는다
+    (#125, 이전엔 LLM 호출 자체가 없었다)."""
+    fake = _install(monkeypatch, {"agents": ["__continue__"]})
     plan = _classify(
         "네",
         pending_handoff=AgentName.HEIR_NAVIGATOR,
         pending_reply_agent=AgentName.DECEDENT_ESTATE,
         last_agent=AgentName.DECEDENT_ESTATE,
     )
-    assert fake.calls == []
+    assert len(fake.calls) == 1
+    assert "핸드오프 예정: heir_navigator" in fake.last["user_text"]
     assert plan.layers == [[AgentName.DECEDENT_ESTATE]]
+
+
+def test_pending_reply_agent_prompt_marks_agent_as_awaiting_answer(monkeypatch):
+    """pending_reply_agent 상태에서는 user_text에 "답변을 기다리는 중"이라는
+    상태 줄이 추가돼야 한다 — 새 프롬프트를 만들지 않고 기존 continuation
+    규칙에 신호 하나만 더하는 최소 변경(#125)."""
+    fake = _install(monkeypatch, {"agents": ["__continue__"]})
+    _classify(
+        "네 맞아요",
+        pending_reply_agent=AgentName.DECEDENT_ESTATE,
+        last_agent=AgentName.DECEDENT_ESTATE,
+        history=[{"role": "assistant", "content": "도장이 찍혀 있나요?"}],
+    )
+    assert "답변을 기다리는 중" in fake.last["user_text"]
+
+
+def test_pending_reply_agent_explicit_switch_without_lead_in(monkeypatch):
+    """시나리오 E — "상속 절차부터 알려줘"처럼 말머리("유언 얘기는 알겠고")
+    없이 곧장 새 주제를 꺼내도, LLM이 새 주제로 판단하면 전환돼야 한다."""
+    fake = _install(monkeypatch, {"agents": ["heir_navigator"]})
+    plan = _classify(
+        "상속 절차부터 알려줘",
+        pending_reply_agent=AgentName.DECEDENT_ESTATE,
+        last_agent=AgentName.DECEDENT_ESTATE,
+        history=[{"role": "assistant", "content": "유언장 사진을 올려주세요."}],
+    )
+    assert len(fake.calls) == 1
+    assert plan.layers == [[AgentName.HEIR_NAVIGATOR]]
+
+
+def test_pending_reply_agent_llm_failure_falls_back_to_pending_agent(monkeypatch):
+    """시나리오 H — _llm_route가 예외로 실패하면(claude.extract raise) 새
+    주제인지 판단할 수 없으니 안전하게 pending_reply_agent를 유지해야 한다."""
+    _install(monkeypatch, raise_exc=RuntimeError("boom"))
+    plan = _classify(
+        "그건 됐고 다음은 뭐야?",
+        pending_reply_agent=AgentName.DECEDENT_ESTATE,
+        last_agent=AgentName.DECEDENT_ESTATE,
+        history=[{"role": "assistant", "content": "유언장 사진을 올려주세요."}],
+    )
+    assert plan.layers == [[AgentName.DECEDENT_ESTATE]]
+    assert plan.llm_used is False
 
 
 # ------------------------------------------------------------ 복수 선택
