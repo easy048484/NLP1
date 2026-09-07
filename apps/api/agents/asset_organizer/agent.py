@@ -223,8 +223,10 @@ _EDIT_AMOUNT_QUESTION_SUFFIX = (
 _NEGATIVE_ANSWER_RE = re.compile(r"없|아니")
 #: "없어요"(retract — 항목 자체가 없다는 뜻, 기존 동작)와 구분되는 "몰라요"
 #: (존재는 있는데 금액을 모른다는 뜻) — 3단계 신뢰도의 "금액모름"으로
-#: 영구 확정한다. _wants_unknown_amount() 참고.
-_DONT_KNOW_AMOUNT_RE = re.compile(r"몰라|모르")
+#: 영구 확정한다. _wants_unknown_amount() 참고. extractor.py의 동일 이름
+#: 로컬 복제본과 패턴을 맞춘다(자연어 탐색 라운드에서 "확인 못 했어요" 등
+#: 추가— extractor.py 쪽 주석 참고).
+_DONT_KNOW_AMOUNT_RE = re.compile(r"몰라|모르|확인.{0,6}(?:못|안)")
 
 # 부채 정밀 모드 후속질문 답변 해석용. "(?<!\d)...(?!\d)"로 앞뒤에 숫자가
 # 더 없는 "독립된" 1~3자리 숫자만 잡는다 — 이게 없으면 "2030년까지"의
