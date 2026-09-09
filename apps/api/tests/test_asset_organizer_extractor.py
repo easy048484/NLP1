@@ -1326,4 +1326,346 @@ def test_disclosure_legitimate_gita_and_same_amount_liability_both_preserved(
             confidence="confirmed",
         )
     ]
-    assert liability_missing == []
+
+
+# ============== 자연어 탐색 재현: "이고"/"이랑"/"?" 미분리로 인한 금액 합산 오탐
+
+
+def test_igo_connector_prevents_amount_cross_contamination_between_asset_and_liability():
+    """실측 재현(자연어 탐색): "아파트는 3억5천이고 카드론은 3천만원 남아
+    있다고 합니다"에서 "이고"가 세그먼트 구분자가 아니었을 때, 한
+    세그먼트 안의 두 금액(3억5천 + 3천만원)이 합산돼(380,000,000) 부동산과
+    카드론 둘 다 잘못된 값으로 등록됐다."""
+    text = "아파트는 3억5천이고 카드론은 3천만원 남아 있다고 합니다"
+    result = extractor.extract_financial_slots(text)
+    liabilities, missing = extractor.extract_liabilities(text)
+
+    assert any(a.type == "부동산" and a.value == 350_000_000 for a in result.assets)
+    assert not any(a.value == 380_000_000 for a in result.assets)
+    assert liabilities == [
+        extractor.Liability(
+            type="카드론",
+            remaining_balance=30_000_000,
+            monthly_payment=None,
+            end_age=None,
+            note=None,
+            confidence="confirmed",
+        )
+    ]
+    assert missing == []
+
+
+def test_irang_connector_prevents_amount_cross_contamination_and_asset_loss():
+    """실측 재현: "예금이 5천만원이랑 집이 4억 있습니다"에서 "이랑"이
+    구분자가 아니었을 때 두 금액(5천만원+4억=450,000,000)이 합산돼
+    예금에만 잘못 등록되고 부동산(집 4억)은 통째로 유실됐다."""
+    result = extractor.extract_financial_slots("예금이 5천만원이랑 집이 4억 있습니다")
+
+    assert any(a.type == "예금" and a.value == 50_000_000 for a in result.assets)
+    assert any(a.type == "부동산" and a.value == 400_000_000 for a in result.assets)
+    assert not any(a.value == 450_000_000 for a in result.assets)
+
+
+def test_question_mark_connector_prevents_amount_cross_contamination():
+    """실측 재현: "예금은 8천 정도? 대출은 1억 조금 넘게 남았습니다"에서
+    "?"가 구분자가 아니었을 때 8천만원+1억(180,000,000)이 합산돼 예금과
+    대출 둘 다 같은 잘못된 값으로 등록됐다."""
+    text = "예금은 8천 정도? 대출은 1억 조금 넘게 남았습니다"
+    result = extractor.extract_financial_slots(text)
+    liabilities, missing = extractor.extract_liabilities(text)
+
+    assert any(a.type == "예금" and a.value == 80_000_000 for a in result.assets)
+    assert not any(a.value == 180_000_000 for a in result.assets)
+    assert liabilities == [
+        extractor.Liability(
+            type="대출",
+            remaining_balance=100_000_000,
+            monthly_payment=None,
+            end_age=None,
+            note=None,
+            confidence="confirmed",
+        )
+    ]
+
+
+def test_irang_connector_does_not_break_existing_generic_bit_intent_guard():
+    """ "재산이랑 빚을 한번 정리해두려고 해요"는 "이랑" 분리 이후에도
+    여전히 포괄 상담 의도로 인식돼 실제 부채를 만들면 안 된다(회귀
+    방지 — 세그먼트 분리 지점이 바뀌어도 기존 가드가 깨지지 않는지
+    확인)."""
+    liabilities, missing = extractor.extract_liabilities(
+        "어머니가 돌아가셔서 재산이랑 빚을 한번 정리해두려고 해요."
+    )
+    assert liabilities == []
+    assert missing == []
+
+
+# ============== 자연어 탐색 2라운드: 실제 실패로 확인된 항목만 최소 수정
+
+
+def test_a1_mixed_amount_expressions_and_car_unknown_amount():
+    """실측 재현(A1): "예금은 한 6천5백 정도 있고 펀드가 1천2백쯤 있어요.
+    집은 2억8천 정도고 자동차도 한 대 있는데 지금 얼마인지는 모르겠네요.
+    주식이랑 퇴직연금은 없고 대출도 없습니다."
+
+    - "6천5백"의 "백"이 _UNIT_MULTIPLIERS에 없어 "5백"이 조용히 버려지고
+      6천만원(60,000,000)으로만 반쪽 확정됐었다 — 65,000,000이어야 한다.
+    - "정도고"가 세그먼트 구분자가 아니어서 "집은 2억8천 정도고 자동차도
+      ..."이 한 세그먼트로 남았고, _match_all_asset_types가 부동산·자동차
+      둘 다 잡은 뒤 금액(280,000,000)이 있는 부동산만 채택하고 자동차는
+      통째로 유실됐었다.
+    - "자동차도... 모르겠네요"는 같은 세그먼트 안에서 이미 "모르겠다"고
+      답한 것이므로(보험/부채와 동일 원칙) 후속 질문 없이 바로
+      unknown_amount로 확정해야 한다.
+    """
+    text = (
+        "예금은 한 6천5백 정도 있고 펀드가 1천2백쯤 있어요. "
+        "집은 2억8천 정도고 자동차도 한 대 있는데 지금 얼마인지는 모르겠네요. "
+        "주식이랑 퇴직연금은 없고 대출도 없습니다."
+    )
+    result = extractor.extract_financial_slots(text)
+    liabilities, liability_missing = extractor.extract_liabilities(text)
+
+    assert any(a.type == "예금" and a.value == 65_000_000 for a in result.assets)
+    assert any(a.type == "펀드" and a.value == 12_000_000 for a in result.assets)
+    assert any(a.type == "부동산" and a.value == 280_000_000 for a in result.assets)
+    assert any(
+        a.type == "자동차" and a.confidence == "unknown_amount" and a.value == 0
+        for a in result.assets
+    )
+    assert not any(a.value == 340_000_000 for a in result.assets)  # 구 합산 오염값
+
+    assert any(
+        m["kind"] == "asset_absent" and m["asset_type"] == "주식"
+        for m in result.missing
+    )
+    assert any(
+        m["kind"] == "asset_absent" and m["asset_type"] == "퇴직연금"
+        for m in result.missing
+    )
+    assert liabilities == []
+    assert any(m["kind"] == "liability_absent" for m in liability_missing)
+
+
+def test_bare_hundred_unit_without_won_suffix_still_scaled_to_domain_manwon():
+    """ "6천5백"처럼 "만원"이 생략된 관용 표현에서 "백"만 단독으로 쓰였을
+    때도 "천"과 같은 규칙(만원 단위 축약)으로 해석되는지 정규식 단위에서
+    직접 확인한다."""
+    assert extractor._parse_amount("6천5백") == 65_000_000
+    assert extractor._parse_amount("1천2백") == 12_000_000
+
+
+def test_a2_tongjang_synonym_and_liability_together():
+    """실측 재현(A2): "통장"이 "예금" 키워드 사전에 없어 유형 자체를 못
+    알아봤다. "통장에 3200만원 정도 있고 주식은 1500 정도 있습니다.
+    대출은 4천만원 남아 있어요."에서 통장→예금 32,000,000, 대출
+    40,000,000이 잡히는지 확인한다. "1500"처럼 단위가 전혀 없는 순수
+    숫자는 1500원/1500만원/1500억 등으로 해석이 갈려 위험하므로 조용히
+    추측하지 않고 재질문 대상(asset_value missing)으로 남아야 한다(A1의
+    "부분 금액 조용한 채택 금지" 원칙과 동일)."""
+    text = "통장에 3200만원 정도 있고 주식은 1500 정도 있습니다. 대출은 4천만원 남아 있어요."
+    result = extractor.extract_financial_slots(text)
+    liabilities, _ = extractor.extract_liabilities(text)
+
+    assert any(a.type == "예금" and a.value == 32_000_000 for a in result.assets)
+    assert any(
+        m["kind"] == "asset_value" and m["asset_type"] == "주식" for m in result.missing
+    )
+    assert not any(a.type == "주식" for a in result.assets)
+    assert liabilities == [
+        extractor.Liability(
+            type="대출",
+            remaining_balance=40_000_000,
+            monthly_payment=None,
+            end_age=None,
+            note=None,
+            confidence="confirmed",
+        )
+    ]
+
+
+def test_deposit_generic_synonyms_still_work_after_tongjang_added():
+    """ "통장" 추가가 기존 "예금"/"적금"/"저금" 인식을 깨지 않는지 확인하는
+    회귀 테스트."""
+    for word in ("예금", "적금", "저금"):
+        result = extractor.extract_financial_slots(f"{word} 3천만원 있어요")
+        assert any(
+            a.type == "예금" and a.value == 30_000_000 for a in result.assets
+        ), word
+
+
+def test_b3_jeungkwon_account_existence_only_resolves_to_unknown_amount_immediately():
+    """실측 재현(B3): "증권 계좌는 있다고 하는데 잔액은 아직 확인 못
+    했어요."에서 "증권"이 "주식" 키워드 사전에 없어 유형 자체를 못
+    알아봤다. 추가 후 "확인 못 했어요"도 "몰라요"와 같은 뜻으로 인식해
+    후속 질문 없이 바로 unknown_amount로 확정돼야 한다(반복 질문 금지)."""
+    result = extractor.extract_financial_slots(
+        "증권 계좌는 있다고 하는데 잔액은 아직 확인 못 했어요."
+    )
+
+    assert result.assets == [
+        extractor.Asset(type="주식", value=0, confidence="unknown_amount")
+    ]
+    assert result.missing == []
+
+
+def test_b2_liability_dont_know_amount_resolves_immediately_without_repeat_question():
+    """실측 재현(B2): "대출은 있는데 얼마 남았는지는 잘 모르겠어요."에서
+    같은 세그먼트 안에 이미 "모르겠다"는 답이 있는데도 extract_liabilities()
+    는 무조건 liability_value(재질문 대상)로만 처리했다 — 보험/자산과
+    동일 원칙으로 unknown_amount 즉시 확정해야 한다."""
+    liabilities, missing = extractor.extract_liabilities(
+        "대출은 있는데 얼마 남았는지는 잘 모르겠어요."
+    )
+
+    assert liabilities == [
+        extractor.Liability(
+            type="대출",
+            remaining_balance=None,
+            monthly_payment=None,
+            end_age=None,
+            note=None,
+            confidence="unknown_amount",
+        )
+    ]
+    assert missing == []
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("대출은 없어요", "absent"),
+        ("대출 0원이에요", "zero"),
+        ("대출 2천만원 남았어요", "confirmed"),
+    ],
+)
+def test_liability_absent_zero_and_confirmed_are_not_conflated(text, expected):
+    """ "없어요"(absent)/"0원"(확인된 0원)/"2천만원"(확정 금액) 세 의미가
+    서로 섞이지 않는지 확인하는 회귀 테스트 — B2 unknown_amount 추가가
+    기존 세 경로를 깨지 않았는지 함께 검증한다."""
+    liabilities, missing = extractor.extract_liabilities(text)
+
+    if expected == "absent":
+        assert liabilities == []
+        assert any(m["kind"] == "liability_absent" for m in missing)
+    elif expected == "zero":
+        assert liabilities == [
+            extractor.Liability(
+                type="대출",
+                remaining_balance=0,
+                monthly_payment=None,
+                end_age=None,
+                note=None,
+                confidence="confirmed",
+            )
+        ]
+    else:
+        assert liabilities == [
+            extractor.Liability(
+                type="대출",
+                remaining_balance=20_000_000,
+                monthly_payment=None,
+                end_age=None,
+                note=None,
+                confidence="confirmed",
+            )
+        ]
+
+
+def test_d2_bare_korean_amount_word_without_leading_digit():
+    """실측 재현(D2): "예금은 없고 펀드는 천만원 있어요."에서 앞에 숫자가
+    안 붙은 순수 한글 단위어 "천만원"(=10,000,000)을 기존 _UNIT_RE가 아예
+    못 잡았다."""
+    result = extractor.extract_financial_slots("예금은 없고 펀드는 천만원 있어요.")
+
+    assert any(a.type == "펀드" and a.value == 10_000_000 for a in result.assets)
+    assert any(
+        m["kind"] == "asset_absent" and m["asset_type"] == "예금"
+        for m in result.missing
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "억울한 일을 당했어요",
+        "그건 오해예요, 원한은 없어요",
+        "기차는 이미 놓쳤어요",
+        "만약 그렇다면 곤란해요",
+    ],
+)
+def test_bare_korean_amount_word_does_not_false_positive_on_unrelated_words(text):
+    """ "억울하다"/"원한"/"기차"/"만약"처럼 단위 한자를 우연히 포함한
+    일반 단어가 금액으로 오인식되지 않는지 확인하는 방어 테스트 — 단어
+    경계(공백/문장부호/세그먼트 시작)와 "원"으로 끝나야 한다는 요구조건이
+    실제로 걸러내는지 검증한다."""
+    assert extractor._parse_amount(text) is None
+
+
+def test_d3_colloquial_car_noun_recognized_without_raw_single_char_keyword():
+    """실측 재현(D3): "주식과 펀드는 없어요. 차는 있는데 시세를 몰라요."에서
+    "차"가 자동차 키워드 사전에 없어(원인 문자 충돌 우려로 의도적으로 안
+    넣음) 자동차 자체를 인식하지 못했다. 조사 결합형("차는")만 좁게
+    인식하는 콜론적 패턴으로 unknown_amount를 확정한다."""
+    result = extractor.extract_financial_slots(
+        "주식과 펀드는 없어요. 차는 있는데 시세를 몰라요."
+    )
+
+    assert any(
+        a.type == "자동차" and a.confidence == "unknown_amount" and a.value == 0
+        for a in result.assets
+    )
+    assert any(
+        m["kind"] == "asset_absent" and m["asset_type"] == "주식"
+        for m in result.missing
+    )
+    assert any(
+        m["kind"] == "asset_absent" and m["asset_type"] == "펀드"
+        for m in result.missing
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "2차 면접 준비 중이에요",
+        "기차표를 예매했어요",
+        "세차를 했더니 깨끗해요",
+        "이번이 마지막 차례예요",
+    ],
+)
+def test_colloquial_car_pattern_does_not_false_positive_on_unrelated_words(text):
+    """ "2차"/"기차"/"세차"/"차례"처럼 "차" 음절을 포함한 무관한 단어가
+    자동차로 오인식되지 않는지 확인하는 방어 테스트(D3에서 사용자가 명시적
+    으로 요구한 false-positive 방어)."""
+    assert not extractor._CAR_COLLOQUIAL_RE.search(text)
+
+
+def test_c3_existence_question_wording_does_not_trigger_spurious_amount_followup():
+    """실측 재현(C3): "어머니가 돌아가셔서 재산이랑 빚이 뭐가 있는지
+    정리해두려고 해요."에서 liabilities는 항상 []였지만(오탐 방지 1단계는
+    유지), _EXISTENCE_VERB_RE(있|남)가 "뭐가 있는지"(질문형 어미, 존재
+    진술이 아님)에도 매칭돼 _is_generic_liability_intent 가드가 억제되지
+    않았다 — 그 결과 확정되지 않은 부채에 "얼마 남았나요" 후속 질문까지
+    나갔다(missing에 liability_value가 남음). "있는지"만 좁게 제외해
+    missing도 비어야 한다."""
+    liabilities, missing = extractor.extract_liabilities(
+        "어머니가 돌아가셔서 재산이랑 빚이 뭐가 있는지 정리해두려고 해요."
+    )
+    assert liabilities == []
+    assert missing == []
+
+
+def test_existence_verb_guard_still_recognizes_real_existence_statements():
+    """ "있는지"만 좁게 제외했을 뿐, "빚이 좀 있는데 정리하고 싶어요"처럼
+    실제 존재를 진술하는 표현("있는데")은 여전히 가드를 억제해 대출 유형을
+    인식하고 금액 후속 질문으로 이어져야 한다(회귀 방지 — 위 fix가 기존
+    "있는데"/"있어요" 인식을 함께 깨지 않았는지 확인)."""
+    liabilities, missing = extractor.extract_liabilities(
+        "빚이 좀 있는데 정리하고 싶어요."
+    )
+    assert liabilities == []
+    assert any(
+        m["kind"] == "liability_value" and m["liability_type"] == "대출"
+        for m in missing
+    )

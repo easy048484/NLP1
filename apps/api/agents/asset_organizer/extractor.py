@@ -123,10 +123,27 @@ _UNIT_MULTIPLIERS: dict[str, int] = {
     # 생기는 의도적 트레이드오프이며, 이 에이전트가 다루는 노후자금 규모
     # 맥락에서는 전자가 훨씬 흔하다고 판단했다 (알려진 한계로 남겨둠).
     "천": 10_000_000,
+    # "백"도 "천"과 같은 이유의 트레이드오프 — "6천5백"처럼 "천" 뒤에 붙는
+    # "5백"은 이 도메인에서 "5백만원"의 축약이다(실측 재현: A1 자연어 탐색
+    # 라운드, "예금은 한 6천5백 정도 있고" → 65,000,000). 숫자가 앞에 붙어야만
+    # (_UNIT_RE가 자릿수를 요구) 매칭되므로 "백만원"(리터럴 100만원, 이미
+    # "백만" 키로 별도 처리됨)과 혼동되지 않는다.
+    "백": 1_000_000,
     "만": 10_000,
     "원": 1,
 }
-_UNIT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(조|억|천만|백만|천|만|원)")
+_UNIT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(조|억|천만|백만|천|백|만|원)")
+#: 실측 재현(D2, 자연어 탐색): "펀드는 천만원 있어요"처럼 앞에 숫자가 전혀
+#: 안 붙은 순수 한글 단위어("천만원", "만원", "억원" 등)는 위 _UNIT_RE가
+#: 숫자를 필수로 요구해 아예 못 잡는다. 다만 숫자 없이 단위어만 임의로
+#: 아무 데서나 인식하면 "억울하다"("억"으로 시작), "원한"("원"으로 시작)
+#: 처럼 돈과 무관한 단어를 오인식할 위험이 크다 — 그래서 반드시 (1) 단어
+#: 시작 지점(공백/문장부호/세그먼트 시작)에서 시작하고 (2) 단위어 바로
+#: 뒤에 "원"이 붙어서 끝나고(그래야 "만약"/"천천히"처럼 다른 글자로 이어지는
+#: 경우가 걸러진다) (3) 그 뒤가 공백/문장부호/세그먼트 끝이어야만 매칭한다.
+_BARE_UNIT_WORD_RE = re.compile(
+    r"(?:^|(?<=\s))(조|억|천만|백만|천|백|만)원(?=\s|$|[.,?!])"
+)
 
 
 def _parse_amount(text: str) -> Optional[int]:
@@ -135,11 +152,14 @@ def _parse_amount(text: str) -> Optional[int]:
     cleaned = _NOISE_RE.sub("", text)
     cleaned = _THOUSANDS_COMMA_RE.sub("", cleaned)
     matches = _UNIT_RE.findall(cleaned)
-    if not matches:
+    bare_matches = _BARE_UNIT_WORD_RE.findall(cleaned)
+    if not matches and not bare_matches:
         return None
     total = Decimal("0")
     for number, unit in matches:
         total += Decimal(number) * _UNIT_MULTIPLIERS[unit]
+    for unit in bare_matches:
+        total += _UNIT_MULTIPLIERS[unit]
     return int(total)
 
 
@@ -154,11 +174,18 @@ _SEGMENT_NEGATION_RE = re.compile(r"없|아니")
 #: agent를 import할 수 없어(agent가 extractor를 import하는 방향, 순환 참조
 #: 방지) 공유할 수 없다. "보험은 있는데 금액은 몰라요"처럼 정규식 1차
 #: 추출 단계에서 바로 unknown_amount로 확정하려면 이 파일 안에서도 판단이
-#: 필요하다(_NOISE_RE 등 기존 로컬 복제 관례와 동일).
-_DONT_KNOW_AMOUNT_RE = re.compile(r"몰라|모르")
+#: 필요하다(_NOISE_RE 등 기존 로컬 복제 관례와 동일). "확인 못 했어요"/
+#: "확인 안 됐어요"도 "몰라요"와 같은 뜻으로 흔히 쓰이는 구어체 표현이라
+#: 같이 인식한다(실측 재현 B3: "증권 계좌는 있다고 하는데 잔액은 아직
+#: 확인 못 했어요").
+_DONT_KNOW_AMOUNT_RE = re.compile(r"몰라|모르|확인.{0,6}(?:못|안)")
 _ASSET_KEYWORDS: dict[AssetType, tuple[str, ...]] = {
-    "예금": ("예금", "적금", "저금"),
-    "주식": ("주식",),
+    # "통장"은 이 제품 문맥에서 "예금"의 흔한 구어체 동의어다(실측 재현
+    # A2, 자연어 탐색 라운드: "통장에 3200만원 정도 있고").
+    "예금": ("예금", "적금", "저금", "통장"),
+    # "증권"은 "증권 계좌"처럼 주식·투자상품 보유를 가리키는 구어체
+    # 동의어다(실측 재현 B3: "증권 계좌는 있다고 하는데 잔액은...").
+    "주식": ("주식", "증권"),
     "펀드": ("펀드",),
     "부동산": ("집", "아파트", "주택", "부동산", "건물"),
     "자동차": ("자동차", "차량"),
@@ -179,8 +206,24 @@ _INSURANCE_KEYWORDS = ("보험",)
 # 부정 신호(_SEGMENT_NEGATION_RE가 찾는 "없")가 함께 사라져 뒤의
 # asset_absent 판정이 불가능해진다. lookbehind로 "고" 한 글자만 구분자로
 # 삼아 "없"은 앞 세그먼트에 남긴다(D-01).
+# ⚠️ 실측 재현된 버그(자연어 탐색 라운드): "아파트는 3억5천이고 카드론은
+# 3천만원 남아 있다고 합니다"/"예금이 5천만원이랑 집이 4억 있습니다"/
+# "예금은 8천 정도? 대출은 1억 조금 넘게 남았습니다"처럼 "이고"/"이랑"/
+# 물음표로 이어지는 문장은 기존 구분자(있고/그리고/또한/콤마/마침표)에
+# 안 걸려 한 세그먼트로 남았다 — _parse_amount가 세그먼트 안의 모든
+# 금액을 합산하는 방식이라(예: "3,200만원" 같은 복합 단위 표기를 한
+# 숫자로 합치기 위한 설계) 서로 다른 자산·부채 두 개의 금액이 하나로
+# 더해져 둘 다 잘못된(부풀려진) 값으로 등록되거나, 두 번째 유형이
+# 완전히 유실됐다. "이고"/"이랑"은 콤마 없이 자산·부채를 나열할 때
+# "있고"만큼 흔한 연결어이고, "?"는 "8천 정도?"처럼 망설이는 어조에서
+# 흔히 문장 중간의 구두점으로 쓰인다 — 셋 다 구분자로 추가한다.
+# "정도고"는 "정도이고"의 구어체 축약("2억8천 정도고 자동차도...")으로,
+# "있고"/"이고"만큼 흔하진 않지만 근사치 표현 뒤에 특히 자주 붙는다(실측
+# 재현 A1) — 일반적인 "-고" 전부를 구분자로 넣으면 "정리하려고"/"남아
+# 있다고" 같은 무관한 표현까지 과잉 분리되므로, 이 특정 축약형만 좁게
+# 추가한다.
 _SEGMENT_SPLIT_RE = re.compile(
-    r"(?<!\d)[.](?!\d)|(?<!\d),(?!\d)|、|그리고|또한|있고|(?<=없)고"
+    r"(?<!\d)[.](?!\d)|(?<!\d),(?!\d)|、|\?|그리고|또한|있고|이고|이랑|정도고|(?<=없)고"
 )
 #: 순수 조사만 남았는지 확인 — "주식,"처럼 콤마로 나열된 세그먼트가 키워드
 #: 자체 그대로("주식")이거나 조사만 붙었으면("자동차는") 서술어 없는 "맨
@@ -196,6 +239,16 @@ def _match_asset_type(segment: str) -> Optional[AssetType]:
     return None
 
 
+#: "차"는 자산 키워드 사전에 raw 한 글자로 그냥 추가하면 "차이"/"차례"/
+#: "기차"/"세차" 등과 충돌해 오탐이 크다(D3, 자연어 탐색 라운드에서
+#: 명시적으로 금지됨). 그래서 키워드 사전에는 넣지 않고, "차"가 독립
+#: 명사로 쓰인 좁은 형태(조사 는/가/도가 바로 붙거나 "차 한 대"처럼
+#: 쓰이거나 세그먼트 전체가 "차" 그 자체인 경우)만 별도로 인식한다.
+#: 앞이 세그먼트 시작이거나 공백/문장부호 뒤여야 한다 — "기차는"처럼 다른
+#: 한글 음절에 바로 붙은 "차"는 이 lookbehind에서 막힌다.
+_CAR_COLLOQUIAL_RE = re.compile(r"(?:^|(?<=[\s,.!?]))차(?=는|가|도|\s*한\s*대|$)")
+
+
 def _match_all_asset_types(segment: str) -> list[tuple[AssetType, str]]:
     """세그먼트 안에서 매칭되는 모든 자산 유형을 (유형, 실제 매칭된 키워드)
     쌍으로 돌려준다. "주식과 펀드는 없어요"처럼 부정 표현 하나가 콤마 없이
@@ -208,6 +261,9 @@ def _match_all_asset_types(segment: str) -> list[tuple[AssetType, str]]:
             if keyword in segment:
                 matches.append((asset_type, keyword))
                 break
+    if not any(asset_type == "자동차" for asset_type, _ in matches):
+        if _CAR_COLLOQUIAL_RE.search(segment):
+            matches.append(("자동차", "차"))
     return matches
 
 
@@ -343,14 +399,21 @@ def _regex_extract(text: str) -> tuple[ExtractionResult, list[str]]:
         # 후속 질문 대상으로만 남긴다.
         flush_as_missing()
         asset_type = matched_types[0][0]
-        missing.append(
-            {
-                "kind": "asset_value",
-                "asset_type": asset_type,
-                "segment": segment,
-                "reason": f"{asset_type} 금액이 언급되지 않음",
-            }
-        )
+        if _DONT_KNOW_AMOUNT_RE.search(segment):
+            # "자동차도 있는데 지금 얼마인지는 모르겠네요"처럼 같은 세그먼트
+            # 안에서 이미 "모르겠다"고 답했다면(보험의 기존 동일 원칙, 위
+            # 참고) 후속 질문 없이 바로 unknown_amount로 확정한다 — 사용자가
+            # 먼저 답을 준 걸 다시 캐묻지 않는다(실측 재현 A1/D3).
+            assets.append(Asset(type=asset_type, value=0, confidence="unknown_amount"))
+        else:
+            missing.append(
+                {
+                    "kind": "asset_value",
+                    "asset_type": asset_type,
+                    "segment": segment,
+                    "reason": f"{asset_type} 금액이 언급되지 않음",
+                }
+            )
 
     # 나열이 부정으로 끝나지 못하고 문장이 끝났다("주식, 펀드" 뒤에 아무
     # 서술어도 안 옴) — 기존처럼 개별 금액 재질문 대상으로 처리한다.
@@ -392,7 +455,14 @@ _ORGANIZE_INTENT_RE = re.compile(
 #: 있는데 정리하고 싶어요"는 실제 부채 존재 확인이 우선이다. "없|아니"
 #: (부정)와 대칭으로 짧은 로컬 조각 매칭 관례(_NEGATIVE_ANSWER_RE 등)를
 #: 그대로 따른다.
-_EXISTENCE_VERB_RE = re.compile(r"있|남")
+#: ⚠️ 실측 재현된 버그(자연어 탐색 2라운드, C3): "빚이 뭐가 있는지
+#: 정리해두려고 해요"의 "있는지"는 존재를 진술하는 게 아니라 "뭐가
+#: 있는지 (모르니 확인하고 싶다)"는 질문형 어미다. 이 "있"까지 존재
+#: 진술로 오인하면 위 가드가 억제되지 않아, 확정되지 않은 부채에 대해
+#: "얼마 남았나요"까지 되묻는 잘못된 후속 질문이 나갔다. "있는지"만
+#: 좁게 제외한다 — "있는데"/"있어요"/"있대요" 등 실제 존재 진술은
+#: 그대로 걸린다.
+_EXISTENCE_VERB_RE = re.compile(r"있(?!는지)|남")
 
 
 def _is_generic_liability_intent(segment: str, keyword: str) -> bool:
@@ -453,6 +523,20 @@ def extract_liabilities(text: str) -> tuple[list[Liability], list[dict[str, Any]
                         "liability_type": liability_type,
                         "segment": segment,
                     }
+                )
+                continue
+            if _DONT_KNOW_AMOUNT_RE.search(segment):
+                # "대출은 있는데 얼마 남았는지는 잘 모르겠어요"처럼 같은
+                # 세그먼트 안에서 이미 "모르겠다"고 답했다면 보험/자산과
+                # 동일한 원칙으로 후속 질문 없이 바로 unknown_amount로
+                # 확정한다(실측 재현 B2) — remaining_balance는 Liability의
+                # 불변식대로 반드시 None.
+                liabilities.append(
+                    Liability(
+                        type=liability_type,
+                        remaining_balance=None,
+                        confidence="unknown_amount",
+                    )
                 )
                 continue
             missing.append(
