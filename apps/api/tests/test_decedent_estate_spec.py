@@ -15,7 +15,21 @@ from __future__ import annotations
 
 from agents.decedent_estate.spec import SPEC
 from orchestrator import planner
-from schemas import AgentName
+from schemas import AgentAxis, AgentName
+
+
+def test_axes_include_pre_need_and_post_death():
+    """decedent_estate 는 intent=prepare(생전 유언 작성 가이드)와 사후 유언장
+    점검을 모두 지원한다(agent.py 의 intent 게이트 참고) — axes 가 실제 기능
+    범위와 어긋나면 docs/라우팅방식변경.md 의 spec 점검 원칙(#109) 위반이자,
+    _catalog_lines() 가 그대로 LLM 라우팅 프롬프트에 노출하는 metadata라
+    라우팅 품질에도 영향을 준다."""
+    assert SPEC.axes == [AgentAxis.PRE_NEED, AgentAxis.POST_DEATH]
+
+
+def test_classify_prompt_surfaces_both_axes():
+    prompt = planner._classify_prompt([AgentName.DECEDENT_ESTATE])
+    assert "- decedent_estate [pre_need, post_death]:" in prompt
 
 
 def test_first_three_examples_cover_no_will_case():
