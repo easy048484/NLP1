@@ -457,6 +457,35 @@ def test_ambiguous_or_underspecified_messages_do_not_infer_will_type(
     assert "requirements" not in output.data
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "자필인지 공증인지 모르겠어요",
+        "손으로 쓴 건지 공증받은 건지 모르겠습니다",
+        "자필이거나 공증받은 것 같아요",
+        "녹음인지 자필인지 애매해요",
+        "공증받은 건지 그냥 손으로 쓴 건지 모르겠어요",
+        "남긴 건 맞는데 자필인지 녹음인지 모르겠어요",
+    ],
+)
+def test_weak_conflict_alias_prevents_silent_handwritten_confirmation(
+    message: str,
+) -> None:
+    """실측 재현(2026-09-18, P6 95-case QA) — 위 문장들은 모두 두 방식을
+    명시적 대안으로 놓고 "인지/건지/거나/모르겠다/애매하다"류로 불확실성을
+    표현하는데도, 기존 충돌 방어는 두 후보 모두 "강한" inference_markers/
+    patterns에 걸릴 때만 작동해서 handwritten("자필")만 단독으로 걸리고
+    notarial("공증")/recording("녹음")은 안 걸려(오탐 방지로 의도적으로
+    약하게 설계됨) 조용히 handwritten으로 확정됐다. rules/will_types.json
+    의 conflict_guard가 이런 "약한" 후보도 명시적 불확실성 표현과 함께면
+    second-candidate로 잡아 None(재질문)을 반환해야 한다."""
+    output = decedent_estate.run(AgentInput(session_id="s1", user_message=message))
+
+    assert "어떤 형태의 유언인가요?" in output.reply
+    assert output.data.get("will_type") != "handwritten"
+    assert "requirements" not in output.data
+
+
 def test_conflict_guard_catches_elided_notarial_mention() -> None:
     """실제 UI 자연어 QA(2026-09-07)에서 발견 — "유언장이 자필인지 공증받은
     건지 잘 모르겠어"는 "유언장"을 한 번만 말하고 "공증받은" 뒤에서는
@@ -702,6 +731,9 @@ def test_type_switch_resets_previous_type_progress_state() -> None:
         "공정증서 유언도 있나요?",
         "다른 방식도 궁금해요",
         "다른 방식으로 할까 고민 중이야",
+        "공증도 가능한가요?",
+        "공증 유언은 뭐가 달라요?",
+        "공정증서가 더 안전한가요?",
     ],
 )
 def test_mention_or_ambiguous_change_does_not_switch_stored_will_type(
@@ -709,11 +741,38 @@ def test_mention_or_ambiguous_change_does_not_switch_stored_will_type(
 ) -> None:
     """단순 언급/비교 질문이나 모호한 변경 의도는 저장된 will_type을 바꾸지
     않는다 — "~로 하려고/할게/바꿀게" 같은 선택·변경 어미가 방식명 바로 뒤에
-    붙어야만 switch로 인정한다."""
+    붙어야만 switch로 인정한다. 마지막 세 개는 2026-09-18(P6 QA)에 notarial
+    switch alias("공증")를 추가하면서 함께 넣은 회귀 방지 케이스 — "공증"
+    단어 등장 자체가 아니라 명백한 변경 의도와 결합될 때만 switch돼야
+    한다."""
     stored = _stored("handwritten")
     output = _run_with_stored(stored, message)
 
     assert output.data["decedent_estate"]["will_type"] == "handwritten"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "공증받은 걸로 하기로 했어요",
+        "공증 받은 걸로 바꿀게요",
+        "공증으로 할게요",
+        "공증받기로 했어요",
+    ],
+)
+def test_notarial_colloquial_switch_phrasings_switch_stored_will_type(
+    message: str,
+) -> None:
+    """실측 재현(2026-09-18, P6 95-case QA) — notarial의 switch_markers가
+    기존에 "공정증서"뿐이라, handwritten 저장 상태에서 위 문장들(훨씬 흔한
+    구어체 "공증받은/공증으로" 전환 표현)을 보내도 switch가 안 되고
+    handwritten이 그대로 유지됐다. rules/will_types.json 의 notarial
+    switch_markers/switch_marker_patterns/switch_full_patterns 확장으로
+    고쳤다."""
+    stored = _stored("handwritten")
+    output = _run_with_stored(stored, message)
+
+    assert output.data["decedent_estate"]["will_type"] == "notarial"
 
 
 def test_explicit_context_will_type_wins_over_switch_phrase_in_message() -> None:
