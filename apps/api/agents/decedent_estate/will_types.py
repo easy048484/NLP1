@@ -120,17 +120,36 @@ def infer_will_type_from_message(user_message: str) -> Optional[str]:
     충돌 방어: 하나의 메시지가 서로 다른 두 후보의 marker/pattern에 동시에
     걸리면(예: "자필증서인지 공정증서인지 모르겠습니다") 임의로 하나를
     고르지 않고 None을 반환해 기존 방식 선택 질문으로 돌아간다. 정확히
-    하나의 후보만 hit일 때만 그 값을 반환한다."""
+    하나의 후보만 hit일 때만 그 값을 반환한다.
+
+    약한 충돌(2026-09-18 추가, P6 95-case QA): 위 충돌 방어는 두 후보 모두
+    "강한" inference_markers/patterns에 걸릴 때만 작동한다. 그런데 후보별
+    강도가 비대칭이다 — handwritten의 "자필"은 단독 marker만으로 걸리지만
+    notarial은 "유언"+"공증받" 공기를 요구하고, recording의 "녹음"은 아예
+    오탐 위험 때문에 marker에서 빠져 있다(switch 전용, 위 문단 참고). 그
+    결과 "자필인지 공증인지 모르겠어요"/"녹음인지 자필인지 애매해요"처럼
+    사용자가 명백히 "모르겠다"고 말해도 한쪽만 강하게 걸려 충돌 방어가
+    발동하지 못하고 handwritten으로 조용히 확정되는 버그가 실측됐다.
+    rules/will_types.json 의 conflict_guard.ambiguity_signal_pattern
+    ("인지/건지/거나/모르겠/애매/헷갈" 류)이 매치되면, 강한 매치 집합에 각
+    후보의 conflict_aliases(약한 별칭 — 예: notarial의 "공증", recording의
+    "녹음")도 더해 다시 센다. 그렇게 센 후보가 2개 이상이면 그 자리에서
+    바로 None을 반환한다. conflict_aliases는 이 좁은 맥락(명시적
+    불확실성 표현 + 두 후보 이상)에서만 쓰이고 단독 inference_markers로
+    승격되지 않는다 — 그래야 "공증사무소가 어디에 있나요?" 같은 무관한
+    문장에서 오탐이 늘지 않는다."""
+    data = _load()
+    types = data["will_types"]
     matched_ids = {
         wt["id"]
-        for wt in _load()["will_types"]
+        for wt in types
         if any(marker in user_message for marker in wt.get("inference_markers", []))
         or (
             _any_pattern_matches(wt.get("inference_patterns", []), user_message)
             and not _any_pattern_matches(wt.get("exclusion_patterns", []), user_message)
         )
     }
-    no_will = _load()["no_will"]
+    no_will = data["no_will"]
     no_will_hit = any(
         marker in user_message for marker in no_will.get("inference_markers", [])
     ) or (
@@ -141,6 +160,16 @@ def infer_will_type_from_message(user_message: str) -> Optional[str]:
     )
     if no_will_hit:
         matched_ids.add("none")
+
+    ambiguity_pattern = data.get("conflict_guard", {}).get("ambiguity_signal_pattern")
+    if ambiguity_pattern and _any_pattern_matches([ambiguity_pattern], user_message):
+        ambiguity_ids = matched_ids - {"none"}
+        for wt in types:
+            if any(alias in user_message for alias in wt.get("conflict_aliases", [])):
+                ambiguity_ids.add(wt["id"])
+        if len(ambiguity_ids) >= 2:
+            return None
+
     if len(matched_ids) == 1:
         return next(iter(matched_ids))
     return None
@@ -167,18 +196,45 @@ def infer_will_type_switch_from_message(user_message: str) -> Optional[str]:
 
     충돌 방어: 두 후보 이상의 switch 패턴이 동시에 걸리면(사실상 거의 없지만)
     임의로 고르지 않고 None을 반환해 저장된 state.will_type을 그대로 둔다.
+
+    switch_marker_patterns / switch_full_patterns(2026-09-18 추가, P6
+    95-case QA): "공증받은 걸로 하기로 했어요"가 switch로 안 잡히는 버그가
+    실측됐다 — notarial의 switch_markers가 "공정증서"뿐이었다. 단순히
+    "공증"을 literal switch_markers에 추가하는 것만으로는 "공증 받은 걸로
+    바꿀게요"처럼 marker와 어미 사이에 "받은 걸로"가 끼는 경우
+    intent_suffix_pattern의 filler 허용치(최대 4자)를 넘겨 여전히 놓친다.
+    그래서 두 필드를 추가했다:
+    - switch_marker_patterns: literal marker 대신 regex를 쓴다(예: notarial
+      의 "공증\\s*받" — "공증"과 "받" 사이 공백 유무 무관하게 한 덩어리로
+      소비한 뒤 남은 꼬리에 intent_suffix_pattern을 그대로 적용).
+    - switch_full_patterns: marker+suffix 조합으로 표현 안 되는 케이스용
+      standalone 완성 regex(예: "공증받기로 했어요"는 어간이 "받다"라
+      intent_suffix_pattern의 "하기로\\s*했"류에 안 걸린다 — 그렇다고 공용
+      suffix에 "기로\\s*했"를 필터 없이 추가하면 "녹음하지 않기로
+      했어요"(부정문, 정반대 의도) 같은 문장까지 오매치하므로, 공용
+      suffix는 건드리지 않고 "받"과 "기로 했" 사이에 다른 글자가 못
+      끼도록 완전히 고정한 standalone 패턴만 notarial 전용으로 둔다).
+    두 필드 모두 없는 will_type은 기존 switch_markers 로직만 그대로 탄다.
     """
-    suffix_pattern = _load().get("type_switch", {}).get("intent_suffix_pattern")
+    data = _load()
+    suffix_pattern = data.get("type_switch", {}).get("intent_suffix_pattern")
     if not suffix_pattern:
         return None
     matched_ids: set[str] = set()
-    for wt in _load()["will_types"]:
-        for marker in wt.get("switch_markers", []):
-            pattern = re.escape(marker) + suffix_pattern
-            compiled = _compile_patterns((pattern,))
-            if compiled and compiled[0].search(user_message):
-                matched_ids.add(wt["id"])
-                break
+    for wt in data["will_types"]:
+        candidate_patterns = (
+            [
+                re.escape(marker) + suffix_pattern
+                for marker in wt.get("switch_markers", [])
+            ]
+            + [
+                marker_pattern + suffix_pattern
+                for marker_pattern in wt.get("switch_marker_patterns", [])
+            ]
+            + list(wt.get("switch_full_patterns", []))
+        )
+        if _any_pattern_matches(candidate_patterns, user_message):
+            matched_ids.add(wt["id"])
     if len(matched_ids) == 1:
         return next(iter(matched_ids))
     return None
