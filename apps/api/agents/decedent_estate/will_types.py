@@ -222,12 +222,17 @@ def infer_will_type_switch_from_message(user_message: str) -> Optional[str]:
         return None
     matched_ids: set[str] = set()
     for wt in data["will_types"]:
-        candidate_patterns = [
-            re.escape(marker) + suffix_pattern for marker in wt.get("switch_markers", [])
-        ] + [
-            marker_pattern + suffix_pattern
-            for marker_pattern in wt.get("switch_marker_patterns", [])
-        ] + list(wt.get("switch_full_patterns", []))
+        candidate_patterns = (
+            [
+                re.escape(marker) + suffix_pattern
+                for marker in wt.get("switch_markers", [])
+            ]
+            + [
+                marker_pattern + suffix_pattern
+                for marker_pattern in wt.get("switch_marker_patterns", [])
+            ]
+            + list(wt.get("switch_full_patterns", []))
+        )
         if _any_pattern_matches(candidate_patterns, user_message):
             matched_ids.add(wt["id"])
     if len(matched_ids) == 1:
