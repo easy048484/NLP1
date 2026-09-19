@@ -151,16 +151,62 @@ def _parse_amount(text: str) -> Optional[int]:
     절대 0으로 대체하지 않는다 (호출부가 missing 처리 여부를 결정)."""
     cleaned = _NOISE_RE.sub("", text)
     cleaned = _THOUSANDS_COMMA_RE.sub("", cleaned)
-    matches = _UNIT_RE.findall(cleaned)
-    bare_matches = _BARE_UNIT_WORD_RE.findall(cleaned)
-    if not matches and not bare_matches:
+    unit_matches = list(_UNIT_RE.finditer(cleaned))
+    bare_matches = list(_BARE_UNIT_WORD_RE.finditer(cleaned))
+    if not unit_matches and not bare_matches:
         return None
+
+    # 실측 재현(E25): "3200 만원"처럼 숫자와 단위 사이에 공백이 있으면
+    # _UNIT_RE가 "3200"+"만"을 이미 하나로 묶어 잡는데(자릿수 필수라 "만원"
+    # 앞까지만 소비하고 "원"은 안 먹는다), 같은 "만" 글자 위치가
+    # _BARE_UNIT_WORD_RE(숫자 없이 홀로 쓰인 단위어 전용 패턴 — 단위+"원"이
+    # 공백/문장 시작 뒤에 오는 형태)에도 다시 걸려 같은 금액이 중복
+    # 합산됐다(32,000,000이어야 할 게 32,010,000). _UNIT_RE가 이미 소비한
+    # 문자 구간과 겹치는 bare 매치는 무시한다 — 특정 입력 하나만 예외
+    # 처리하지 않고 span 기준으로 일반화해서 dedupe한다.
+    occupied_spans = [match.span() for match in unit_matches]
+
+    def _overlaps_occupied(span: tuple[int, int]) -> bool:
+        start, end = span
+        return any(start < o_end and end > o_start for o_start, o_end in occupied_spans)
+
     total = Decimal("0")
-    for number, unit in matches:
+    for match in unit_matches:
+        number, unit = match.groups()
         total += Decimal(number) * _UNIT_MULTIPLIERS[unit]
-    for unit in bare_matches:
-        total += _UNIT_MULTIPLIERS[unit]
+    for match in bare_matches:
+        if _overlaps_occupied(match.span()):
+            continue
+        total += _UNIT_MULTIPLIERS[match.group(1)]
     return int(total)
+
+
+def parse_correction_amount(text: str) -> Optional[int]:
+    """자유발화 정정("아까 …라고 했는데 …", "정정할게요 …") 전용 금액
+    파싱 — agent.py의 correction 처리(요구사항 A)가 쓴다. 일반
+    `_parse_amount()`를 문장 전체에 그대로 쓰면 "아까 예금 3천이라고
+    했는데 4천이에요"처럼 과거값+새값이 한 세그먼트에 같이 있을 때 둘을
+    합산해버린다(실측 재현 E20: 30,000,000+40,000,000=70,000,000이
+    잘못 확정됨). "했는데"(과거형 연결 어미 — "말했는데"의 부분
+    문자열도 함께 잡힘)가 있으면 그 뒤(새 값 구간)만 `_parse_amount`에
+    넘긴다. 없으면("정정할게요 5억 5천이에요"처럼 새 값만 언급된 경우)
+    문장 전체를 그대로 넘긴다 — 그 안의 복합 단위 표현(억+천 등)은
+    정상적으로 하나의 금액으로 합산돼야 하기 때문이다."""
+    marker = "했는데"
+    idx = text.find(marker)
+    if idx != -1:
+        remainder = text[idx + len(marker) :]
+        amount = _parse_amount(remainder)
+        if amount is not None:
+            return amount
+    return _parse_amount(text)
+
+
+def match_asset_type(text: str) -> Optional[AssetType]:
+    """`_match_asset_type()`의 공개 래퍼 — agent.py의 correction 처리가
+    `_regex_extract()`의 세그먼트 분해·부정/맨명사 판단 없이 문장
+    전체에서 순수 유형 키워드 매칭만 재사용해야 해서 필요하다."""
+    return _match_asset_type(text)
 
 
 #: agent.py의 _NEGATIVE_ANSWER_RE와 같은 패턴(로컬 복제 — extractor.py가
@@ -487,6 +533,12 @@ def _match_liability_type(segment: str) -> Optional[_LiabilityLabel]:
             ):
                 return liability_type
     return None
+
+
+def match_liability_type(text: str) -> Optional[_LiabilityLabel]:
+    """`match_asset_type()`과 같은 이유의 공개 래퍼 — agent.py의
+    correction 처리 전용(요구사항 A)."""
+    return _match_liability_type(text)
 
 
 def extract_liabilities(text: str) -> tuple[list[Liability], list[dict[str, Any]]]:
@@ -955,16 +1007,27 @@ def extract_from_image(
 @dataclass
 class DisclosureItem:
     """안심상속 원스톱서비스 등 여러 기관의 조회 결과 한 문장에서 뽑아낸
-    자산 하나. 기관별로 공개 수준이 다르다는 게 핵심이라(예금·부동산·세금은
-    금액까지, 보험은 가입여부만, 투자상품은 잔고 유무만 나오는 식) — 이건
-    사용자가 몰라서가 아니라 기관이 애초에 그 정보를 안 준 것이다.
+    자산(또는 보험) 하나. 기관별로 공개 수준이 다르다는 게 핵심이라(예금·
+    부동산·세금은 금액까지, 보험은 가입여부만, 투자상품은 잔고 유무만
+    나오는 식) — 이건 사용자가 몰라서가 아니라 기관이 애초에 그 정보를 안
+    준 것이다.
+
+    ⚠️ asset_type은 원래 models.AssetType(자산 전용)에 묶여 있었는데,
+    그러면 "보험 가입 사실만 확인됐다"는 문장을 표현할 방법이 없었다
+    (실측 재현 E47: 보험이 DisclosureItem 화이트리스트에 없어 "기타"
+    자산으로 오분류되거나 유실됐다). 자산 유형 화이트리스트를 공유
+    FinancialProfile까지 넓히지 않고(요구사항: shared schema 확장 불필요),
+    이 dataclass 안에서만 "보험"을 추가 허용 값으로 넣는 내부 타입
+    별칭(AssetType | Literal["보험"])으로 최소 확장했다 — agent.py의
+    _merge_disclosures()가 이 값으로 자산 목록/insurance 목록 중 어디로
+    보낼지 분기한다(models.Asset/InsuranceTag는 그대로 안 건드림).
 
     ⚠️ 기관명(은행/증권사명 등)은 의도적으로 안 담는다 — extract_from_image()
     의 "수집 최소화 원칙"(계좌번호·예금주명과 함께 은행/지점명도 결과에서
     뺀다)과 동일한 이유로, 이 결과가 소비되는 지점(agent.py)까지 기관명이
     흘러갈 필요가 없다."""
 
-    asset_type: AssetType
+    asset_type: AssetType | Literal["보험"]
     confidence: Literal["confirmed", "unknown_amount"]
     value: Optional[int]  # confidence=="confirmed"일 때만 값, 아니면 None
 
@@ -980,6 +1043,11 @@ _DISCLOSURE_SYSTEM_PROMPT_TEMPLATE = (
     "패턴일 뿐, 완벽한 전 기관 커버리지를 목표로 하지 마라 — 사용자가 "
     "실제로 말한 내용을 우선하되, 금액이 명시됐는지 애매하면 반드시 "
     "unknown_amount로 표시하고 절대 금액을 지어내지 마라.\n"
+    "금액 표기 관례: 단위 없이 '8천'/'3천'처럼만 쓰면 이 서비스 문맥에서는 "
+    "'8천만원'/'3천만원'(천만원 단위)을 뜻한다 — 8000(원)이 아니라 "
+    "80000000(원)으로, 3000이 아니라 30000000으로 환산해라. '6천5백'은 "
+    "6500만원(65000000원)이다. 이미 '원'까지 명시된 금액(예: '8천만 원')은 "
+    "그 표기 그대로 환산하면 된다.\n"
     "절대 판정하거나 조언하지 마라 — 너는 오직 값 추출만 한다.\n"
     "수집 최소화 원칙: 자산 유형·확인 수준·금액 외에는 아무것도 추출하지 "
     "마라. 은행/증권사/보험사 등 기관명, 계좌번호, 예금주명, 주민등록번호, "
@@ -993,28 +1061,66 @@ _DISCLOSURE_SYSTEM_PROMPT_TEMPLATE = (
     "}}"
 )
 
+#: DisclosureItem이 가질 수 있는 type 화이트리스트 — 자산(_VALID_ASSET_TYPES)
+#: 에 "보험"을 더한 것. E47: 보험은 존재만 확인되고 금액은 없는 경우가
+#: 흔한데(_VALID_ASSET_TYPES에는 원래 보험이 없었다), 이 화이트리스트 밖으로
+#: 오면 "기타" 자산으로 오분류되거나(자산이 아닌데 자산 목록에 섞임) 아예
+#: 유실됐다 — DisclosureItem 자체를 "자산 또는 보험" 둘 다 표현할 수 있게
+#: 최소 확장한 이유(위 DisclosureItem docstring 참고).
+_VALID_DISCLOSURE_TYPES = (*_VALID_ASSET_TYPES, "보험")
+
 
 def _build_disclosure_system_prompt() -> str:
     """_build_system_prompt()와 같은 이유로 화이트리스트에서 자동 파생 —
     자산 유형이 늘어나도 이 프롬프트를 손으로 맞출 필요가 없다."""
     return _DISCLOSURE_SYSTEM_PROMPT_TEMPLATE.format(
-        asset_types="|".join(_VALID_ASSET_TYPES)
+        asset_types="|".join(_VALID_DISCLOSURE_TYPES)
     )
 
 
-def _apply_disclosure_payload(payload: dict[str, Any]) -> list[DisclosureItem]:
+def _apply_disclosure_payload(
+    payload: dict[str, Any],
+    deterministic_amounts: Optional[dict[str, int]] = None,
+) -> list[DisclosureItem]:
     """LLM JSON을 DisclosureItem 리스트로 정리한다. 화이트리스트 밖 유형은
     자산 추출과 동일한 원칙으로 "기타"로 보존(드롭 안 함). confidence가
     화이트리스트 밖이거나 값 자체가 이상하면 안전한 쪽("unknown_amount")
     으로 떨어뜨린다 — 애매할 때 실제보다 좋아 보이는 쪽으로 왜곡되면
-    안 되기 때문이다."""
+    안 되기 때문이다.
+
+    deterministic_amounts는 extract_disclosures()가 원문 세그먼트에서
+    `_parse_amount()`(일반 자산 추출과 완전히 같은 금액 파싱 규칙 —
+    "8천"=8천만원 같은 이 서비스 고유의 단위 관례)로 미리 뽑아둔
+    "유형 -> 금액"이다(그 유형이 세그먼트 하나에만 한 번 등장해 모호하지
+    않을 때만 채워진다). LLM이 confirmed로 돌려준 값이 있어도, 같은
+    유형에 이 사전 파싱값이 있으면 그 값으로 덮어써서 최종 확정한다 —
+    LLM이 "8천"을 일반적인 숫자 관례(8,000원)로 오독해도(실측 재현 E45:
+    80,000,000이어야 할 게 8,000,000으로 축소됨) 기존 extractor의 도메인
+    금액 규칙(`_parse_amount`, 하나의 source of truth)이 최종적으로
+    이긴다 — 프롬프트 문구만으로 LLM 판단에 기대지 않는다(요구사항 C)."""
+    deterministic_amounts = deterministic_amounts or {}
     items: list[DisclosureItem] = []
     for raw in payload.get("disclosures") or []:
         if not isinstance(raw, dict):
             continue
         asset_type = raw.get("type")
-        if asset_type not in _VALID_ASSET_TYPES:
+        if asset_type not in _VALID_DISCLOSURE_TYPES:
             asset_type = "기타"
+
+        deterministic_value = deterministic_amounts.get(asset_type)
+        if deterministic_value is not None:
+            # 원문에서 명시적으로 파싱되는 금액이 있으면 LLM의 confidence/
+            # value 판단과 무관하게 그 금액으로 confirmed 확정한다 — 금액이
+            # 실제로 문장에 있는데 LLM이 unknown_amount로 강등했을 가능성도
+            # 같이 막는다(가짜 음성 방지).
+            items.append(
+                DisclosureItem(
+                    asset_type=asset_type,
+                    confidence="confirmed",
+                    value=deterministic_value,
+                )
+            )
+            continue
 
         confidence = raw.get("confidence")
         value = raw.get("value")
@@ -1080,6 +1186,26 @@ def extract_disclosures(text: str) -> Optional[list[DisclosureItem]]:
         return []
     filtered_text = " ".join(disclosure_segments)
 
+    # 요구사항 C: LLM이 "8천"류 표현을 이 서비스 고유의 단위 관례(=8천만원)
+    # 대신 일반적인 숫자 관례(=8천원)로 오독할 수 있어(실측 재현 E45), 원문
+    # 세그먼트에서 자산 유형+금액을 그대로 _parse_amount()(일반 자산 추출과
+    # 동일한 단일 source of truth)로 먼저 결정론적으로 뽑아둔다. 같은 유형이
+    # 세그먼트 여러 곳에 등장하면(모호함) 그 유형은 override 후보에서 뺀다 —
+    # 어느 세그먼트 금액을 써야 할지 추측하지 않는다.
+    deterministic_amounts: dict[str, int] = {}
+    _ambiguous_types: set[str] = set()
+    for segment in disclosure_segments:
+        asset_type = _match_asset_type(segment)
+        if asset_type is None:
+            continue
+        if asset_type in deterministic_amounts or asset_type in _ambiguous_types:
+            _ambiguous_types.add(asset_type)
+            deterministic_amounts.pop(asset_type, None)
+            continue
+        amount = _parse_amount(segment)
+        if amount is not None:
+            deterministic_amounts[asset_type] = amount
+
     client = _client()
     if client is None:
         return None
@@ -1099,4 +1225,4 @@ def extract_disclosures(text: str) -> Optional[list[DisclosureItem]]:
     if payload is None:
         return None
 
-    return _apply_disclosure_payload(payload)
+    return _apply_disclosure_payload(payload, deterministic_amounts)
