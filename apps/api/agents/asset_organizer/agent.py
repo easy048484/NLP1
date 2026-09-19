@@ -425,6 +425,138 @@ def _wants_unknown_amount(message: str) -> bool:
     return bool(_DONT_KNOW_AMOUNT_RE.search(message))
 
 
+# ================================================================ 자유발화 정정
+
+
+#: 요구사항 A: "아까 …라고 했는데", "정정", "바꿔", "아니 …" 등 명시적
+#: correction intent가 확인된 경우에만 정정(REPLACE) 경로를 탄다 — 일반
+#: `_merge_extraction()`의 append-only 의미(같은 유형 자산을 여러 번
+#: 말할 수 있다는 것)를 무작정 "항상 replace"로 바꾸면 안 되므로, 이
+#: 마커가 전혀 없는 일반 발화("예금 3천, 주식 4천 있어요")는 이 경로를
+#: 아예 타지 않는다(아래 _try_handle_correction이 None을 돌려주고
+#: 호출부가 기존 흐름을 그대로 진행).
+#: "아니"는 대기 중 금액 질문에 대한 단답 부정("아니요"/"아니에요")과
+#: 겹치면 안 되므로, 뒤에 콤마/공백이 바로 오는 형태("아니 …"/"아니,")만
+#: 좁게 잡는다 — "아니요"/"아니에요"/"아니야"는 "아니" 뒤에 공백/콤마가
+#: 아니라 글자가 바로 이어지므로 이 패턴에 안 걸린다.
+_CORRECTION_INTENT_RE = re.compile(
+    r"라고\s*(?:했는데|말했는데)|정정|바꿔|바뀌었|다시\s*말(?:씀)?(?:드리면|하면)|아니(?=[,\s])"
+)
+
+_CORRECTION_CLARIFICATION_REPLY = (
+    '어떤 항목을 정정하시는 건지 말씀해주시겠어요? (예: "예금 4천만원으로요")'
+)
+
+
+def _has_correction_intent(message: str) -> bool:
+    return bool(_CORRECTION_INTENT_RE.search(message))
+
+
+def _correction_target_descriptors(state: dict[str, Any]) -> list[tuple[str, str]]:
+    """(kind, type_label) 목록 — 타입이 생략된 정정(E21: "정정할게요 5억
+    5천이에요")에서 수정 대상이 state 전체에서 명백히 하나인지 판단할
+    때만 쓴다. 자산·부채·보험 전체를 후보로 세되, 후보가 둘 이상이면
+    (같은 유형이 여러 개 쌓여 있어도) 추측하지 않고 clarification으로
+    간다 — 요구사항: ambiguous correction은 절대 추측하지 않는다."""
+    descriptors = [("asset", a["type"]) for a in state["assets"]]
+    descriptors += [
+        ("liability", liability["type"]) for liability in state["liabilities"]
+    ]
+    descriptors += [("insurance", "보험") for _ in state["insurance"]]
+    return descriptors
+
+
+def _correction_review_item(kind: str, type_label: str) -> dict[str, Any]:
+    """(kind, type_label) -> `_replace_review_record()`가 기대하는 item
+    모양으로 변환한다. review 화면의 [수정] REPLACE 로직을 그대로
+    재사용해서 정정 경로가 그쪽과 어긋나지 않게 한다(요구사항: 기존
+    [수정] REPLACE 흐름을 깨뜨리지 말 것 — 새 REPLACE 구현을 또 만들지
+    않고 하나를 공유)."""
+    if kind == "asset":
+        return {"kind": "asset_value", "asset_type": type_label}
+    if kind == "liability":
+        return {"kind": "liability_value", "liability_type": type_label}
+    return {"kind": "insurance_value", "asset_type": "보험"}
+
+
+def _try_handle_correction(
+    payload: AgentInput, state: dict[str, Any], message: str
+) -> AgentOutput | None:
+    """명시적 correction intent가 확인된 자유발화만 처리한다(요구사항 A).
+    intent 마커가 없으면 곧바로 None을 돌려줘 호출부가 기존
+    `_merge_extraction()` 흐름(append-only)을 그대로 타게 한다 — 이
+    함수가 일반 흐름을 대체하는 게 아니라 그 앞을 가로채는 좁은 예외
+    경로일 뿐이다.
+
+    과거값+새값이 한 문장에 같이 있으면("아까 예금 3천이라고 했는데
+    4천이에요") 전체 문장 숫자를 합산하지 않고
+    `extractor.parse_correction_amount()`로 새 값 구간만 뽑는다(실측
+    재현 E20/E23 — 기존엔 3천+4천=7천만원처럼 잘못 합산됐다).
+
+    타입이 문장에 명시돼 있으면(예금/대출 등 키워드) 그 타입의 기존
+    record가 정확히 하나일 때만 REPLACE한다 — 0개면 정정할 대상이 없어도
+    "이 값"이라는 사용자 의도를 그대로 새 record로 만들고, 2개 이상이면
+    (같은 유형이 이미 여러 개 쌓여 있으면) 어느 걸 고치는지 추측하지
+    않고 clarification으로 되묻는다. 타입이 생략됐으면(E21) state 전체
+    (자산+부채+보험)에서 후보가 정확히 하나일 때만 그 record를
+    REPLACE한다."""
+    if not _has_correction_intent(message):
+        return None
+
+    amount = extractor.parse_correction_amount(message)
+    if amount is None:
+        return None
+
+    asset_type = extractor.match_asset_type(message)
+    if asset_type is not None:
+        existing = [a for a in state["assets"] if a["type"] == asset_type]
+        if len(existing) > 1:
+            return _output(state, _CORRECTION_CLARIFICATION_REPLY)
+        item = _correction_review_item("asset", asset_type)
+        _replace_review_record(state, item, amount, confidence="confirmed")
+        _mark_checked(state, asset_type)
+        _drop_pending_amount(state, "asset_value", asset_type)
+        return _continue_after_categories(payload, state)
+
+    liability_type = extractor.match_liability_type(message)
+    if liability_type is not None:
+        existing = [
+            liability
+            for liability in state["liabilities"]
+            if liability["type"] == liability_type
+        ]
+        if len(existing) > 1:
+            return _output(state, _CORRECTION_CLARIFICATION_REPLY)
+        item = _correction_review_item("liability", liability_type)
+        _replace_review_record(state, item, amount, confidence="confirmed")
+        _mark_checked(state, _LIABILITY_CATEGORY)
+        _drop_pending_amount(state, "liability_value", liability_type)
+        return _continue_after_categories(payload, state)
+
+    # 타입이 생략된 정정(E21) — state 전체(자산+부채+보험)에서 후보가
+    # 명백히 하나일 때만 REPLACE. 후보가 없으면 애초에 정정할 대상이
+    # 없다는 뜻이라 이 correction 경로를 접고 일반 흐름으로 넘긴다(None).
+    descriptors = _correction_target_descriptors(state)
+    if not descriptors:
+        return None
+    if len(descriptors) > 1:
+        return _output(state, _CORRECTION_CLARIFICATION_REPLY)
+
+    kind, type_label = descriptors[0]
+    item = _correction_review_item(kind, type_label)
+    _replace_review_record(state, item, amount, confidence="confirmed")
+    if kind == "liability":
+        _mark_checked(state, _LIABILITY_CATEGORY)
+        _drop_pending_amount(state, "liability_value", type_label)
+    elif kind == "insurance":
+        _mark_checked(state, _INSURANCE_CATEGORY)
+        _drop_pending_amount(state, "insurance_value", "보험")
+    else:
+        _mark_checked(state, type_label)
+        _drop_pending_amount(state, "asset_value", type_label)
+    return _continue_after_categories(payload, state)
+
+
 def _merge_extraction(
     state: dict[str, Any],
     asset_result: extractor.ExtractionResult,
@@ -519,11 +651,32 @@ def _merge_disclosures(
 ) -> bool:
     """사후 모드(extractor.extract_disclosures) 결과를 state에 반영한다.
     confidence=="unknown_amount"인 항목은 pending_amounts에 넣지 않고
-    (다시 캐묻지 않음) 곧바로 자산 목록에 영구 확정으로 반영한다 —
+    (다시 캐묻지 않음) 곧바로 자산/보험 목록에 영구 확정으로 반영한다 —
     value=0은 실제 금액이 아니라 구조적 자리표시자일 뿐이며, 순자산
     계산은 반드시 confidence로 걸러서 써야 한다(_format_summary/
-    _to_shared_profile 참고, models.Asset.confidence 필드 설명과 동일)."""
+    _to_shared_profile 참고, models.Asset.confidence 필드 설명과 동일).
+
+    ⚠️ E47 수정: item.asset_type=="보험"은 일반 자산이 아니다 — "기타"
+    자산으로 넣으면(예전 동작) 보험이 자산 목록에 섞여 순자산 계산에
+    영향을 주면 안 된다는 기존 원칙(보험은 engine 계산에서 제외되는
+    태그)이 깨진다. extractor.DisclosureItem이 이제 "보험"을 표현할 수
+    있으므로(extractor.py의 DisclosureItem docstring 참고), 여기서
+    자산/보험 두 destination으로 분기한다 — 보험은 InsuranceTag와 같은
+    자리표시자 규약(unknown_amount면 value는 반드시 None, confirmed면
+    int)을 그대로 따른다."""
     for item in items:
+        if item.asset_type == "보험":
+            state["insurance"].append(
+                {
+                    "type": "보험",
+                    "value": item.value if item.confidence == "confirmed" else None,
+                    "note": None,
+                    "confidence": item.confidence,
+                }
+            )
+            _mark_checked(state, _INSURANCE_CATEGORY)
+            _drop_pending_amount(state, "insurance_value", "보험")
+            continue
         state["assets"].append(
             {
                 "type": item.asset_type,
@@ -1201,6 +1354,13 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
             state["status"] = "editing_item"
             state["pending_amounts"] = [dict(edit_target)]
             return _output(state, _edit_question_text(state, edit_target))
+        # 명시적 자유발화 correction("아까 예금 4천이라고 했는데 5천이에요")만
+        # 좁게 가로챈다 — 체크리스트가 이미 완료된 상태라 성공하면
+        # _continue_after_categories가 _enter_review로 최신 review를 다시 만든다.
+        # intent 마커가 없으면 None이라 아래 기존 동작으로 그대로 떨어진다.
+        correction_output = _try_handle_correction(payload, state, message)
+        if correction_output is not None:
+            return correction_output
         # [수정]/[이대로 확정] 둘 다 아닌 입력 — review 화면을 그대로
         # 다시 보여준다(조용히 무시하지 않고 안내를 덧붙인다).
         return _enter_review(state, note=_REVIEW_UNRECOGNIZED_NOTE)
@@ -1280,6 +1440,16 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
             resolved_via_bare_amount = True
 
     if not resolved_via_bare_amount:
+        # 요구사항 A: 명시적 correction intent("아까 …라고 했는데", "정정",
+        # "바꿔", "아니 …")가 있는 발화만 여기서 가로채 REPLACE 처리한다.
+        # intent가 없으면 None을 돌려받아 곧바로 아래 일반 추출
+        # 흐름(append-only, _merge_extraction)으로 그대로 넘어간다 — 같은
+        # 유형 자산을 여러 개 말하는 정상적인 발화("예금 3천, 주식 4천
+        # 있어요")는 이 분기 자체를 타지 않는다.
+        correction_output = _try_handle_correction(payload, state, message)
+        if correction_output is not None:
+            return correction_output
+
         # 사후 모드는 여러 기관의 조회 결과 해석을 먼저 시도한다 — 정규식
         # 만으로는 부족할 가능성이 높아 LLM 폴백 경로(extractor.py의
         # extract_disclosures)를 재사용한다. None(LLM 사용 불가/호출 실패)

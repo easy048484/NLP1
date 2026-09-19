@@ -1669,3 +1669,196 @@ def test_existence_verb_guard_still_recognizes_real_existence_statements():
         m["kind"] == "liability_value" and m["liability_type"] == "대출"
         for m in missing
     )
+
+
+# ============================================= golden-set 회귀 (이번 라운드)
+
+
+# ---------------------------------------------------- E25) 숫자+단위 공백 중복
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        (
+            "예금 3200 만원",
+            32_000_000,
+        ),  # 실측 재현 E25 — 32,010,000으로 중복 합산됐었다
+        ("예금 3200만원", 32_000_000),  # 공백 없는 기존 표현 회귀 방지
+        ("예금 3,200만원", 32_000_000),
+        ("예금 3천", 30_000_000),
+        ("예금 6천5백", 65_000_000),
+        ("예금 천만원", 10_000_000),
+        ("집 3억 5천", 350_000_000),
+        ("대출 1억 2천만원", 120_000_000),
+    ],
+)
+def test_amount_parsing_no_duplicate_for_spaced_number_and_unit_word(text, expected):
+    """실측 재현(E25): "3200 만원"처럼 숫자와 단위 사이에 공백이 있으면,
+    _UNIT_RE가 이미 "3200"+"만"을 하나로 묶어 잡았는데도 같은 "만" 글자
+    위치가 _BARE_UNIT_WORD_RE(숫자 없이 홀로 쓰인 단위어 패턴)에도 다시
+    걸려 10,000원이 중복 합산됐다(32,000,000 -> 32,010,000). span 기준
+    dedupe 이후에도 기존 단위/띄어쓰기 표현들이 전부 그대로 정상 동작해야
+    한다."""
+    assert extractor._parse_amount(text) == expected
+
+
+def test_e25_flows_through_full_extraction():
+    result = extractor.extract_financial_slots("예금 3200 만원 있어요")
+
+    assert result.status == "ok"
+    assert result.assets == [extractor.Asset(type="예금", value=32_000_000)]
+
+
+# --------------------------------------------- correction) 정정 전용 헬퍼
+
+
+class TestParseCorrectionAmount:
+    def test_old_and_new_value_in_one_sentence_returns_new_value_only(self):
+        """실측 재현(E20): "아까 예금 3천이라고 했는데 4천이에요"를 일반
+        _parse_amount()로 통째로 파싱하면 3천+4천=7천만원으로 잘못
+        합산된다 — "했는데" 뒤(새 값)만 뽑아야 한다."""
+        assert (
+            extractor.parse_correction_amount("아까 예금 3천이라고 했는데 4천이에요")
+            == 40_000_000
+        )
+
+    def test_liability_old_and_new_value_returns_new_value_only(self):
+        """실측 재현(E23): "대출 1억이라고 했는데 8천 남았어요"도 동일한
+        이유로 새 값(8천만원)만 파싱해야 한다."""
+        assert (
+            extractor.parse_correction_amount("대출 1억이라고 했는데 8천 남았어요")
+            == 80_000_000
+        )
+
+    def test_no_past_value_marker_parses_whole_message_as_compound_amount(self):
+        """실측 재현(E21): "정정할게요 5억 5천이에요"는 과거값 언급이
+        없으므로 문장 전체를 그대로 넘겨 복합 단위(억+천)를 하나의
+        금액으로 합산해야 한다 — 5억+5천만원=5억5천만원."""
+        assert (
+            extractor.parse_correction_amount("정정할게요 5억 5천이에요") == 550_000_000
+        )
+
+    def test_returns_none_when_no_amount_present(self):
+        assert extractor.parse_correction_amount("정정할게요") is None
+
+
+def test_match_asset_type_public_wrapper_matches_keyword_anywhere_in_text():
+    assert extractor.match_asset_type("아까 예금 3천이라고 했는데 4천이에요") == "예금"
+    assert extractor.match_asset_type("정정할게요 5억 5천이에요") is None
+
+
+def test_match_liability_type_public_wrapper_matches_keyword_anywhere_in_text():
+    assert (
+        extractor.match_liability_type("대출 1억이라고 했는데 8천 남았어요") == "대출"
+    )
+    assert extractor.match_liability_type("정정할게요 5억 5천이에요") is None
+
+
+# ---------------------------------------- E45) 사후 disclosure 금액 축약 방지
+
+
+def test_disclosure_bare_thousand_expression_uses_domain_convention_over_llm_literal(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """실측 재현(E45): "예금 8천"을 LLM이 일반적인 숫자 관례(8,000원)로
+    오독해 8,000,000을 반환해도(80,000,000이어야 함), 원문에서 결정론적
+    으로 뽑은 도메인 금액 규칙(_parse_amount — 이 서비스에서 "8천"은
+    "8천만원")이 최종 값을 덮어써야 한다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "disclosures": [
+                    {"type": "예금", "confidence": "confirmed", "value": 8_000_000},
+                    {"type": "부동산", "confidence": "confirmed", "value": 500_000_000},
+                ]
+            }
+        ),
+    )
+
+    items = extractor.extract_disclosures(
+        "안심상속 조회 결과 예금 8천, 아파트 5억, 카드대출 2천"
+    )
+
+    assert items is not None
+    deposit = next(i for i in items if i.asset_type == "예금")
+    real_estate = next(i for i in items if i.asset_type == "부동산")
+    assert deposit.confidence == "confirmed"
+    assert deposit.value == 80_000_000
+    assert real_estate.value == 500_000_000
+    assert not any(i.asset_type in ("기타", "대출") for i in items)
+
+
+def test_disclosure_deterministic_override_ignored_when_type_appears_twice(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """같은 유형이 세그먼트 두 곳에 등장하면(어느 금액을 써야 할지
+    모호함) 결정론적 override를 적용하지 않고 LLM 값을 그대로 쓴다 —
+    추측으로 잘못된 override를 강제하지 않는다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "disclosures": [
+                    {"type": "예금", "confidence": "confirmed", "value": 12_000_000},
+                ]
+            }
+        ),
+    )
+
+    items = extractor.extract_disclosures("예금 3천, 다른 예금 5천")
+
+    assert items is not None
+    assert items[0].value == 12_000_000
+
+
+# ---------------------------------------- E47) 사후 disclosure 보험 유실 방지
+
+
+def test_disclosure_insurance_type_preserved_not_downgraded_to_gita(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """실측 재현(E47): DisclosureItem 화이트리스트에 "보험"이 없어서
+    LLM이 type="보험"으로 정확히 답해도 "기타"로 강등되고 있었다 —
+    보험 존재 확인만 됐을 때(금액 없음) type이 "보험"으로 그대로
+    보존돼야 agent.py가 자산이 아니라 insurance로 분기할 수 있다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "disclosures": [
+                    {"type": "보험", "confidence": "unknown_amount", "value": None},
+                ]
+            }
+        ),
+    )
+
+    items = extractor.extract_disclosures(
+        "보험 가입 사실만 확인됐고 금액은 확인되지 않았어요"
+    )
+
+    assert items is not None
+    assert len(items) == 1
+    assert items[0].asset_type == "보험"
+    assert items[0].confidence == "unknown_amount"
+    assert items[0].value is None
+
+
+def test_disclosure_insurance_confirmed_amount_preserved():
+    """보험 금액까지 확인된 경우도 동일하게 "보험" 타입으로 confirmed
+    처리돼야 한다(회귀 방지 — 존재 확인만 되는 케이스뿐 아니라 금액까지
+    확인되는 케이스도 깨지지 않아야 함)."""
+    items = extractor._apply_disclosure_payload(
+        {
+            "disclosures": [
+                {"type": "보험", "confidence": "confirmed", "value": 5_000_000}
+            ]
+        }
+    )
+
+    assert items == [
+        extractor.DisclosureItem(
+            asset_type="보험", confidence="confirmed", value=5_000_000
+        )
+    ]
