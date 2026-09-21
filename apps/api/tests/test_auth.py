@@ -29,7 +29,7 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-# --------------------------------------------------------------------- register
+# register
 
 
 def test_register_returns_token_and_user(with_db):
@@ -75,7 +75,7 @@ def test_register_rejects_bad_email_and_short_password(with_db):
     )
 
 
-# ------------------------------------------------------------------------ login
+# login
 
 
 def test_login_with_correct_password(with_db):
@@ -108,7 +108,7 @@ def test_login_wrong_password_and_unknown_email_both_401(with_db):
     )
 
 
-# -------------------------------------------------------------------------- me
+# me
 
 
 def test_me_requires_valid_token(with_db):
@@ -123,7 +123,7 @@ def test_me_requires_valid_token(with_db):
     assert resp.json()["email"] == "me@example.com"
 
 
-# --------------------------------------------------------- family_graph 소유권
+# family_graph 소유권
 
 
 def test_authed_graph_is_private_to_owner(with_db):

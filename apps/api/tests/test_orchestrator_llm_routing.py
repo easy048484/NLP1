@@ -70,7 +70,7 @@ def _non_stub_names() -> set[str]:
     return {n.value for n, s in registry.all_specs().items() if not s.is_stub}
 
 
-# ------------------------------------------------------- 하이재킹 / 관성
+# 하이재킹 / 관성
 
 
 def test_answer_to_previous_question_continues_last_agent(monkeypatch):
@@ -140,7 +140,7 @@ def test_continue_from_llm_is_ignored_without_last_agent(monkeypatch):
     assert plan.layers == [[AgentName.TAX_CALCULATOR]]  # 규칙: 키워드 1개
 
 
-# ------------------------------------------------------------- 핸드오프
+# 핸드오프
 
 
 def test_pending_handoff_is_a_hint_not_a_preempt(monkeypatch):
@@ -167,7 +167,7 @@ def test_llm_can_follow_pending_handoff(monkeypatch):
     assert plan.layers == [[AgentName.DECEDENT_ESTATE]]
 
 
-# ------------------------------------------------------- 답변 대기(LLM 위임, #125)
+# 답변 대기(LLM 위임, #125)
 
 
 def test_pending_reply_agent_delegates_to_llm_with_continue_option(monkeypatch):
@@ -248,7 +248,7 @@ def test_pending_reply_agent_llm_failure_falls_back_to_pending_agent(monkeypatch
     assert plan.llm_used is False
 
 
-# ------------------------------------------------------------ 복수 선택
+# 복수 선택
 
 
 def test_multiple_picks_build_full_plan(monkeypatch):
@@ -271,7 +271,7 @@ def test_continue_plus_new_topic_runs_both(monkeypatch):
     assert set(plan.agents) == {AgentName.HEIR_NAVIGATOR, AgentName.TAX_CALCULATOR}
 
 
-# ------------------------------------------------------------ 결과 방어
+# 결과 방어
 
 
 def test_unknown_and_stub_names_are_dropped(monkeypatch):
@@ -297,7 +297,7 @@ def test_only_invalid_names_falls_back_to_rules(monkeypatch):
     assert plan.layers == [[AgentName.TAX_CALCULATOR]]
 
 
-# ------------------------------------------------------------ 폴백/정책
+# 폴백/정책
 
 
 def test_llm_failure_falls_back_to_rules(monkeypatch):
@@ -355,7 +355,7 @@ def test_system_prompt_has_no_per_turn_state(monkeypatch):
     assert HEIR_Q not in fake.calls[1]["system"]
 
 
-# ------------------------------------------------------ 라우터 end-to-end
+# 라우터 end-to-end
 
 
 def test_router_passes_previous_reply_to_classifier(monkeypatch):

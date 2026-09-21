@@ -348,7 +348,6 @@ def test_invalid_confirm_answer_still_results_in_pending_not_crash() -> None:
     assert results["seal"].grade == "PENDING"
 
 
-# ---------------------------------------------------------------------------
 # 도로명주소 / 라벨 없는 지번 인식 (2026-08-26)
 #
 # _ADDRESS_UNIT_RE 가 "번지"라는 리터럴 단어에 의존해, 완전한 도로명주소
@@ -356,7 +355,6 @@ def test_invalid_confirm_answer_still_results_in_pending_not_crash() -> None:
 # city_district_only(RED)로 오판정되던 문제를 고쳤다. 아래는 사진 판독
 # 기능 검증 중 실측한 8건 그대로다 — 도로명 4건 중 2건, 지번 2건 중 1건이
 # 수정 전에는 오판정이었다(정확히는: 도로명 2건 + 지번 2건, 총 4건).
-# ---------------------------------------------------------------------------
 
 
 def test_address_lot_number_with_label() -> None:
@@ -447,7 +445,6 @@ def test_property_location_road_address_still_excluded_by_context() -> None:
     assert results["address"].grade == "RED"
 
 
-# ---------------------------------------------------------------------------
 # 도로명주소 건물번호 뒤 한국어 조사 경계 (2026-09-05)
 #
 # _ADDRESS_UNIT_RE의 도로명주소 대안이 건물번호 뒤에 공백/쉼표/마침표/문자열
@@ -456,7 +453,6 @@ def test_property_location_road_address_still_excluded_by_context() -> None:
 # city_district_only(RED)로 오판정됐다. "로/길" 토큰 문맥 제한은 그대로 두고
 # 건물번호 뒤 경계에 명시적 조사 화이트리스트(이라고/라고/에/으로/입니다)만
 # 추가했다 — 숫자 뒤 한글을 전부 허용하지 않는다.
-# ---------------------------------------------------------------------------
 
 
 def test_address_road_name_with_narrative_particle_ida_go() -> None:

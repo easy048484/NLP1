@@ -41,7 +41,7 @@ def _register(client: TestClient, email: str) -> str:
     return resp.json()["access_token"]
 
 
-# ------------------------------------------------------- latest_for_user
+# latest_for_user
 
 
 def test_latest_returns_the_most_recently_used_session():
@@ -86,7 +86,7 @@ def test_latest_ignores_expired_sessions():
     assert store.latest_for_user(ALICE) is None
 
 
-# ------------------------------------------------------- GET /sessions/mine
+# GET /sessions/mine
 
 
 def test_endpoint_requires_login(with_db):

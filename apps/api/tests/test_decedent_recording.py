@@ -53,7 +53,6 @@ def _run_namespaced(text: str, **context: str):
     return decedent_estate.run(payload)
 
 
-# ---------------------------------------------------------------------------
 # transcript intake gate (2026-09-05)
 #
 # 실측 재현: will_type=recording이 확정된 직후 "녹음·영상"(UI 방식 선택
@@ -61,7 +60,6 @@ def _run_namespaced(text: str, **context: str):
 # 실행돼, 아직 대본을 입력하지 않았는데 "2가지만 직접 확인해주세요...
 # (5/7 확인됨)"과 증인 참여/결격 질문부터 노출됐다. 실제 대본이 들어오기
 # 전에는 checker를 아예 돌리지 않아야 한다.
-# ---------------------------------------------------------------------------
 
 
 def test_voice_memo_first_turn_goes_straight_to_transcript_intake() -> None:
@@ -237,14 +235,12 @@ def test_witness_structured_answers_after_transcript_yield_final_seven() -> None
     assert "민법 제1066조" not in output.reply
 
 
-# ---------------------------------------------------------------------------
 # 증인 참여/결격 자연어 확인 답변 (production 재현 버그 수정)
 #
 # 버튼(구조화 context) 대신 자연어로 "증인은 실제로 참여했고, 결격사유에는
 # 해당하지 않습니다" 처럼 답해도 명백한 표현이면 반영되어야 한다.
 # handwriting_answer/seal_answer의 자연어 확인과 동일한 원칙 —
 # _infer_rec_witness_present/_infer_rec_witness_eligible 참고.
-# ---------------------------------------------------------------------------
 
 
 def test_natural_language_answers_both_fields_yield_final_seven() -> None:
@@ -458,9 +454,7 @@ def test_stored_valid_answer_is_not_overwritten_by_later_ambiguous_message() -> 
     )
 
 
-# ---------------------------------------------------------------------------
 # _looks_like_recording_transcript 단위 테스트
-# ---------------------------------------------------------------------------
 
 _NOT_TRANSCRIPT_MESSAGES = [
     "녹음·영상",

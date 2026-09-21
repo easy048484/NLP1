@@ -547,9 +547,7 @@ def test_date_missing_day_invalid_uses_working_evtno_url() -> None:
     assert "precSeq=132717" not in card["source_url"]
 
 
-# ---------------------------------------------------------------------------
 # term_note (미충족 요건 용어 설명) — GREEN 제외, RED/YELLOW 만
-# ---------------------------------------------------------------------------
 
 
 def test_term_note_present_for_every_requirement() -> None:
@@ -599,9 +597,7 @@ def test_term_note_included_for_yellow() -> None:
     assert term_note("date") in line
 
 
-# ---------------------------------------------------------------------------
 # progress (진행률 체크리스트)
-# ---------------------------------------------------------------------------
 
 
 def test_progress_all_confirmed() -> None:
@@ -667,9 +663,7 @@ def test_progress_recording_total_is_seven() -> None:
     assert 0 <= result["checked"] <= 7
 
 
-# ---------------------------------------------------------------------------
 # P0-1: body(판례 인용 줄 제외) / precedents(실제 인용된 판례만) 배열
-# ---------------------------------------------------------------------------
 
 _CITATION_LINE_RE = re.compile(
     r"\((?:대법원|서울고법|대전고법|민법|대한법률구조공단)[^)]*\)"
@@ -777,9 +771,7 @@ def test_cited_precedents_statute_case_no_falls_back_to_id() -> None:
     assert entry["case_no"] == "witness_disqualification"
 
 
-# ---------------------------------------------------------------------------
 # A안 (#58 P0-1 후속): cited_precedents_for_requirement — 요건 하나 단위
-# ---------------------------------------------------------------------------
 
 
 def test_cited_precedents_for_requirement_only_returns_that_requirements_own_ids() -> (

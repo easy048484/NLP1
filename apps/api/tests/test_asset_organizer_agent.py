@@ -326,7 +326,7 @@ def test_finalize_no_longer_hands_off_to_retirement_planner():
     assert "시뮬레이션" not in output.reply
 
 
-# ======================================= financial_assets/other_assets 분류
+# financial_assets/other_assets 분류
 
 
 def test_deposit_stock_fund_classified_as_financial_assets():
@@ -408,7 +408,7 @@ def test_parse_end_age_rejects_calendar_year_expression():
     assert agent._parse_end_age("2030년까지 갚아요", current_age=58) is None
 
 
-# ================================ 대출 후속질문 단순화 (monthly_payment/end_age 안 물어봄)
+# 대출 후속질문 단순화 (monthly_payment/end_age 안 물어봄)
 
 
 def test_liability_balance_confirmed_never_triggers_repayment_followup():
@@ -477,7 +477,7 @@ def test_pension_followup_asked_right_after_liability_balance_confirmed():
     assert "퇴직연금은 일시금으로" not in output3.reply
 
 
-# =============================================== 퇴직연금 수령 방식 후속질문
+# 퇴직연금 수령 방식 후속질문
 
 
 def test_pension_followup_asked_once_when_pension_asset_present():
@@ -635,7 +635,7 @@ def test_no_pension_asset_skips_followup_entirely():
     assert state2["status"] == "reviewing"
 
 
-# ================================================ 자동차/퇴직연금/임대보증금반환채무
+# 자동차/퇴직연금/임대보증금반환채무
 
 
 def test_vehicle_and_pension_mentions_are_not_reasked_as_missing():
@@ -687,7 +687,7 @@ def test_lease_deposit_liability_recognized_under_debt_category_simple_mode():
     assert liability["end_age"] is None
 
 
-# ============================================================ 보험 카테고리
+# 보험 카테고리
 
 
 def test_insurance_without_amount_asks_pre_need_followup_once():
@@ -885,7 +885,7 @@ def test_insurance_extra_preserved_through_to_finalize():
     assert extra["insurance"][0]["value"] == 50_000_000
 
 
-# ============================================================== 이미지 판독
+# 이미지 판독
 
 
 def test_image_recognized_merges_into_checklist(monkeypatch: pytest.MonkeyPatch):
@@ -1005,7 +1005,7 @@ def test_image_unclear_field_pii_never_reaches_reply_or_state(
     assert "주민등록번호" not in haystack
 
 
-# ============================================ 생전/사후 모드 게이트 (decedent_estate와 동일 패턴)
+# 생전/사후 모드 게이트 (decedent_estate와 동일 패턴)
 
 
 def test_mode_unset_defaults_silently_to_pre_need():
@@ -1101,7 +1101,7 @@ def test_mode_flat_key_this_turn_overrides_persisted_state():
     assert output2.data[STATE_KEY]["mode"] == "post_death"
 
 
-# ===================================================== 3단계 금액 신뢰도: "몰라요"
+# 3단계 금액 신뢰도: "몰라요"
 
 
 def test_dont_know_amount_creates_permanent_unknown_amount_asset():
@@ -1137,7 +1137,7 @@ def test_unknown_amount_asset_is_never_reasked_in_next_turn():
     assert len([a for a in state3["assets"] if a["type"] == "부동산"]) == 1
 
 
-# ============================================ 3단계 신뢰도 + 순자산 계산 제외/안내
+# 3단계 신뢰도 + 순자산 계산 제외/안내
 
 
 def test_net_worth_excludes_unknown_amount_and_shows_disclaimer():
@@ -1186,7 +1186,7 @@ def test_all_confirmed_assets_show_no_disclaimer():
     assert output.financial_profile.financial_assets == 100_000_000
 
 
-# ============ 최종 확정 요약에서 보험 합계 제외 이유 명시(실측 피드백)
+# 최종 확정 요약에서 보험 합계 제외 이유 명시(실측 피드백)
 
 
 _INSURANCE_EXCLUSION_NOTE = (
@@ -1271,7 +1271,7 @@ def test_finalized_summary_unknown_amount_asset_and_liability_disclaimers_unchan
     assert output.financial_profile.financial_assets == 100_000_000
 
 
-# ================================================ 부채 3단계 신뢰도 (unknown_amount != 0)
+# 부채 3단계 신뢰도 (unknown_amount != 0)
 
 
 def test_dont_know_liability_amount_creates_permanent_unknown_amount_liability():
@@ -1388,7 +1388,7 @@ def test_liability_model_validator_enforces_unknown_amount_balance_is_none():
         Liability(type="대출", remaining_balance=None, confidence="confirmed")
 
 
-# ===================================================== 사후 모드: 다기관 조회 결과 해석
+# 사후 모드: 다기관 조회 결과 해석
 
 
 def test_post_death_mode_mixed_institution_sentence_splits_confirmed_and_unknown(
@@ -1508,7 +1508,7 @@ def test_post_death_disclosure_merge_marks_categories_checked_without_reasking(
     assert "보험" not in output.reply or "얼마" not in output.reply
 
 
-# ============================================ Round 12: 정보 유실 방어(fail-safe)
+# Round 12: 정보 유실 방어(fail-safe)
 
 
 def test_post_death_full_parse_failure_returns_explicit_reask_without_silent_drop(
@@ -1776,7 +1776,7 @@ def test_parse_failure_does_not_mark_any_category_checked():
     assert any(a["type"] == "예금" for a in state2["assets"])
 
 
-# ==================================== 수집 → review → 수정 → 확정(finalized)
+# 수집 → review → 수정 → 확정(finalized)
 
 
 def _review_target(items: list[dict], label: str) -> dict:
@@ -2131,7 +2131,7 @@ def test_unrecognized_input_during_review_redisplays_review_without_mutating_sta
     assert "수정" in output.reply or "확정" in output.reply
 
 
-# ------------------------------- reviewing 상태의 자유발화 correction 회귀
+# reviewing 상태의 자유발화 correction 회귀
 
 
 def _reach_review_with_deposit_4000(session_id: str) -> dict:
@@ -2215,10 +2215,10 @@ def test_review_correction_then_confirm_still_finalizes():
     assert output.financial_profile is not None
 
 
-# ==================================================== golden-set 회귀 (이번 라운드)
+# golden-set 회귀 (이번 라운드)
 
 
-# ------------------------------------------------- 정정(correction) 요구사항 A
+# 정정(correction) 요구사항 A
 
 
 def test_correction_with_explicit_type_replaces_single_existing_asset_record():
@@ -2368,7 +2368,7 @@ def test_correction_ambiguous_explicit_type_multiple_records_asks_clarification(
     assert sorted(a["value"] for a in deposits) == [20_000_000, 30_000_000]
 
 
-# --------------------------------------------------------- E25) 단위 공백 중복
+# E25) 단위 공백 중복
 
 
 def test_amount_spaced_unit_word_no_duplicate_at_full_agent_flow():
@@ -2385,7 +2385,7 @@ def test_amount_spaced_unit_word_no_duplicate_at_full_agent_flow():
     assert not any(a["value"] == 32_010_000 for a in state["assets"])
 
 
-# --------------------------------------------- E45) 사후 disclosure 금액 축약
+# E45) 사후 disclosure 금액 축약
 
 
 def test_post_death_disclosure_bare_thousand_uses_domain_convention(
@@ -2433,7 +2433,7 @@ def test_post_death_disclosure_bare_thousand_uses_domain_convention(
     assert not any(a["type"] in ("기타", "대출") for a in state["assets"])
 
 
-# ----------------------------------------------- E47) 사후 disclosure 보험 유실
+# E47) 사후 disclosure 보험 유실
 
 
 def test_post_death_insurance_disclosure_unknown_amount_lands_in_insurance_state(

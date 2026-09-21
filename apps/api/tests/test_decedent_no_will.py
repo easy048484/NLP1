@@ -31,9 +31,7 @@ def _no_will_output():
     return _run(will_type="none")
 
 
-# ---------------------------------------------------------------------------
 # 진입 경로
-# ---------------------------------------------------------------------------
 
 
 def test_none_is_offered_as_a_will_type_option() -> None:
@@ -78,7 +76,6 @@ def test_intent_does_not_affect_no_will_path() -> None:
     assert "guide" not in prepare.data
 
 
-# ---------------------------------------------------------------------------
 # [1-1] 유언장 존재 자체가 불확실한 자연어 → none 자동 추론 (2026-09-06, #150)
 #
 # 실측 재현 1: "유언장이 있는지 확실하지 않아요"처럼 유언장 존재 자체가
@@ -99,7 +96,6 @@ def test_intent_does_not_affect_no_will_path() -> None:
 # "없어요/없다/없습니다" 평서형 패턴을 추가했다 — 주어가 생략된 "없어요"/"못
 # 봤어요" 단독형은 직전 질문 맥락 없이는 오탐 위험이 커 이번 범위에서
 # 의도적으로 제외했다(정책 판단 보류).
-# ---------------------------------------------------------------------------
 
 _NO_WILL_EXISTENCE_UNCERTAIN_PARAPHRASES = [
     "유언장이 있는지 확실하지 않아요",
@@ -177,9 +173,7 @@ def test_explicit_handwritten_wins_over_no_will_phrase_in_message() -> None:
     assert output.data["will_type"] == "handwritten"
 
 
-# ---------------------------------------------------------------------------
 # [2] 공정증서 고지 — 1회, 탐색 안내 아님
-# ---------------------------------------------------------------------------
 
 
 def test_notarial_notice_appears_exactly_once() -> None:
@@ -217,9 +211,7 @@ def test_notarial_notice_does_not_name_unverified_institution() -> None:
         assert unverified not in reply, unverified
 
 
-# ---------------------------------------------------------------------------
 # [3] 법정상속 안내 — 무단정, 상속인 범위·지분은 침범하지 않음
-# ---------------------------------------------------------------------------
 
 
 def test_legal_succession_guidance_is_not_assertive() -> None:
@@ -266,9 +258,7 @@ def test_closing_lines_present_once() -> None:
     assert reply.count("법률 자문이 아닙니다") == 1
 
 
-# ---------------------------------------------------------------------------
 # [4] heir_navigator로의 직접 핸드오프 없음 (2026-08-25 제거 — 라우터가 담당)
-# ---------------------------------------------------------------------------
 
 
 def test_does_not_hand_off_to_heir_navigator() -> None:
@@ -311,9 +301,7 @@ def test_no_will_state_is_persisted_to_session_namespace() -> None:
     assert persisted.get("will_type") == "none"
 
 
-# ---------------------------------------------------------------------------
 # 회귀 — 기존 경로 무영향
-# ---------------------------------------------------------------------------
 
 
 def test_existing_will_types_unaffected() -> None:
@@ -343,9 +331,7 @@ def test_unknown_will_type_still_reasks() -> None:
     assert "none" in output.data["warnings"][0]["allowed"]
 
 
-# ---------------------------------------------------------------------------
 # [4] inference_patterns/exclusion_patterns 안전 처리 (#150)
-# ---------------------------------------------------------------------------
 
 
 def test_malformed_regex_pattern_is_skipped_not_crashed() -> None:

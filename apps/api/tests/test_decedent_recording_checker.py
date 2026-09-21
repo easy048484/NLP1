@@ -29,9 +29,7 @@ def _transcript(*lines: str) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
 # 추출 함수 단위 테스트
-# ---------------------------------------------------------------------------
 
 
 def test_extract_content_present() -> None:
@@ -60,9 +58,7 @@ def test_extract_witness_name_absent() -> None:
     assert extract_witness_name("증인이 참여했습니다.").case == "absent"
 
 
-# ---------------------------------------------------------------------------
 # check_recording_requirements 통합 테스트
-# ---------------------------------------------------------------------------
 
 
 def test_complete_transcript_all_text_derivable_requirements_green() -> None:
@@ -204,9 +200,7 @@ def test_witness_not_disqualified_is_green() -> None:
     assert results["rec_witness_eligible"].grade == "GREEN"
 
 
-# ---------------------------------------------------------------------------
 # validate_recording_confirm_answers
-# ---------------------------------------------------------------------------
 
 
 def test_validate_recording_confirm_answers_flags_wrong_field_value() -> None:
@@ -231,10 +225,8 @@ def test_validate_recording_confirm_answers_no_warnings_when_valid_or_missing() 
     assert warnings == []
 
 
-# ---------------------------------------------------------------------------
 # LLM 폴백 — 실제 네트워크 호출 없이 recording_checker.extract_recording_fields
 # 를 몽키패치해서 확인한다.
-# ---------------------------------------------------------------------------
 
 _COLLOQUIAL_TRANSCRIPT = (
     "저는 홍길동입니다. 제 모든 재산을 장남에게 물려주고자 합니다.\n"

@@ -33,9 +33,7 @@ def _will_text(*lines: str) -> str:
     return "\n".join([*lines, "", _BODY])
 
 
-# ---------------------------------------------------------------------------
 # 날짜
-# ---------------------------------------------------------------------------
 
 
 def test_date_regex_success_skips_llm_call(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -202,9 +200,7 @@ def test_check_requirements_date_regex_hit_reports_regex_method(
     assert results["date"].extracted["extraction_method"] == "regex"
 
 
-# ---------------------------------------------------------------------------
 # 주소
-# ---------------------------------------------------------------------------
 
 
 def test_address_regex_success_skips_llm_call(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -374,9 +370,7 @@ def test_check_requirements_address_regex_hit_reports_regex_method(
     assert results["address"].extracted["extraction_method"] == "regex"
 
 
-# ---------------------------------------------------------------------------
 # known_limitations.md §2-1 실측 (실제 Anthropic API 호출, --live 필요)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.live

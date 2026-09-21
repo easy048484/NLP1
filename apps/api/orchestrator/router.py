@@ -124,7 +124,7 @@ class GraphState(TypedDict, total=False):
     output: ChatResponse
 
 
-# ------------------------------------------------------------------- 노드
+# 노드
 
 
 def node_load_session(state: GraphState) -> GraphState:
@@ -279,7 +279,7 @@ def node_persist_session(state: GraphState) -> GraphState:
     return {"session": session}
 
 
-# ------------------------------------------------------------------- 그래프
+# 그래프
 
 
 def build_graph():

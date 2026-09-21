@@ -16,7 +16,7 @@
   color-scheme: dark;
 }
 
-/* ============ 두 버전 공통 ============ */
+/* 두 버전 공통 */
 
 /* 주요 버튼 = solid 금색 */
 .app-shell .btn-primary,
@@ -51,7 +51,7 @@
   color: var(--brand-gold);
 }
 
-/* ============ 에이전트 톤 (구조, 두 버전 공통) ============ */
+/* 에이전트 톤 (구조, 두 버전 공통) */
 .agent-avatar {
   display: inline-flex;
   align-items: center;
@@ -134,7 +134,7 @@
   }
 }
 
-/* ============ DARK: 남색 + 금색 + 글래스 ============ */
+/* DARK: 남색 + 금색 + 글래스 */
 .app-shell[data-app-theme="dark"] {
   --surface-page: #0e1626;
   --surface-card: rgba(26, 38, 62, 0.62);
