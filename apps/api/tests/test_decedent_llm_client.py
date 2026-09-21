@@ -227,7 +227,7 @@ def test_will_address_rejects_overly_long_response(
     assert llm_client.extract_will_address("텍스트") is None
 
 
-# 코드펜스 파싱 버그 회귀 테스트 (2026-08-25).
+# 코드펜스 파싱 버그 회귀 테스트.
 #
 # 실전 검증에서 claude-haiku-4-5 가 시스템 프롬프트의 "JSON만 반환하라, 다른
 # 설명이나 문장을 절대 덧붙이지 마라" 지시에도 불구하고 응답을 마크다운

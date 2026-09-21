@@ -258,7 +258,7 @@ def test_closing_lines_present_once() -> None:
     assert reply.count("법률 자문이 아닙니다") == 1
 
 
-# [4] heir_navigator로의 직접 핸드오프 없음 (2026-08-25 제거 — 라우터가 담당)
+# [4] heir_navigator로의 직접 핸드오프 없음 (라우터가 담당)
 
 
 def test_does_not_hand_off_to_heir_navigator() -> None:
