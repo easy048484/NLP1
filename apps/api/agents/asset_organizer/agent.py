@@ -1287,7 +1287,7 @@ def _continue_after_categories(
 
     # 체크리스트가 다 끝났다고 바로 finalized(최종 확정)로 넘어가지 않는다
     # — review 화면에서 사용자가 [이대로 확정]을 눌러야만 _finalize가
-    # 호출된다(요구사항 2번).
+    # 호출된다.
     return _enter_review(state)
 
 
@@ -1323,7 +1323,7 @@ def _run_turn(payload: AgentInput, state: dict[str, Any]) -> AgentOutput:
     #     reviewing/editing_item/finalized)라면 기존 수집 파이프라인을
     #     전혀 타지 않고 여기서 갈린다. 편집 대상은 텍스트 추론이 아니라
     #     프론트가 보낸 구조화된 context.edit_target/context.confirm_review
-    #     로만 식별한다(요구사항 4번) — 과거 대화의 입력 카드를 다시
+    #     로만 식별한다 — 과거 대화의 입력 카드를 다시
     #     활성화하는 방식이 아니라, "지금 review 화면에서 무엇을 눌렀는지"
     #     매 턴 명시적으로 받는다.
     if state["status"] == "finalized":

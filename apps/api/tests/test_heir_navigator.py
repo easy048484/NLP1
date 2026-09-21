@@ -337,10 +337,8 @@ def test_guidance_comes_before_follow_up_question():
             context={"today": "2026-02-01"},
         )
     )
-    # 안내가 먼저 나오고
     assert "안내 기준" in output.reply
     assert output.data["plan"]["next_actions"]
-    # 되묻는 건 뒤에 하나만
     assert output.data["plan"]["blocking_slot"] is None
     assert output.data["asked_slot"] == output.data["plan"]["follow_up"]
     # 그 질문은 답변 본문이 아니라 별도 질문 블록(pending_questions)으로 나간다

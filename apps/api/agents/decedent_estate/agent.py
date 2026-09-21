@@ -132,7 +132,7 @@ def _explicit_will_type_this_turn(context: Optional[dict[str, Any]]) -> Optional
     return None
 
 
-# type switch(2026-09-07) 시 이전 방식 전용 진행 상태가 새 방식 파이프라인에
+# type switch 시 이전 방식 전용 진행 상태가 새 방식 파이프라인에
 # 잘못 재사용되지 않도록 최소 reset한다. 방식이 실제로 바뀌었을 때만(같은
 # 값으로 "바뀐" 경우는 no-op) 적용되며, intent(review/prepare)는 유지한다 —
 # "유언 안내 완료"와 "이용 목적"은 서로 다른 축이라 방식이 바뀌어도 사용자가
@@ -988,7 +988,7 @@ def _requirement_result_from_stored(stored: dict[str, Any]) -> RequirementResult
 
 
 #: recording의 text-derived 5요건 — handwritten의 date/address/name과 동일한
-#: "이번 턴에 못 찾았다고 이전 판정을 잃지 않는다" 병합이 필요하다(2026-09-05).
+#: "이번 턴에 못 찾았다고 이전 판정을 잃지 않는다" 병합이 필요하다.
 #: 실측 확인: transcript intake gate를 지나 review가 시작된 뒤 증인 참여/결격
 #: 답변만 담긴 짧은 메시지가 오면, 이 5개를 그 메시지만으로 다시 판정해 이미
 #: GREEN이었던 결과가 전부 RED/absent로 되돌아갔다. rec_witness_present/
@@ -1501,7 +1501,7 @@ def _run_pipeline(payload: AgentInput) -> AgentOutput:
         if inferred is None:
             # will_type을 아직 몰라 방식 선택 질문으로 돌아가더라도, 이번 턴
             # 메시지에 이미 명백한 prepare 의도가 있으면 잃지 않고 저장해둔다
-            # (2026-09-05) — 그래야 다음 턴에 will_type만 답해도(예: "직접
+            # — 그래야 다음 턴에 will_type만 답해도(예: "직접
             # 손으로 쓴 유언장") intent를 다시 물을 필요 없이 곧장 작성
             # 가이드로 들어간다. 이미 explicit/저장된 intent가 있으면 덮지
             # 않는다(명시값 우선 원칙 유지).
@@ -1577,7 +1577,7 @@ def _run_pipeline(payload: AgentInput) -> AgentOutput:
     will_type_info = get_will_type(will_type)  # notarial / secret / oral
 
     if will_type == _NOTARIAL_WILL_TYPE:
-        # 자동 handoff 없음(2026-09-06) — handwritten/recording의 #126/#127과
+        # 자동 handoff 없음 — handwritten/recording의 #126/#127과
         # 동일 원칙. 공정증서 안내 완료가 곧 사용자의 유언 관련 질문이 전부
         # 끝났다는 뜻은 아니다 — "이 유언장은 따로 확인할 건 없나요?" 같은
         # 후속 질문이 decedent_estate를 벗어나지 않게, 실제 "상속 절차" 의도가

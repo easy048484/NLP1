@@ -1835,7 +1835,6 @@ def test_edit_replaces_existing_value_without_duplicate_and_keeps_other_items():
     assert len(stock_entries) == 1  # 기존 6억 record가 사라지고 하나로 교체됨
     assert stock_entries[0]["value"] == 15_000_000
     assert stock_entries[0]["confidence"] == "confirmed"
-    # 다른 항목(예금)은 그대로.
     deposit_entries = [a for a in state["assets"] if a["type"] == "예금"]
     assert len(deposit_entries) == 1 and deposit_entries[0]["value"] == 42_000_000
     # review_items에도 수정된 값이 반영돼 다시 표시된다.

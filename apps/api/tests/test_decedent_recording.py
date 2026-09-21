@@ -53,7 +53,7 @@ def _run_namespaced(text: str, **context: str):
     return decedent_estate.run(payload)
 
 
-# transcript intake gate (2026-09-05)
+# transcript intake gate
 #
 # 실측 재현: will_type=recording이 확정된 직후 "녹음·영상"(UI 방식 선택
 # 문구)이 user_message로 그대로 들어와도 check_recording_requirements가

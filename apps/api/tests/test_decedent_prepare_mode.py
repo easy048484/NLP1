@@ -100,7 +100,6 @@ def test_missing_intent_defaults_to_review_and_matches_existing_pipeline() -> No
     # intent를 아예 안 보내는 옛 호출부와 동일하게 review 파이프라인이 그대로 돈다.
     assert "guide" not in output.data
     assert "requirements" in output.data
-    # 종결돼도 더 이상 자동 handoff 없음(2026-09-05).
     assert output.next_action is None
     assert "형식 요건상 문제가 발견되지 않았습니다" in output.reply
 
@@ -515,7 +514,7 @@ def test_prepare_handwritten_with_draft_also_includes_review_result() -> None:
     assert output.data["review"]["requirements"]["date"]["grade"] == "GREEN"
     # 초안이 있어도 가이드 정보는 그대로 함께 반환된다.
     assert set(output.data["guide"].keys()) == set(_HANDWRITTEN_GUIDE_IDS)
-    # next_action은 review 결과를 그대로 따른다 — 종결돼도 자동 handoff 없음(2026-09-05).
+    # next_action은 review 결과를 그대로 따른다.
     assert output.next_action is None
 
 
@@ -575,7 +574,6 @@ def test_prepare_recording_with_draft_also_includes_review_result() -> None:
     assert "✅ 연월일: 기재 확인" in output.reply
     assert "review" in output.data
     assert output.data["review"]["requirements"]["rec_content"]["grade"] == "GREEN"
-    # 종결돼도 더 이상 자동 handoff 없음(2026-09-05).
     assert output.next_action is None
     # 가이드+점검 결과가 이어붙는 화면도 recording(§1067) footer를 써야 한다.
     assert "민법 제1067조" in output.reply

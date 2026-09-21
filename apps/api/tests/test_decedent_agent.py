@@ -159,8 +159,7 @@ def test_run_reads_answers_from_context() -> None:
     assert address["condition_id"] == "envelope_or_minor_discrepancy"
     assert address["grade"] == "YELLOW"
     assert address["precedent_ids"] == ["address_on_envelope_valid"]
-    # PENDING/열린 followup이 하나도 없어 review는 종결됐지만, 더 이상
-    # 자동으로 heir_navigator에 handoff하지 않는다(2026-09-05).
+    # review가 종결돼도 heir_navigator로 자동 handoff하지 않는다.
     assert output.next_action is None
 
 

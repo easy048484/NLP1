@@ -133,7 +133,6 @@ def test_authed_graph_is_private_to_owner(with_db):
 
     graph_id = client.post("/family-graph", headers=_auth(owner)).json()["id"]
 
-    # 본인은 조회 가능
     assert (
         client.get(f"/family-graph/{graph_id}", headers=_auth(owner)).status_code == 200
     )
@@ -141,7 +140,6 @@ def test_authed_graph_is_private_to_owner(with_db):
     assert (
         client.get(f"/family-graph/{graph_id}", headers=_auth(other)).status_code == 404
     )
-    # 비로그인도 404
     assert client.get(f"/family-graph/{graph_id}").status_code == 404
 
 

@@ -211,7 +211,6 @@ def verify_numbers(draft: str, agent_outputs: list[AgentOutput]) -> Verification
         for kind, fact in _extract_typed(draft)
         if fact not in source and not _matches_by_value(kind, fact, source_values)
     ]
-    # 중복 제거(순서 유지)
     seen: set[str] = set()
     unique = [m for m in mismatches if not (m in seen or seen.add(m))]
     return VerificationResult(ok=not unique, mode="synthesized", mismatches=unique)
@@ -229,9 +228,6 @@ def fallback_concat(agent_outputs: list[AgentOutput]) -> str:
         )
         sections.append(f"【{title}】\n{o.reply.strip()}")
     return "\n\n".join(sections)
-
-
-# _llm_enabled 는 llm_policy 로 이동 (planner.py 와 중복 제거)
 
 
 _SYNTH_SYSTEM = """당신은 가족 자산·상속 상담 서비스의 편집자입니다. 여러 전문 에이전트가

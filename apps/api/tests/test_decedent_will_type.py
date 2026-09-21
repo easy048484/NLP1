@@ -102,7 +102,6 @@ def test_handwritten_runs_existing_pipeline_unchanged() -> None:
 
     assert output.data["will_type"] == "handwritten"
     assert "requirements" in output.data
-    # 종결돼도 더 이상 자동 handoff 없음(2026-09-05).
     assert output.next_action is None
     assert "형식 요건상 문제가 발견되지 않았습니다" in output.reply
 
@@ -126,7 +125,6 @@ def test_unknown_defaults_to_handwritten_with_notice() -> None:
     )  # 파이프라인이 그대로 이어짐
     assert output.data["will_type"] == "handwritten"
     assert "requirements" in output.data
-    # 종결돼도 더 이상 자동 handoff 없음(2026-09-05).
     assert output.next_action is None
 
 
@@ -142,7 +140,6 @@ def test_handwritten_mentioned_in_message_is_not_reasked() -> None:
     payload = AgentInput(
         session_id="s1",
         user_message="자필로 쓴 유언장이 있는데 효력이 있나요?",
-        # context 없음 — will_type 미확인
     )
 
     output = decedent_estate.run(payload)
@@ -214,7 +211,7 @@ def test_explicit_context_will_type_still_wins_over_message_inference() -> None:
     )  # notarial 은 판정 파이프라인 자체를 안 돈다
 
 
-# recording(§1067) 자연어 will_type 추론 (2026-09-05)
+# recording(§1067) 자연어 will_type 추론
 #
 # 실측 재현: "휴대폰을 정리하다가 재산 얘기를 남긴 음성메모를 발견했어요"처럼
 # 이미 명백히 녹음임을 밝혔는데도 방식 선택 질문을 다시 했다.
@@ -305,7 +302,7 @@ def test_explicit_handwritten_wins_over_voice_memo_phrase_in_message() -> None:
     assert output.data["will_type"] == "handwritten"
 
 
-# notarial(공정증서, §1068) 자연어 will_type 추론 (2026-09-06)
+# notarial(공정증서, §1068) 자연어 will_type 추론
 #
 # 실측 재현: "아버지가 돌아가시고 서류를 정리하다가 공증받은 유언장을
 # 발견했어요"처럼 이미 명백히 공정증서임을 밝혔는데도 방식 선택 질문을
@@ -393,7 +390,7 @@ def test_explicit_handwritten_wins_over_notarized_will_phrase_in_message() -> No
     assert output.data["will_type"] == "handwritten"
 
 
-# rules 기반 generic will_type 자연어 추론 (2026-09-06)
+# rules 기반 generic will_type 자연어 추론
 #
 # _infer_will_type_from_message()가 방식별 marker 상수를 하드코딩하는 대신
 # rules/will_types.json 의 will_types[].inference_markers 를 generic하게

@@ -348,7 +348,7 @@ def test_invalid_confirm_answer_still_results_in_pending_not_crash() -> None:
     assert results["seal"].grade == "PENDING"
 
 
-# 도로명주소 / 라벨 없는 지번 인식 (2026-08-26)
+# 도로명주소 / 라벨 없는 지번 인식
 #
 # _ADDRESS_UNIT_RE 가 "번지"라는 리터럴 단어에 의존해, 완전한 도로명주소
 # ("테헤란로 123")와 "번지" 글자 없는 지번("역삼동 123-45")이 전부
@@ -445,7 +445,7 @@ def test_property_location_road_address_still_excluded_by_context() -> None:
     assert results["address"].grade == "RED"
 
 
-# 도로명주소 건물번호 뒤 한국어 조사 경계 (2026-09-05)
+# 도로명주소 건물번호 뒤 한국어 조사 경계
 #
 # _ADDRESS_UNIT_RE의 도로명주소 대안이 건물번호 뒤에 공백/쉼표/마침표/문자열
 # 끝만 허용해서, "테헤란로 123이라고 적혀 있어요"처럼 review 자연어 확인
