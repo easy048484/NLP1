@@ -5,16 +5,13 @@ import { ASSET_CATEGORY_OPTIONS } from "../../lib/assetCategories";
 /**
  * asset_organizer 자산정리 진입/추가 카테고리 다중 선택 UI.
  *
- * "자산 정리하고 싶어요"처럼 시작 의사만 있고 구체적 항목이 없을 때
- * (agent.py의 awaiting_category_selection), 또는 남은 카테고리 일괄
- * 확인에서 "더 있어요"를 눌렀을 때(RemainingCategoriesPrompt) 재사용한다
- * — 둘 다 "카테고리 몇 개를 골라 제출"이라는 같은 상호작용이라 로컬
- * 컴포넌트 하나로 통일했다.
+ * 시작 의사만 있고 구체적 항목이 없을 때(agent.py의 awaiting_category_selection)와
+ * 남은 카테고리 확인에서 "더 있어요"를 눌렀을 때(RemainingCategoriesPrompt)
+ * 같은 상호작용이라 이 컴포넌트를 함께 쓴다.
  *
- * `availableKeys`가 주어지면 그 안에 있는 카테고리만 보여준다(예:
- * pending_categories로 좁혀진 "더 있어요" 재표시) — 생략하면 전체
- * 목록을 보여준다(최초 진입). "기타"는 백엔드 체크리스트에 없는
- * catch-all이라 availableKeys 필터와 무관하게 항상 선택 가능하게 둔다.
+ * `availableKeys`가 있으면 그 안의 카테고리만 보여주고(pending_categories로
+ * 좁혀진 재표시), 생략하면 전체 목록을 보여준다(최초 진입). "기타"는 백엔드
+ * 체크리스트에 없는 catch-all이라 availableKeys와 무관하게 항상 선택 가능하다.
  */
 export function AssetCategorySelectCard({
   availableKeys,
