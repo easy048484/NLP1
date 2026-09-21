@@ -109,17 +109,14 @@ _OPENING_PROMPT = (
     "은행 앱 화면이나 안심상속 조회 결과를 사진으로 올려주셔도 됩니다."
 )
 
-#: 생전(본인 재산 목록화, 기존 기본 동작) / 사후(남은 가족이 안심상속
-#: 원스톱서비스 등에서 조회한 결과 해석) 두 모드. decedent_estate의 intent
-#: 게이트(review/prepare, agents/decedent_estate/agent.py._resolve_intent)와
-#: 완전히 같은 패턴을 그대로 따른다 — 새 메커니즘을 발명하지 않았다:
-#: context 최상위 평면 키("mode")로 매 턴 명시적으로 보낼 수 있고(이번 턴
-#: 값이 저장된 상태보다 우선 — handoff.build_agent_context 원칙과 동일),
-#: 미지정이면 조용히 기존 동작(pre_need)으로 기본 처리하며(하위 호환),
-#: 값이 있는데 화이트리스트 밖이면 재질문한다. `schemas.AgentInput.axis`
-#: (오케스트레이터가 "키워드 후보 0개" 폴백에만 쓰는 축)와는 의도적으로
-#: 분리했다 — decedent_estate도 자기 axis(POST_DEATH 하나)와 별개로
-#: intent를 자기 안에서 따로 관리한다, 같은 이유.
+#: 생전(본인 재산 목록화, 기존 기본 동작) / 사후(안심상속 원스톱서비스 등에서
+#: 조회한 결과 해석) 두 모드. decedent_estate의 intent 게이트
+#: (agents/decedent_estate/agent.py._resolve_intent)와 같은 패턴이다:
+#: context 최상위 키("mode")로 매 턴 보낼 수 있고(이번 턴 값이 저장된 상태보다
+#: 우선 — handoff.build_agent_context 원칙과 동일), 미지정이면 pre_need로
+#: 기본 처리하고(하위 호환), 화이트리스트 밖 값이면 재질문한다.
+#: `schemas.AgentInput.axis`(키워드 후보 0개일 때만 쓰는 라우팅 힌트)와는
+#: 의도적으로 분리했다.
 _PRE_NEED_MODE = "pre_need"
 _POST_DEATH_MODE = "post_death"
 _MODE_VALUES = (_PRE_NEED_MODE, _POST_DEATH_MODE)
@@ -260,7 +257,7 @@ def _format_krw(amount: int) -> str:
     return f"-{text}" if negative else text
 
 
-# =================================================================== 상태
+# 상태
 
 
 def _empty_state() -> dict[str, Any]:
@@ -425,7 +422,7 @@ def _wants_unknown_amount(message: str) -> bool:
     return bool(_DONT_KNOW_AMOUNT_RE.search(message))
 
 
-# ================================================================ 자유발화 정정
+# 자유발화 정정
 
 
 #: 요구사항 A: "아까 …라고 했는데", "정정", "바꿔", "아니 …" 등 명시적
@@ -592,16 +589,13 @@ def _merge_extraction(
         _mark_checked(state, _INSURANCE_CATEGORY)
         _drop_pending_amount(state, "insurance_value", "보험")
 
-    # kind=="asset_value"는 유형은 알지만 금액을 못 찾은 경우라 pending_amounts
-    # 재질문으로 이어진다(정상 흐름, 정보 유실 아님). kind가 "unrecognized_segment"
-    # (정규식·LLM 둘 다 유형 자체를 못 알아본 세그먼트)나 "unclear"(LLM이 스스로
-    # "이해 못했다"고 표시한 부분)면 얘기가 다르다 — Round 11까지는 이 두 kind를
-    # 그냥 건너뛰어서, 사용자가 뭔가 구체적으로 답했는데 결과적으로 아무 흔적도
-    # 안 남는 "조용한 정보 유실"이 있었다(Round 12에서 실측 재현). 원문(reason)
-    # 자체는 PII 잔여 위험이 있어 여전히 state/reply에 노출하지 않지만
-    # (extractor.py의 관련 주석과 동일 원칙), "이해 못한 부분이 있었다"는
-    # 신호는 has_unresolved_remainder로 남겨서 호출부가 조용히 다음 질문으로
-    # 넘어가지 않고 명시적으로 재질문하도록 한다.
+    # "asset_value"는 유형은 알지만 금액이 없는 경우라 pending_amounts 재질문으로
+    # 이어진다(정상 흐름). "unrecognized_segment"(정규식·LLM 모두 유형을 못
+    # 알아본 세그먼트)/"unclear"(LLM이 이해 못했다고 표시한 부분)는 예전에
+    # 건너뛰어서 답변이 흔적 없이 유실됐다(Round 12 실측 재현). 원문(reason)은
+    # PII 위험이 있어 state/reply에 노출하지 않되(extractor.py 관련 주석과
+    # 동일), "이해 못한 부분이 있었다"는 신호는 has_unresolved_remainder로
+    # 남겨 호출부가 재질문하게 한다.
     has_unresolved_kind = False
     for item in asset_result.missing:
         kind = item.get("kind")
@@ -626,15 +620,11 @@ def _merge_extraction(
             # 이유(extractor.py의 _SEGMENT_NEGATION_RE 참고).
             _add_pending_amount(state, item)
 
-    # ⚠️ 실측으로 발견된 오탐 지점: 자산 추출(_regex_extract)과 부채 추출
-    # (extract_liabilities)은 같은 문장을 각자 독립적으로 세그먼트 분석한다
-    # (자산 전용/부채 전용 키워드 사전을 따로 씀) — 그래서 "대출이 좀
-    # 있어요"처럼 순수 부채 문장은 자산 추출기 입장에서는 "유형 자체를
-    # 못 알아본 세그먼트"(unrecognized_segment)로 잡히지만, 실제로는 부채
-    # 추출기가 이미 제대로 이해하고 있다(대출 유형 인식 + 금액 대기 또는
-    # 확정). 이 경우까지 "이해 못함"으로 재질문하면 정상적으로 진행 중인
-    # 부채 흐름을 방해하는 거짓 양성이 된다 — 부채 쪽에서 뭔가 신호가
-    # 있었다면 자산 추출기의 unrecognized_segment/unclear는 무시한다.
+    # ⚠️ 실측으로 발견된 오탐: 자산 추출(_regex_extract)과 부채 추출
+    # (extract_liabilities)은 같은 문장을 각자의 키워드 사전으로 독립 분석한다.
+    # "대출이 좀 있어요"는 자산 추출기에는 unrecognized_segment지만 부채
+    # 추출기는 이미 이해했으므로, 재질문하면 정상 진행 중인 부채 흐름을 막는
+    # 거짓 양성이 된다. 부채 쪽 신호가 있으면 자산 쪽 unresolved는 무시한다.
     liability_extractor_understood = bool(liabilities or liability_missing)
     has_unresolved_remainder = (
         has_unresolved_kind and not liability_extractor_understood
@@ -721,7 +711,7 @@ def _parse_end_age(message: str, current_age: int | None) -> int | None:
     return None
 
 
-# ============================================================ 퇴직연금 소득 전환
+# 퇴직연금 소득 전환
 
 
 def _has_pension_asset(state: dict[str, Any]) -> bool:
@@ -889,7 +879,7 @@ def _format_summary(state: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-# ============================================== 공유 financial_profile 변환
+# 공유 financial_profile 변환
 
 
 def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
@@ -1004,7 +994,7 @@ def _to_shared_profile(state: dict[str, Any]) -> FinancialProfile:
     )
 
 
-# ======================================================== review/수정/확정
+# review/수정/확정
 
 
 def _review_row(
@@ -1227,7 +1217,7 @@ def _enter_review(state: dict[str, Any], *, note: str | None = None) -> AgentOut
     return _output(state, reply)
 
 
-# ================================================================= 흐름
+# 흐름
 
 
 def _finalize(state: dict[str, Any]) -> AgentOutput:

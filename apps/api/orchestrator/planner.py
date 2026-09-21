@@ -102,7 +102,7 @@ class Plan:
         return [name for layer in self.layers for name in layer]
 
 
-# ------------------------------------------------------------------ classify
+# classify
 
 
 #: LLM 라우터가 "직전 에이전트와의 대화를 이어간다"를 고를 때 쓰는 예약 이름.
@@ -496,7 +496,7 @@ def classify(
     )
 
 
-# ---------------------------------------------------------------- build_plan
+# build_plan
 
 
 def build_plan(selected: list[AgentName]) -> Plan:
@@ -532,7 +532,7 @@ def build_plan(selected: list[AgentName]) -> Plan:
     return Plan(path=PATH_FULL, layers=layers)
 
 
-# -------------------------------------------------------------- execute_plan
+# execute_plan
 
 
 @dataclass

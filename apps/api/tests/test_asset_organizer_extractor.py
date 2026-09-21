@@ -59,7 +59,7 @@ def _install_fake_llm(
     )
 
 
-# ------------------------------------------------ 1) 데모 시나리오: 복합 발화
+# 1) 데모 시나리오: 복합 발화
 
 
 def test_house_deposit_and_insurance_in_one_sentence():
@@ -93,7 +93,7 @@ def test_house_deposit_and_insurance_in_one_sentence():
     )
 
 
-# ------------------------------------------------------- 2) 월 생활비 후속 답변
+# 2) 월 생활비 후속 답변
 
 
 def test_monthly_expense_followup_answer_parses_amount():
@@ -107,7 +107,7 @@ def test_monthly_expense_followup_answer_returns_none_when_unparseable():
     assert extractor.parse_monthly_expense_answer("글쎄요, 그때그때 달라요.") is None
 
 
-# --------------------------------------- 3) 유형·금액 모두 불명확 -> 재질문 회귀
+# 3) 유형·금액 모두 불명확 -> 재질문 회귀
 
 
 def test_fully_ambiguous_message_requires_clarification_without_silent_defaults(
@@ -163,7 +163,7 @@ def test_llm_fallback_resolves_segment_regex_could_not_classify(
     assert any(a.type == "펀드" and a.value == 50_000_000 for a in result.assets)
 
 
-# ------------------------------------------------------ 4) 애매한 수치 표현
+# 4) 애매한 수치 표현
 
 
 def test_vague_amount_expression_still_parses_via_regex():
@@ -192,7 +192,7 @@ def test_vague_amount_expression_without_recognizable_type_requires_clarificatio
     assert result.assets == []
 
 
-# --------------------------------------------------- 4-2) 천 단위 콤마 (P0-3)
+# 4-2) 천 단위 콤마 (P0-3)
 
 
 @pytest.mark.parametrize(
@@ -221,7 +221,7 @@ def test_thousands_comma_amount_flows_through_full_extraction():
     assert result.assets[0].value == 32_000_000
 
 
-# ---------------------------------------- 4-3) 천/백 혼합·공백 변형 (Round 15)
+# 4-3) 천/백 혼합·공백 변형 (Round 15)
 
 
 @pytest.mark.parametrize(
@@ -267,7 +267,7 @@ def test_demo_amount_expressions_flow_through_full_extraction(text, expected):
     assert result.assets[0].value == expected
 
 
-# ------------------------------------------- 4-4) 부정 표현 오탐 (Round 15 B5)
+# 4-4) 부정 표현 오탐 (Round 15 B5)
 
 
 @pytest.mark.parametrize(
@@ -303,7 +303,7 @@ def test_negated_liability_segment_marked_absent_not_missing_value(text):
     assert missing[0]["liability_type"] == "대출"
 
 
-# --------------------------------------- 4-5) 나열 범위 부정 표현 (D-01)
+# 4-5) 나열 범위 부정 표현 (D-01)
 
 
 def _absent_types(result: extractor.ExtractionResult) -> set[str]:
@@ -386,7 +386,7 @@ def test_single_bare_type_mention_still_asks_amount_normally():
     assert _absent_types(result) == set()
 
 
-# ------------------------------------------------------------- 5) 이미지 판독
+# 5) 이미지 판독
 
 
 def test_extract_from_image_success_parses_assets_liabilities_insurance(
@@ -705,7 +705,7 @@ def test_llm_fallback_income_type_outside_whitelist_is_kept_as_gita_not_dropped(
     assert result.incomes[0].start_age == 65
 
 
-# ------------------------------------------- 6) 사후 모드: 다기관 조회 결과 해석
+# 6) 사후 모드: 다기관 조회 결과 해석
 
 
 def test_disclosures_split_confirmed_and_unknown_amount_by_institution(
@@ -839,7 +839,7 @@ def test_disclosures_prompt_instructs_excluding_institution_names():
     assert "은행" in prompt and "결과에 포함하지 마라" in prompt
 
 
-# ==================== "빚" 포괄 상담 의도 vs 실제 부채 존재 오탐 (실측 재현)
+# "빚" 포괄 상담 의도 vs 실제 부채 존재 오탐 (실측 재현)
 
 
 def test_generic_organize_intent_with_bit_keyword_is_not_treated_as_liability():
@@ -914,7 +914,7 @@ def test_specific_loan_keywords_are_unaffected_by_bit_generic_intent_guard(
     assert missing[0]["kind"] == expected_kind
 
 
-# ============== P0: 부채가 "기타" 자산으로 중복 등록되는 버그(실측 재현)
+# P0: 부채가 "기타" 자산으로 중복 등록되는 버그(실측 재현)
 
 
 _P0_REPRO_TEXT = (
@@ -1116,7 +1116,7 @@ def test_same_amount_deposit_and_loan_both_preserved_without_dedup():
     assert missing == []
 
 
-# ============== P0(2차): 사후 모드 disclosure 경로에서도 부채-기타 중복 (실측 재현)
+# P0(2차): 사후 모드 disclosure 경로에서도 부채-기타 중복 (실측 재현)
 
 
 class _FakeDisclosureClient:
@@ -1328,7 +1328,7 @@ def test_disclosure_legitimate_gita_and_same_amount_liability_both_preserved(
     ]
 
 
-# ============== 자연어 탐색 재현: "이고"/"이랑"/"?" 미분리로 인한 금액 합산 오탐
+# 자연어 탐색 재현: "이고"/"이랑"/"?" 미분리로 인한 금액 합산 오탐
 
 
 def test_igo_connector_prevents_amount_cross_contamination_between_asset_and_liability():
@@ -1400,7 +1400,7 @@ def test_irang_connector_does_not_break_existing_generic_bit_intent_guard():
     assert missing == []
 
 
-# ============== 자연어 탐색 2라운드: 실제 실패로 확인된 항목만 최소 수정
+# 자연어 탐색 2라운드: 실제 실패로 확인된 항목만 최소 수정
 
 
 def test_a1_mixed_amount_expressions_and_car_unknown_amount():
@@ -1671,10 +1671,10 @@ def test_existence_verb_guard_still_recognizes_real_existence_statements():
     )
 
 
-# ============================================= golden-set 회귀 (이번 라운드)
+# golden-set 회귀 (이번 라운드)
 
 
-# ---------------------------------------------------- E25) 숫자+단위 공백 중복
+# E25) 숫자+단위 공백 중복
 
 
 @pytest.mark.parametrize(
@@ -1710,7 +1710,7 @@ def test_e25_flows_through_full_extraction():
     assert result.assets == [extractor.Asset(type="예금", value=32_000_000)]
 
 
-# --------------------------------------------- correction) 정정 전용 헬퍼
+# correction) 정정 전용 헬퍼
 
 
 class TestParseCorrectionAmount:
@@ -1755,7 +1755,7 @@ def test_match_liability_type_public_wrapper_matches_keyword_anywhere_in_text():
     assert extractor.match_liability_type("정정할게요 5억 5천이에요") is None
 
 
-# ---------------------------------------- E45) 사후 disclosure 금액 축약 방지
+# E45) 사후 disclosure 금액 축약 방지
 
 
 def test_disclosure_bare_thousand_expression_uses_domain_convention_over_llm_literal(
@@ -1813,7 +1813,7 @@ def test_disclosure_deterministic_override_ignored_when_type_appears_twice(
     assert items[0].value == 12_000_000
 
 
-# ---------------------------------------- E47) 사후 disclosure 보험 유실 방지
+# E47) 사후 disclosure 보험 유실 방지
 
 
 def test_disclosure_insurance_type_preserved_not_downgraded_to_gita(

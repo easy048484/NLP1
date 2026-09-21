@@ -86,9 +86,7 @@ def _run_turns(messages: list[str]) -> list[AgentOutput]:
     return outputs
 
 
-# ---------------------------------------------------------------------------
 # intent 게이트
-# ---------------------------------------------------------------------------
 
 
 def test_missing_intent_defaults_to_review_and_matches_existing_pipeline() -> None:
@@ -169,7 +167,6 @@ def test_notarial_ignores_intent_entirely() -> None:
     assert "guide" not in output.data
 
 
-# ---------------------------------------------------------------------------
 # 자연어 prepare intent 전환 (2026-09-05 버그 수정)
 #
 # 실측 재현: will_type/intent가 미지정이거나 이미 review로 저장돼 있어도,
@@ -177,7 +174,6 @@ def test_notarial_ignores_intent_entirely() -> None:
 # 보다 그 의도를 우선해 prepare로 전환해야 한다. document intake(사진/본문
 # 요청)가 반복되면 안 된다. 우선순위: 이번 턴 explicit context.intent >
 # 이번 턴 명확한 자연어 > 저장된 state.intent > 기본값 review.
-# ---------------------------------------------------------------------------
 
 
 def test_exact_three_turn_regression_ends_in_prepare_without_document_intake() -> None:
@@ -411,9 +407,7 @@ def test_recording_natural_language_prepare_intent() -> None:
     assert "review" not in output.data
 
 
-# ---------------------------------------------------------------------------
 # prepare 모드 — handwritten, 초안 없음 (가이드만)
-# ---------------------------------------------------------------------------
 
 
 def test_prepare_handwritten_without_draft_returns_guide_only() -> None:
@@ -469,9 +463,7 @@ def test_prepare_unknown_will_type_defaults_to_handwritten_guide_with_notice() -
     assert output.data["will_type"] == "handwritten"
 
 
-# ---------------------------------------------------------------------------
 # prepare 모드 — recording, 초안 없음 (가이드만)
-# ---------------------------------------------------------------------------
 
 
 def test_prepare_recording_without_draft_returns_guide_only() -> None:
@@ -502,9 +494,7 @@ def test_prepare_recording_without_draft_returns_guide_only() -> None:
     assert "민법 제1066조" not in output.reply
 
 
-# ---------------------------------------------------------------------------
 # prepare 모드 + 초안 있음 → 가이드 + review 결과 둘 다
-# ---------------------------------------------------------------------------
 
 
 def test_prepare_handwritten_with_draft_also_includes_review_result() -> None:
@@ -603,13 +593,11 @@ def test_prepare_has_draft_context_flag_overrides_heuristic() -> None:
     assert output.next_action is None
 
 
-# ---------------------------------------------------------------------------
 # 마무리 문구(§3-3 상담 연결 · §3-4 하단 고지) 중복 방지
 #
 # 가이드 블록(format_guide)과 점검 블록(format_result)이 각각 같은 두 줄로 끝나서,
 # 초안을 함께 낸 경우 한 화면에 두 번씩 반복되던 문제의 회귀 방지. 개수를 세지
 # 않고 `in`으로만 검사하면 중복을 못 잡으므로 여기서는 count()로 확인한다.
-# ---------------------------------------------------------------------------
 
 _CONSULTATION_MARK = "대한법률구조공단 132"
 _FOOTER_MARK = "법률 자문이 아닙니다"
@@ -701,14 +689,12 @@ def test_namespaced_prepare_with_draft_runs_review_too() -> None:
     assert "review" in output.data
 
 
-# ---------------------------------------------------------------------------
 # 초안 판별 (_looks_like_draft)
 #
 # user_message가 비어 있지 않다는 것만으로 초안이라고 보면 "유언장을 준비하려고요"
 # 같은 요청 문장까지 초안으로 오인해, 아직 쓰지도 않은 사용자에게 "❌ 날짜가
 # 확인되지 않습니다"를 보여주게 된다. 재산 처분 의사 / 날짜 / 제목줄+내용 중
 # 하나 이상이 있을 때만 초안으로 본다.
-# ---------------------------------------------------------------------------
 
 _NOT_DRAFT_MESSAGES = [
     "유언장을 준비하려고요",

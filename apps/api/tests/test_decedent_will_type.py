@@ -214,7 +214,6 @@ def test_explicit_context_will_type_still_wins_over_message_inference() -> None:
     )  # notarial 은 판정 파이프라인 자체를 안 돈다
 
 
-# ---------------------------------------------------------------------------
 # recording(§1067) 자연어 will_type 추론 (2026-09-05)
 #
 # 실측 재현: "휴대폰을 정리하다가 재산 얘기를 남긴 음성메모를 발견했어요"처럼
@@ -222,7 +221,6 @@ def test_explicit_context_will_type_still_wins_over_message_inference() -> None:
 # handwritten과 동일 원칙 — 최소·명백한 표현만 deterministic하게 매칭하고
 # LLM은 쓰지 않는다. "메모"/"파일"/"영상"/"말"/"기록" 같은 단어 하나만으로는
 # 추론하지 않는다.
-# ---------------------------------------------------------------------------
 
 
 def test_voice_memo_message_is_inferred_as_recording_without_reasking() -> None:
@@ -307,7 +305,6 @@ def test_explicit_handwritten_wins_over_voice_memo_phrase_in_message() -> None:
     assert output.data["will_type"] == "handwritten"
 
 
-# ---------------------------------------------------------------------------
 # notarial(공정증서, §1068) 자연어 will_type 추론 (2026-09-06)
 #
 # 실측 재현: "아버지가 돌아가시고 서류를 정리하다가 공증받은 유언장을
@@ -315,7 +312,6 @@ def test_explicit_handwritten_wins_over_voice_memo_phrase_in_message() -> None:
 # 다시 했다. handwritten/recording과 동일 원칙 — 최소·명백한 표현만
 # deterministic하게 매칭하고 LLM은 쓰지 않는다. "공증"/"서류"/"증서"/
 # "공증사무소" 같은 단어 하나만으로는 추론하지 않는다.
-# ---------------------------------------------------------------------------
 
 
 def test_notarized_will_found_message_is_inferred_as_notarial_without_reasking() -> (
@@ -397,7 +393,6 @@ def test_explicit_handwritten_wins_over_notarized_will_phrase_in_message() -> No
     assert output.data["will_type"] == "handwritten"
 
 
-# ---------------------------------------------------------------------------
 # rules 기반 generic will_type 자연어 추론 (2026-09-06)
 #
 # _infer_will_type_from_message()가 방식별 marker 상수를 하드코딩하는 대신
@@ -406,7 +401,6 @@ def test_explicit_handwritten_wins_over_notarized_will_phrase_in_message() -> No
 # 민법상 유언 방식을 명백하게 특정했다면, 그 방식이 full-support(handwritten/
 # recording)인지 guidance-only(notarial/secret/oral)인지와 무관하게 방식
 # 선택 질문을 다시 하지 않는다.
-# ---------------------------------------------------------------------------
 
 _FIVE_WAY_INFERENCE_CASES = [
     ("handwritten", "아버지가 자필증서 유언을 남겼어요"),
@@ -599,7 +593,6 @@ def test_oral_natural_language_mention_infers_oral_without_reasking() -> None:
     assert "민법 제1070조" in output.reply
 
 
-# ---------------------------------------------------------------------------
 # will_type 자연어 변경(type switch, 2026-09-07)
 #
 # 실측 재현: handwritten이 이미 저장된 뒤 "아아 녹음으로 하려고"처럼 명백히
@@ -609,7 +602,6 @@ def test_oral_natural_language_mention_infers_oral_without_reasking() -> None:
 # 구분해야 하므로, 방식명 뒤에 선택/변경 어미가 곧장 붙은 경우만 switch로
 # 인정한다(rules/will_types.json 의 type_switch.intent_suffix_pattern +
 # will_types[].switch_markers).
-# ---------------------------------------------------------------------------
 
 
 def _stored(will_type: str, **extra: str) -> dict:

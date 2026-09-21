@@ -88,10 +88,8 @@ def test_masks_multiple_sensitive_values_in_one_document() -> None:
     assert "2026년 5월 3일" in masked
 
 
-# ---------------------------------------------------------------------------
 # 교차 오탐 회귀 테스트: 주민등록번호(_RRN_RE)·전화번호(_PHONE_RE)·날짜가
 # 서로의 패턴을 잘못 집어삼키지 않는지 확인한다.
-# ---------------------------------------------------------------------------
 
 
 def test_dashed_date_is_not_masked_as_rrn_or_phone() -> None:

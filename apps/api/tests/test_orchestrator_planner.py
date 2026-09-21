@@ -57,7 +57,7 @@ def _patch(monkeypatch, *fakes):
         monkeypatch.setitem(router._AGENT_RUNNERS, name, fake)
 
 
-# ------------------------------------------------------------- registry
+# registry
 
 
 def test_registry_discovers_every_agent_name():
@@ -101,7 +101,7 @@ def test_retirement_planner_is_registered_but_unreachable_by_keyword():
         assert output.agent != AgentName.RETIREMENT_PLANNER
 
 
-# ------------------------------------------------------------- classify
+# classify
 
 
 def test_fast_path_when_pending_handoff(monkeypatch):
@@ -161,7 +161,7 @@ def test_llm_selection_narrows_candidates(monkeypatch):
     assert plan.layers == [[AgentName.TAX_CALCULATOR]]
 
 
-# --------------------------------------------------- LLM-first routing (신규)
+# LLM-first routing (신규)
 #
 # 2026-09-05: planner.classify()가 키워드 후보 개수와 무관하게 매번 LLM을
 # 부르도록 바뀌었다(_llm_route 가 키워드 후보가 아니라 eligible 전체를 enum 으로
@@ -560,7 +560,7 @@ def test_decedent_estate_routing_scenarios():
     assert AgentName.DECEDENT_ESTATE not in plan.agents
 
 
-# ------------------------------------------------- pending_reply_agent (classify)
+# pending_reply_agent (classify)
 
 
 def test_pending_reply_agent_wins_over_keyword_candidate():
@@ -611,7 +611,7 @@ def test_pending_reply_agent_none_falls_back_to_keyword_routing():
     assert plan.layers == [[AgentName.ASSET_ORGANIZER]]
 
 
-# ------------------------------------------------------------ build_plan
+# build_plan
 
 
 def test_build_plan_orders_by_requires_produces():
@@ -629,7 +629,7 @@ def test_build_plan_soft_dependency_when_producer_not_selected():
     assert plan.layers == [[AgentName.TAX_CALCULATOR]]
 
 
-# ---------------------------------------------------------- execute_plan
+# execute_plan
 
 
 def test_parallel_layer_runs_concurrently(monkeypatch):
@@ -708,7 +708,7 @@ def test_one_agent_failure_does_not_kill_the_turn(monkeypatch):
     assert output.data.get("error") == "agent_failed"
 
 
-# ------------------------------------------------------- financial_profile
+# financial_profile
 
 
 def test_financial_profile_round_trips_and_merges(monkeypatch):
@@ -776,7 +776,7 @@ def test_session_state_json_round_trip_omits_pending_reply_agent_when_unset():
     assert back.pending_reply_agent is None
 
 
-# --------------------------------------------------------------- handoffs
+# handoffs
 
 
 def test_structured_handoff_takes_priority_over_legacy_string(monkeypatch):
@@ -801,7 +801,7 @@ def test_structured_handoff_takes_priority_over_legacy_string(monkeypatch):
     assert second.path == "fast"
 
 
-# ------------------------------------------------ waiting-agent continuation
+# waiting-agent continuation
 #
 # 재현: decedent_estate가 review intake gate(#103)에서 "유언장 사진을
 # 올려주시거나, 적힌 내용을 그대로 입력해 주세요"를 next_action=
@@ -883,13 +883,11 @@ def test_waiting_agent_pending_clears_after_non_waiting_response(monkeypatch):
     assert len(asset_organizer.captured) == 1
 
 
-# ---------------------------------------------------------------------------
 # #125 — pending_reply_agent 상태에서도 LLM이 켜져 있으면 continuation vs
 # 명백한 새 주제를 구분해야 한다(예전엔 LLM 자체를 호출하지 않고 무조건
 # pending_reply_agent로 고정했다). 위 테스트들은 LLM이 꺼진(ANTHROPIC_API_KEY
 # 없음) 환경의 폴백 경로를 검증하고, 아래는 LLM이 실제로 판단에 관여하는
 # 경로(monkeypatch로 결과를 통제)를 세션 단위(router.route)로 검증한다.
-# ---------------------------------------------------------------------------
 
 
 def test_waiting_agent_llm_continue_keeps_pending_despite_asset_keywords(
@@ -1191,7 +1189,7 @@ def test_notarial_guidance_does_not_auto_handoff_and_keeps_followup_with_deceden
     assert turn3.agents == [AgentName.HEIR_NAVIGATOR]
 
 
-# ------------------------------------------------------- compose / verify
+# compose / verify
 
 
 def _outputs():
@@ -1235,7 +1233,7 @@ def test_verify_numbers_ignores_small_counts():
     assert compose_mod.verify_numbers("3개월 안에 2명이 신고합니다.", _outputs()).ok
 
 
-# ---------------------------------------- verify: 값 수준(semantic) 대조
+# verify: 값 수준(semantic) 대조
 
 
 def _notation_outputs():
@@ -1357,7 +1355,7 @@ def test_full_pipeline_response_carries_verification(monkeypatch):
     assert output.verification.ok
 
 
-# ---------------------------------------- ChatResponse.contributions 계약
+# ChatResponse.contributions 계약
 
 
 def test_contributions_preserve_overlapping_keys(monkeypatch):

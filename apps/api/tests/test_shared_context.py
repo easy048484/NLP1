@@ -27,7 +27,7 @@ SPOUSE_TWO_CHILDREN = {
 }
 
 
-# --------------------------------------------------------- classify_heirs
+# classify_heirs
 
 
 def test_classify_heirs_spouse_and_children():
@@ -66,7 +66,7 @@ def test_classify_heirs_no_data():
     assert classify_heirs({}).has_family_data is False
 
 
-# -------------------------------------------- tax_calculator reads estate
+# tax_calculator reads estate
 
 
 def test_tax_calculator_confirms_candidates_from_shared_estate():
@@ -160,7 +160,7 @@ def test_tax_calculator_user_confirmed_value_wins_over_estate():
     )
 
 
-# ---------------------------------------- heir_share_analyzer reads estate
+# heir_share_analyzer reads estate
 
 
 def test_heir_share_analyzer_prefills_estate_and_debts():
@@ -183,7 +183,7 @@ def test_heir_share_analyzer_prefills_estate_and_debts():
     assert output.data[STATE_KEY]["asked_slot"] not in {"estate_value", "debts"}
 
 
-# -------------------------------------- decedent_estate emits will_status
+# decedent_estate emits will_status
 
 
 def test_decedent_estate_emits_will_status_no_will():
@@ -208,7 +208,7 @@ def test_decedent_estate_will_status_pending_when_asking_type():
     assert output.will_status.checked is False
 
 
-# --------------------------------------------------- planner axis routing
+# planner axis routing
 
 
 def test_classify_axis_post_death_routes_to_heir_navigator():
@@ -249,7 +249,7 @@ def test_classify_axis_ignored_when_keyword_matches():
     assert plan.agents == [AgentName.TAX_CALCULATOR]
 
 
-# ------------------------------------- orchestrator will_status flow (E2E)
+# orchestrator will_status flow (E2E)
 
 
 @pytest.fixture()
@@ -336,7 +336,7 @@ def test_session_state_unchecked_will_status_not_persisted():
     assert "_shared" not in state.to_json_context()
 
 
-# ------------------------------- heir_navigator reads estate (빚 vs 재산)
+# heir_navigator reads estate (빚 vs 재산)
 
 
 def test_heir_navigator_flags_insolvency_from_estate():
