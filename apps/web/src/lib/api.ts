@@ -204,6 +204,8 @@ export async function sendChatMessage(
   userMessage: string,
   opts?: {
     familyGraphId?: string | null;
+    /** DB 없이 가족 구성을 직접 실어 보낼 때 ({heirs:[...]}). 모바일 간단 버전용. */
+    familyGraph?: Record<string, unknown> | null;
     axis?: ConsultAxis | null;
     /** 선택 버튼 등에서 구조화 답변을 함께 보낼 때 (예: {will_type: "none"}) */
     context?: Record<string, unknown>;
@@ -222,6 +224,7 @@ export async function sendChatMessage(
       ...opts?.context,
     },
     ...(opts?.familyGraphId ? { family_graph_id: opts.familyGraphId } : {}),
+    ...(opts?.familyGraph ? { family_graph: opts.familyGraph } : {}),
     ...(opts?.axis ? { axis: opts.axis } : {}),
     ...(opts?.image
       ? {
