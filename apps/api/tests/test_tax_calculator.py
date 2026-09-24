@@ -607,9 +607,7 @@ def test_result_includes_inheritance_deduction_breakdown() -> None:
 def test_nts_rate_table_golden_case_tax_base_400m() -> None:
     """국세청 세율표 기준 과세표준 4억원의 산출세액을 검증한다."""
 
-    # 출처:
-    # https://nts.go.kr/nts/cm/cntnts/cntntsView.do
-    # ?cntntsId=7720&mi=2326
+    # 출처: https://nts.go.kr/nts/cm/cntnts/cntntsView.do?cntntsId=7720&mi=2326
     result = calculate_base_tax(400_000_000)
 
     assert result.inheritance_tax_base == 400_000_000
