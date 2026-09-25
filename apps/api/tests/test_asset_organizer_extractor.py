@@ -1007,6 +1007,114 @@ def test_p0_liability_segment_never_reaches_llm_extract_call(
     assert "정리해주세요" in captured[0]
 
 
+# P1: "주담대 1억"이 대출 1억 + 부동산 1억으로 이중 집계되던 버그(실측 재현)
+#
+# 근본 원인 두 가지:
+# 1) "주담대"(구어체 축약)는 "대출"이라는 글자를 포함하지 않아
+#    _LIABILITY_KEYWORDS로 부채 식별이 아예 안 됐다 — extract_liabilities()가
+#    이 표현을 완전히 놓쳤다.
+# 2) "주택담보대출"/"주택 담보 대출"처럼 "대출"로는 잡히더라도, 같은
+#    세그먼트에 "주택"(부동산 자산 키워드)이 같이 들어 있으면
+#    _regex_extract()의 자산 매칭이 이를 부동산 자산으로도 만들어버려
+#    extract_liabilities()가 만드는 "대출" 부채와 중복 집계됐다.
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_balance"),
+    [
+        ("주담대 1억", 100_000_000),
+        ("주담대가 1억 정도 남았어요", 100_000_000),
+        ("주택담보대출 1억", 100_000_000),
+        ("주택 담보 대출 1억", 100_000_000),
+        ("담보대출 1억", 100_000_000),
+    ],
+)
+def test_mortgage_expressions_are_recognized_as_liability_only(
+    text: str, expected_balance: int
+):
+    """ "주담대"/"주택담보대출"/"주택 담보 대출"/"담보대출" 등 명확한 mortgage
+    표현은 대출 잔액으로만 확정돼야 한다 — 부동산 자산은 전혀 생성되지
+    않아야 한다(담보 주택의 자산가치를 뜻하는 게 아니라 대출 잔액을
+    뜻하므로)."""
+    asset_result = extractor.extract_financial_slots(text)
+    liabilities, liability_missing = extractor.extract_liabilities(text)
+
+    assert asset_result.assets == []
+    assert asset_result.status == "ok"
+    assert len(liabilities) == 1
+    assert liabilities[0].type == "대출"
+    assert liabilities[0].remaining_balance == expected_balance
+    assert liability_missing == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "아파트 5억, 주담대 1억",
+        "집 5억이고 주담대 1억 있어요",
+    ],
+)
+def test_mortgage_with_separately_stated_real_estate_value_creates_both(text: str):
+    """사용자가 "아파트 5억"처럼 자산가치를 부동산과 별개 세그먼트로 말한
+    경우에만 부동산 자산이 생긴다 — 같은 문장에 있는 "주담대 1억"이
+    그 부동산 자산에 다시 겹쳐 잡히면(이중 집계) 안 된다."""
+    asset_result = extractor.extract_financial_slots(text)
+    liabilities, liability_missing = extractor.extract_liabilities(text)
+
+    assert len(asset_result.assets) == 1
+    assert asset_result.assets[0].type == "부동산"
+    assert asset_result.assets[0].value == 500_000_000
+    assert asset_result.status == "ok"
+
+    assert len(liabilities) == 1
+    assert liabilities[0].type == "대출"
+    assert liabilities[0].remaining_balance == 100_000_000
+    assert liability_missing == []
+
+
+def test_mortgage_segment_excluded_from_asset_regex_and_llm_candidates():
+    """근본 원인 증명: "주택담보대출 1억"은 _match_all_asset_types()로는
+    "주택"(부동산) 키워드가 매칭되지만, 같은 세그먼트가
+    _match_liability_type()으로도 "대출"로 식별되므로 _regex_extract()가
+    이를 unresolved로 돌린다 — 그 결과 extract_financial_slots()의 기존
+    P0 구조적 exclusion(unresolved 중 부채로 식별되는 세그먼트는 asset
+    LLM 폴백 후보에서 제외)이 그대로 적용돼 LLM 호출조차 필요 없다."""
+    result, unresolved = extractor._regex_extract("주택담보대출 1억")
+    assert result.assets == []
+    assert any("주택담보대출" in seg for seg in unresolved)
+
+    llm_candidates = [
+        seg for seg in unresolved if extractor._match_liability_type(seg) is None
+    ]
+    assert llm_candidates == []
+
+
+def test_generic_asset_extraction_has_no_regression_for_plain_real_estate():
+    """일반 "아파트 5억"/"집 5억" 자산 추출은 이번 수정으로 회귀가 없어야
+    한다 — 부채 키워드가 전혀 없으므로 그대로 부동산 자산이 만들어진다."""
+    for text in ("아파트 5억", "집 5억"):
+        asset_result = extractor.extract_financial_slots(text)
+        liabilities, _ = extractor.extract_liabilities(text)
+        assert len(asset_result.assets) == 1
+        assert asset_result.assets[0].type == "부동산"
+        assert asset_result.assets[0].value == 500_000_000
+        assert liabilities == []
+
+
+def test_real_estate_value_phrasing_is_not_forced_into_a_liability():
+    """ "집 담보가치가 5억 정도예요"처럼 실제 자산가치를 말하는 문장은
+    "주담대"/"대출" 등 명확한 부채 키워드가 없으므로 억지로 대출로
+    바뀌면 안 된다 — 그대로 부동산 자산으로 남는다."""
+    text = "집 담보가치가 5억 정도예요"
+    asset_result = extractor.extract_financial_slots(text)
+    liabilities, _ = extractor.extract_liabilities(text)
+
+    assert len(asset_result.assets) == 1
+    assert asset_result.assets[0].type == "부동산"
+    assert asset_result.assets[0].value == 500_000_000
+    assert liabilities == []
+
+
 @pytest.mark.parametrize(
     "text",
     [
