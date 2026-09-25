@@ -44,6 +44,23 @@ export interface AgentOutput {
   data: Record<string, unknown>;
   /** verify_numbers 가 이 기여의 숫자를 원문과 대조하지 못함 */
   needs_review?: boolean;
+  /** opt-in 후속 제안(백엔드 SuggestedAction). 자동 handoff가 아니라, 버튼을
+   * 눌러야만 message 가 새 user_message 로 전송된다. */
+  suggested_actions?: SuggestedAction[];
+}
+
+/**
+ * 백엔드 schemas.SuggestedAction 과 1:1 — opt-in 후속 제안 한 건.
+ * 특정 에이전트 조합에 종속되지 않은 일반 계약이라(target_agent 없음),
+ * decedent_estate → heir_share_analyzer 외 다른 조합에도 재사용된다.
+ */
+export interface SuggestedAction {
+  /** 사용자에게 보여줄 제안 문구 */
+  prompt: string;
+  /** 버튼 라벨 */
+  label: string;
+  /** 버튼 클릭 시 그대로 전송할 user_message */
+  message: string;
 }
 
 /** heir_navigator 의 data["plan"] — "할 일 타임라인" 렌더용. */

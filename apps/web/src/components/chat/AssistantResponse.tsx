@@ -1,3 +1,4 @@
+import { useApp } from "../../lib/appState";
 import { agentMeta } from "../../lib/agents";
 import { Markdown } from "../../lib/markdown";
 import type { ChatResponse } from "../../types";
@@ -12,6 +13,7 @@ import { AgentAvatar, ConcatNoticeBadge, NeedsReviewBadge } from "../ui";
 import { AgentCards } from "./AgentCards";
 import { ConfirmChecklistCard } from "./ConfirmChecklistCard";
 import { ReplyCarousel } from "./ReplyCarousel";
+import { SuggestedActionCard } from "./SuggestedActionCard";
 
 /**
  * 답변 본문을 어떻게 보여줄지 고른다 — 셋 다 순수 텍스트 휴리스틱(백엔드
@@ -60,6 +62,7 @@ export function AssistantResponse({
   response: ChatResponse;
   interactive: boolean;
 }) {
+  const { send, loading } = useApp();
   const agents = dedupeAgents(response);
   const followups = interactive
     ? response.contributions.filter(
@@ -69,6 +72,13 @@ export function AssistantResponse({
           hasAssetReview(c.data ?? {}, c.agent) ||
           hasCategorySelectionRequest(c.data ?? {}, c.agent),
       )
+    : [];
+  // suggested_actions는 자동 handoff가 아니라 opt-in 제안이다 — 버튼을 눌러야만
+  // action.message가 새 user_message로 전송된다(useApp().send). followups와
+  // 동일하게 interactive(가장 마지막 assistant 턴)일 때만 렌더해, 과거 턴의
+  // 제안 버튼이 계속 눌릴 수 있는 stale-control 버그를 막는다.
+  const suggestedActions = interactive
+    ? response.contributions.flatMap((c) => c.suggested_actions ?? [])
     : [];
   // asset_organizer의 review 화면(AssetReviewCard)은 이미 자기 reply
   // 텍스트("재산·부채를 확인해주세요")로 안내를 담고 있어, 일반
@@ -107,6 +117,15 @@ export function AssistantResponse({
 
       {response.contributions.map((c, i) => (
         <AgentCards key={`${c.agent}-${i}`} contribution={c} mode="results" />
+      ))}
+
+      {suggestedActions.map((action, i) => (
+        <SuggestedActionCard
+          key={`suggested-action-${i}`}
+          action={action}
+          disabled={loading}
+          onSelect={() => void send(action.message)}
+        />
       ))}
 
       {followups.length > 0 && (
