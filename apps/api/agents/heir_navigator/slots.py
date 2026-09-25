@@ -32,7 +32,7 @@ from .state import CONFIRMABLE_SLOTS, SlotUpdate
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------- 규칙 기반
+# 규칙 기반
 
 _FULL_DATE = re.compile(
     r"(?P<year>\d{4})\s*[년./\-]\s*(?P<month>\d{1,2})\s*[월./\-]\s*(?P<day>\d{1,2})\s*일?"
@@ -125,7 +125,7 @@ def rule_based(message: str) -> SlotUpdate:
     return update
 
 
-# ------------------------------------------------------------------- Claude
+# Claude
 
 _TOOL: dict[str, Any] = {
     "name": "record_heir_slots",

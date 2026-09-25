@@ -29,7 +29,7 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-# --------------------------------------------------------------------- register
+# register
 
 
 def test_register_returns_token_and_user(with_db):
@@ -75,7 +75,7 @@ def test_register_rejects_bad_email_and_short_password(with_db):
     )
 
 
-# ------------------------------------------------------------------------ login
+# login
 
 
 def test_login_with_correct_password(with_db):
@@ -108,7 +108,7 @@ def test_login_wrong_password_and_unknown_email_both_401(with_db):
     )
 
 
-# -------------------------------------------------------------------------- me
+# me
 
 
 def test_me_requires_valid_token(with_db):
@@ -123,7 +123,7 @@ def test_me_requires_valid_token(with_db):
     assert resp.json()["email"] == "me@example.com"
 
 
-# --------------------------------------------------------- family_graph 소유권
+# family_graph 소유권
 
 
 def test_authed_graph_is_private_to_owner(with_db):
@@ -133,7 +133,6 @@ def test_authed_graph_is_private_to_owner(with_db):
 
     graph_id = client.post("/family-graph", headers=_auth(owner)).json()["id"]
 
-    # 본인은 조회 가능
     assert (
         client.get(f"/family-graph/{graph_id}", headers=_auth(owner)).status_code == 200
     )
@@ -141,7 +140,6 @@ def test_authed_graph_is_private_to_owner(with_db):
     assert (
         client.get(f"/family-graph/{graph_id}", headers=_auth(other)).status_code == 404
     )
-    # 비로그인도 404
     assert client.get(f"/family-graph/{graph_id}").status_code == 404
 
 

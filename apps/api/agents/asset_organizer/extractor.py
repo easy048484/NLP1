@@ -1,6 +1,5 @@
-# TODO: decedent_estate의 llm_client.py와 로직이 중복됨.
-# agents/common/ 공유 모듈로 빼는 방안을 지원과 확인 후 통합할 것.
-# 그 전까지는 의도적으로 로컬 복제 상태로 둠 (cross-agent import 방지).
+# TODO: decedent_estate/llm_client.py와 로직이 중복돼 있다. agents/common/ 공유
+# 모듈로 통합하기 전까지는 cross-agent import를 피하려고 의도적으로 로컬 복제한다.
 
 """
 자연어 → 자산/소득 슬롯 추출 (정규식 1차 → LLM 폴백).
@@ -97,7 +96,7 @@ class ExtractionResult:
     missing: list[dict[str, Any]] = field(default_factory=list)
 
 
-# --------------------------------------------------------------------- 정규식
+# 정규식
 
 
 #: ⚠️ 이 파일의 금액 파싱 로직(_NOISE_RE/_UNIT_MULTIPLIERS/_UNIT_RE/
@@ -123,10 +122,27 @@ _UNIT_MULTIPLIERS: dict[str, int] = {
     # 생기는 의도적 트레이드오프이며, 이 에이전트가 다루는 노후자금 규모
     # 맥락에서는 전자가 훨씬 흔하다고 판단했다 (알려진 한계로 남겨둠).
     "천": 10_000_000,
+    # "백"도 "천"과 같은 이유의 트레이드오프 — "6천5백"처럼 "천" 뒤에 붙는
+    # "5백"은 이 도메인에서 "5백만원"의 축약이다(실측 재현: A1 자연어 탐색
+    # 라운드, "예금은 한 6천5백 정도 있고" → 65,000,000). 숫자가 앞에 붙어야만
+    # (_UNIT_RE가 자릿수를 요구) 매칭되므로 "백만원"(리터럴 100만원, 이미
+    # "백만" 키로 별도 처리됨)과 혼동되지 않는다.
+    "백": 1_000_000,
     "만": 10_000,
     "원": 1,
 }
-_UNIT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(조|억|천만|백만|천|만|원)")
+_UNIT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(조|억|천만|백만|천|백|만|원)")
+#: 실측 재현(D2, 자연어 탐색): "펀드는 천만원 있어요"처럼 앞에 숫자가 전혀
+#: 안 붙은 순수 한글 단위어("천만원", "만원", "억원" 등)는 위 _UNIT_RE가
+#: 숫자를 필수로 요구해 아예 못 잡는다. 다만 숫자 없이 단위어만 임의로
+#: 아무 데서나 인식하면 "억울하다"("억"으로 시작), "원한"("원"으로 시작)
+#: 처럼 돈과 무관한 단어를 오인식할 위험이 크다 — 그래서 반드시 (1) 단어
+#: 시작 지점(공백/문장부호/세그먼트 시작)에서 시작하고 (2) 단위어 바로
+#: 뒤에 "원"이 붙어서 끝나고(그래야 "만약"/"천천히"처럼 다른 글자로 이어지는
+#: 경우가 걸러진다) (3) 그 뒤가 공백/문장부호/세그먼트 끝이어야만 매칭한다.
+_BARE_UNIT_WORD_RE = re.compile(
+    r"(?:^|(?<=\s))(조|억|천만|백만|천|백|만)원(?=\s|$|[.,?!])"
+)
 
 
 def _parse_amount(text: str) -> Optional[int]:
@@ -134,13 +150,62 @@ def _parse_amount(text: str) -> Optional[int]:
     절대 0으로 대체하지 않는다 (호출부가 missing 처리 여부를 결정)."""
     cleaned = _NOISE_RE.sub("", text)
     cleaned = _THOUSANDS_COMMA_RE.sub("", cleaned)
-    matches = _UNIT_RE.findall(cleaned)
-    if not matches:
+    unit_matches = list(_UNIT_RE.finditer(cleaned))
+    bare_matches = list(_BARE_UNIT_WORD_RE.finditer(cleaned))
+    if not unit_matches and not bare_matches:
         return None
+
+    # 실측 재현(E25): "3200 만원"처럼 숫자와 단위 사이에 공백이 있으면
+    # _UNIT_RE가 "3200"+"만"을 이미 하나로 묶어 잡는데(자릿수 필수라 "만원"
+    # 앞까지만 소비하고 "원"은 안 먹는다), 같은 "만" 글자 위치가
+    # _BARE_UNIT_WORD_RE(숫자 없이 홀로 쓰인 단위어 전용 패턴 — 단위+"원"이
+    # 공백/문장 시작 뒤에 오는 형태)에도 다시 걸려 같은 금액이 중복
+    # 합산됐다(32,000,000이어야 할 게 32,010,000). _UNIT_RE가 이미 소비한
+    # 문자 구간과 겹치는 bare 매치는 무시한다 — 특정 입력 하나만 예외
+    # 처리하지 않고 span 기준으로 일반화해서 dedupe한다.
+    occupied_spans = [match.span() for match in unit_matches]
+
+    def _overlaps_occupied(span: tuple[int, int]) -> bool:
+        start, end = span
+        return any(start < o_end and end > o_start for o_start, o_end in occupied_spans)
+
     total = Decimal("0")
-    for number, unit in matches:
+    for match in unit_matches:
+        number, unit = match.groups()
         total += Decimal(number) * _UNIT_MULTIPLIERS[unit]
+    for match in bare_matches:
+        if _overlaps_occupied(match.span()):
+            continue
+        total += _UNIT_MULTIPLIERS[match.group(1)]
     return int(total)
+
+
+def parse_correction_amount(text: str) -> Optional[int]:
+    """자유발화 정정("아까 …라고 했는데 …", "정정할게요 …") 전용 금액
+    파싱 — agent.py의 correction 처리(요구사항 A)가 쓴다. 일반
+    `_parse_amount()`를 문장 전체에 그대로 쓰면 "아까 예금 3천이라고
+    했는데 4천이에요"처럼 과거값+새값이 한 세그먼트에 같이 있을 때 둘을
+    합산해버린다(실측 재현 E20: 30,000,000+40,000,000=70,000,000이
+    잘못 확정됨). "했는데"(과거형 연결 어미 — "말했는데"의 부분
+    문자열도 함께 잡힘)가 있으면 그 뒤(새 값 구간)만 `_parse_amount`에
+    넘긴다. 없으면("정정할게요 5억 5천이에요"처럼 새 값만 언급된 경우)
+    문장 전체를 그대로 넘긴다 — 그 안의 복합 단위 표현(억+천 등)은
+    정상적으로 하나의 금액으로 합산돼야 하기 때문이다."""
+    marker = "했는데"
+    idx = text.find(marker)
+    if idx != -1:
+        remainder = text[idx + len(marker) :]
+        amount = _parse_amount(remainder)
+        if amount is not None:
+            return amount
+    return _parse_amount(text)
+
+
+def match_asset_type(text: str) -> Optional[AssetType]:
+    """`_match_asset_type()`의 공개 래퍼 — agent.py의 correction 처리가
+    `_regex_extract()`의 세그먼트 분해·부정/맨명사 판단 없이 문장
+    전체에서 순수 유형 키워드 매칭만 재사용해야 해서 필요하다."""
+    return _match_asset_type(text)
 
 
 #: agent.py의 _NEGATIVE_ANSWER_RE와 같은 패턴(로컬 복제 — extractor.py가
@@ -154,11 +219,18 @@ _SEGMENT_NEGATION_RE = re.compile(r"없|아니")
 #: agent를 import할 수 없어(agent가 extractor를 import하는 방향, 순환 참조
 #: 방지) 공유할 수 없다. "보험은 있는데 금액은 몰라요"처럼 정규식 1차
 #: 추출 단계에서 바로 unknown_amount로 확정하려면 이 파일 안에서도 판단이
-#: 필요하다(_NOISE_RE 등 기존 로컬 복제 관례와 동일).
-_DONT_KNOW_AMOUNT_RE = re.compile(r"몰라|모르")
+#: 필요하다(_NOISE_RE 등 기존 로컬 복제 관례와 동일). "확인 못 했어요"/
+#: "확인 안 됐어요"도 "몰라요"와 같은 뜻으로 흔히 쓰이는 구어체 표현이라
+#: 같이 인식한다(실측 재현 B3: "증권 계좌는 있다고 하는데 잔액은 아직
+#: 확인 못 했어요").
+_DONT_KNOW_AMOUNT_RE = re.compile(r"몰라|모르|확인.{0,6}(?:못|안)")
 _ASSET_KEYWORDS: dict[AssetType, tuple[str, ...]] = {
-    "예금": ("예금", "적금", "저금"),
-    "주식": ("주식",),
+    # "통장"은 이 제품 문맥에서 "예금"의 흔한 구어체 동의어다(실측 재현
+    # A2, 자연어 탐색 라운드: "통장에 3200만원 정도 있고").
+    "예금": ("예금", "적금", "저금", "통장"),
+    # "증권"은 "증권 계좌"처럼 주식·투자상품 보유를 가리키는 구어체
+    # 동의어다(실측 재현 B3: "증권 계좌는 있다고 하는데 잔액은...").
+    "주식": ("주식", "증권"),
     "펀드": ("펀드",),
     "부동산": ("집", "아파트", "주택", "부동산", "건물"),
     "자동차": ("자동차", "차량"),
@@ -166,21 +238,20 @@ _ASSET_KEYWORDS: dict[AssetType, tuple[str, ...]] = {
 }
 _INSURANCE_KEYWORDS = ("보험",)
 # 마침표는 소수점과 구분해야 해서 숫자 사이 마침표는 분리 대상에서 뺀다("3.5억" 보존).
-# 콤마도 마찬가지로 천 단위 구분자("3,200")와 나열 구분자("1억, 주식 5천만원")를
-# 구분해야 한다 — 숫자 사이 콤마는 분리 대상에서 뺀다(실측 버그: 안 빼면
-# "3,200만원"이 "3"/"200만원" 두 세그먼트로 쪼개져 앞자리가 통째로 사라졌다.
-# _parse_amount의 _THOUSANDS_COMMA_RE는 이미 분리된 세그먼트 *안에서* 남은
-# 콤마를 정리하는 것이라, 세그먼트 자체가 여기서 잘못 갈라지면 소용없다).
-# "있고"는 콤마 없이 자산·부채를 나열할 때 흔한 연결어("예금 1억 있고 대출
-# 3천만원 있어요") — 안 자르면 한 세그먼트에 숫자가 두 개 이상 섞여
-# _parse_amount가 둘을 합산해버리는 실측 버그가 있었다.
-# "(?<=없)고"는 "주식은 없고 펀드는 1000만원"처럼 "없고"로 이어지는 문장을
-# 나눈다 — "있고"와 달리 "고" 앞의 "없"까지 통째로 지우면 그 세그먼트의
-# 부정 신호(_SEGMENT_NEGATION_RE가 찾는 "없")가 함께 사라져 뒤의
-# asset_absent 판정이 불가능해진다. lookbehind로 "고" 한 글자만 구분자로
-# 삼아 "없"은 앞 세그먼트에 남긴다(D-01).
+# 콤마도 천 단위 구분자("3,200")와 나열 구분자("1억, 주식 5천만원")를 구분해야
+# 해서 숫자 사이 콤마는 분리 대상에서 뺀다(안 빼면 "3,200만원"이 "3"/"200만원"
+# 으로 쪼개져 앞자리가 사라졌다 — _parse_amount의 _THOUSANDS_COMMA_RE는 이미
+# 분리된 세그먼트 안의 콤마만 처리하므로 여기서 갈라지면 소용없다).
+# 아래 연결어는 콤마 없이 자산·부채를 나열할 때 쓰인다. 안 자르면 한 세그먼트에
+# 금액이 둘 이상 섞여 _parse_amount가 합산하거나 두 번째 유형이 유실됐다(실측):
+# - "있고", "이고", "이랑", "?"("예금은 8천 정도? 대출은 1억...")
+# - "정도고": "정도이고"의 구어체 축약(실측 재현 A1). "-고" 전부를 넣으면
+#   "정리하려고"/"남아 있다고" 같은 무관한 표현까지 갈라져서 이 형태만 추가한다.
+# - "(?<=없)고": "주식은 없고 펀드는 1000만원". "없"까지 지우면 부정 신호
+#   (_SEGMENT_NEGATION_RE)가 사라져 asset_absent 판정이 불가능해지므로
+#   lookbehind로 "고"만 구분자로 삼는다(D-01).
 _SEGMENT_SPLIT_RE = re.compile(
-    r"(?<!\d)[.](?!\d)|(?<!\d),(?!\d)|、|그리고|또한|있고|(?<=없)고"
+    r"(?<!\d)[.](?!\d)|(?<!\d),(?!\d)|、|\?|그리고|또한|있고|이고|이랑|정도고|(?<=없)고"
 )
 #: 순수 조사만 남았는지 확인 — "주식,"처럼 콤마로 나열된 세그먼트가 키워드
 #: 자체 그대로("주식")이거나 조사만 붙었으면("자동차는") 서술어 없는 "맨
@@ -196,6 +267,16 @@ def _match_asset_type(segment: str) -> Optional[AssetType]:
     return None
 
 
+#: "차"는 자산 키워드 사전에 raw 한 글자로 그냥 추가하면 "차이"/"차례"/
+#: "기차"/"세차" 등과 충돌해 오탐이 크다(D3, 자연어 탐색 라운드에서
+#: 명시적으로 금지됨). 그래서 키워드 사전에는 넣지 않고, "차"가 독립
+#: 명사로 쓰인 좁은 형태(조사 는/가/도가 바로 붙거나 "차 한 대"처럼
+#: 쓰이거나 세그먼트 전체가 "차" 그 자체인 경우)만 별도로 인식한다.
+#: 앞이 세그먼트 시작이거나 공백/문장부호 뒤여야 한다 — "기차는"처럼 다른
+#: 한글 음절에 바로 붙은 "차"는 이 lookbehind에서 막힌다.
+_CAR_COLLOQUIAL_RE = re.compile(r"(?:^|(?<=[\s,.!?]))차(?=는|가|도|\s*한\s*대|$)")
+
+
 def _match_all_asset_types(segment: str) -> list[tuple[AssetType, str]]:
     """세그먼트 안에서 매칭되는 모든 자산 유형을 (유형, 실제 매칭된 키워드)
     쌍으로 돌려준다. "주식과 펀드는 없어요"처럼 부정 표현 하나가 콤마 없이
@@ -208,6 +289,9 @@ def _match_all_asset_types(segment: str) -> list[tuple[AssetType, str]]:
             if keyword in segment:
                 matches.append((asset_type, keyword))
                 break
+    if not any(asset_type == "자동차" for asset_type, _ in matches):
+        if _CAR_COLLOQUIAL_RE.search(segment):
+            matches.append(("자동차", "차"))
     return matches
 
 
@@ -298,7 +382,21 @@ def _regex_extract(text: str) -> tuple[ExtractionResult, list[str]]:
             continue
 
         matched_types = _match_all_asset_types(segment)
-        if not matched_types:
+        if not matched_types or _match_liability_type(segment) is not None:
+            # 실측 재현된 버그: "주택담보대출 1억"은 "주택"(부동산 키워드)과
+            # "대출"(부채 키워드)을 한 세그먼트 안에 동시에 담고 있다.
+            # matched_types만 보면 부동산으로 오인해 자산까지 만들어버려서,
+            # extract_liabilities()가 독립적으로 잡는 "대출" 부채와
+            # 이중으로 집계됐다("주담대 1억"이 부동산 1억 + 부채 1억으로
+            # 잡히던 버그). "주담대"는 담보 주택의 자산가치가 아니라 대출
+            # 잔액을 가리키는 표현이므로, 세그먼트가 _match_liability_type()
+            # 으로 명확히 부채 식별이 되면(자산 키워드와 우연히 겹치더라도)
+            # 이 함수의 asset 후보에서 완전히 뺀다 — unresolved로 보내면
+            # extract_financial_slots()의 기존 P0 구조적 exclusion(unresolved
+            # 중 _match_liability_type()로 식별되는 세그먼트는 asset LLM
+            # 폴백 후보에서 제외)이 그대로 걸려 LLM에도 안 넘어간다. 부채
+            # 쪽 소유권은 extract_liabilities()에게 있으므로 정보 유실이
+            # 아니다(P0 카드대출 버그 수정과 동일 원칙, 위 docstring 참고).
             flush_as_missing()
             unresolved.append(segment)
             continue
@@ -343,14 +441,21 @@ def _regex_extract(text: str) -> tuple[ExtractionResult, list[str]]:
         # 후속 질문 대상으로만 남긴다.
         flush_as_missing()
         asset_type = matched_types[0][0]
-        missing.append(
-            {
-                "kind": "asset_value",
-                "asset_type": asset_type,
-                "segment": segment,
-                "reason": f"{asset_type} 금액이 언급되지 않음",
-            }
-        )
+        if _DONT_KNOW_AMOUNT_RE.search(segment):
+            # "자동차도 있는데 지금 얼마인지는 모르겠네요"처럼 같은 세그먼트
+            # 안에서 이미 "모르겠다"고 답했다면(보험의 기존 동일 원칙, 위
+            # 참고) 후속 질문 없이 바로 unknown_amount로 확정한다 — 사용자가
+            # 먼저 답을 준 걸 다시 캐묻지 않는다(실측 재현 A1/D3).
+            assets.append(Asset(type=asset_type, value=0, confidence="unknown_amount"))
+        else:
+            missing.append(
+                {
+                    "kind": "asset_value",
+                    "asset_type": asset_type,
+                    "segment": segment,
+                    "reason": f"{asset_type} 금액이 언급되지 않음",
+                }
+            )
 
     # 나열이 부정으로 끝나지 못하고 문장이 끝났다("주식, 펀드" 뒤에 아무
     # 서술어도 안 옴) — 기존처럼 개별 금액 재질문 대상으로 처리한다.
@@ -370,7 +475,15 @@ def _regex_extract(text: str) -> tuple[ExtractionResult, list[str]]:
 
 
 _LIABILITY_KEYWORDS: dict[_LiabilityLabel, tuple[str, ...]] = {
-    "대출": ("대출", "융자", "빚"),
+    # "주담대"는 "주택담보대출"의 구어체 축약이지만 "대출"이라는 글자
+    # 자체를 포함하지 않아("주"+"담"+"대") 위 "대출" 키워드로 안 잡힌다
+    # (실측 재현: "주담대 1억"이 부채로 전혀 인식되지 못하고 유실되거나,
+    # 구조적 exclusion을 못 타서 asset LLM 폴백에 그대로 넘어갔다). 반면
+    # "주택담보대출"/"주택 담보 대출"/"담보대출"은 이미 "대출" 글자를
+    # 포함해 여기 추가할 필요가 없다 — 축약형 "주담대" 하나만 좁게
+    # 동의어로 추가한다("담보" 단독은 담보물/담보 설정 등 무관한 문장까지
+    # 넓게 잡을 위험이 있어 요구사항대로 추가하지 않는다).
+    "대출": ("대출", "융자", "빚", "주담대"),
     "카드론": ("카드론",),
     "전세자금대출": ("전세자금대출", "전세대출"),
     "임대보증금반환채무": ("임대보증금", "보증금반환", "보증금 반환"),
@@ -392,7 +505,14 @@ _ORGANIZE_INTENT_RE = re.compile(
 #: 있는데 정리하고 싶어요"는 실제 부채 존재 확인이 우선이다. "없|아니"
 #: (부정)와 대칭으로 짧은 로컬 조각 매칭 관례(_NEGATIVE_ANSWER_RE 등)를
 #: 그대로 따른다.
-_EXISTENCE_VERB_RE = re.compile(r"있|남")
+#: ⚠️ 실측 재현된 버그(자연어 탐색 2라운드, C3): "빚이 뭐가 있는지
+#: 정리해두려고 해요"의 "있는지"는 존재를 진술하는 게 아니라 "뭐가
+#: 있는지 (모르니 확인하고 싶다)"는 질문형 어미다. 이 "있"까지 존재
+#: 진술로 오인하면 위 가드가 억제되지 않아, 확정되지 않은 부채에 대해
+#: "얼마 남았나요"까지 되묻는 잘못된 후속 질문이 나갔다. "있는지"만
+#: 좁게 제외한다 — "있는데"/"있어요"/"있대요" 등 실제 존재 진술은
+#: 그대로 걸린다.
+_EXISTENCE_VERB_RE = re.compile(r"있(?!는지)|남")
 
 
 def _is_generic_liability_intent(segment: str, keyword: str) -> bool:
@@ -417,6 +537,12 @@ def _match_liability_type(segment: str) -> Optional[_LiabilityLabel]:
             ):
                 return liability_type
     return None
+
+
+def match_liability_type(text: str) -> Optional[_LiabilityLabel]:
+    """`match_asset_type()`과 같은 이유의 공개 래퍼 — agent.py의
+    correction 처리 전용(요구사항 A)."""
+    return _match_liability_type(text)
 
 
 def extract_liabilities(text: str) -> tuple[list[Liability], list[dict[str, Any]]]:
@@ -455,6 +581,20 @@ def extract_liabilities(text: str) -> tuple[list[Liability], list[dict[str, Any]
                     }
                 )
                 continue
+            if _DONT_KNOW_AMOUNT_RE.search(segment):
+                # "대출은 있는데 얼마 남았는지는 잘 모르겠어요"처럼 같은
+                # 세그먼트 안에서 이미 "모르겠다"고 답했다면 보험/자산과
+                # 동일한 원칙으로 후속 질문 없이 바로 unknown_amount로
+                # 확정한다(실측 재현 B2) — remaining_balance는 Liability의
+                # 불변식대로 반드시 None.
+                liabilities.append(
+                    Liability(
+                        type=liability_type,
+                        remaining_balance=None,
+                        confidence="unknown_amount",
+                    )
+                )
+                continue
             missing.append(
                 {
                     "kind": "liability_value",
@@ -477,7 +617,7 @@ def parse_monthly_expense_answer(text: str) -> Optional[int]:
     return _parse_amount(text)
 
 
-# ------------------------------------------------------------------ LLM 폴백
+# LLM 폴백
 
 
 _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
@@ -632,18 +772,13 @@ def extract_financial_slots(text: str) -> ExtractionResult:
     if not unresolved:
         return result
 
-    # ⚠️ P0 실측 재현된 버그: "카드대출 2천만원이 확인됐어요"는 asset
-    # 키워드 사전에 없어 unresolved로 넘어갔는데, 이 함수가 그 세그먼트를
-    # (다른 unresolved 세그먼트와 합쳐) 그대로 asset LLM 폴백에 보내면
-    # LLM이 "기타" 자산으로 반환할 수 있었다 — 같은 문장을 별도로 처리하는
-    # extract_liabilities()가 이미 "대출"로 정확히 잡은 항목이 자산에도
-    # 중복 등록되어 총자산이 실제보다 부채 금액만큼 부풀려졌다(요구사항
-    # 4번과 대칭 원칙: 대출·카드론·전세자금대출·임대보증금반환채무 등
-    # _match_liability_type()으로 부채임을 식별 가능한 세그먼트는 애초에
-    # asset LLM 폴백 후보에서 제외한다 — 그 세그먼트의 소유권은 오직
-    # liability extractor에게만 있다. 같은 텍스트를 처리하는
-    # extract_liabilities()가 이 세그먼트를 여전히 독립적으로 보고
-    # 정상 처리하므로 정보 유실이 아니다.
+    # ⚠️ P0 실측 재현된 버그: "카드대출 2천만원이 확인됐어요"는 asset 키워드
+    # 사전에 없어 unresolved로 넘어가고, 이를 asset LLM 폴백에 보내면 "기타"
+    # 자산으로 반환될 수 있었다 — extract_liabilities()가 이미 "대출"로 잡은
+    # 항목이 자산에도 중복 등록돼 총자산이 부채 금액만큼 부풀려졌다.
+    # 그래서 _match_liability_type()으로 부채임을 식별할 수 있는 세그먼트는
+    # LLM 폴백 후보에서 뺀다(부채 쪽은 extract_liabilities()가 독립적으로 처리
+    # 하므로 정보 유실이 아니다).
     llm_candidate_segments = [
         segment for segment in unresolved if _match_liability_type(segment) is None
     ]
@@ -687,7 +822,7 @@ def extract_financial_slots(text: str) -> ExtractionResult:
     return result
 
 
-# --------------------------------------------------------------- 이미지 판독
+# 이미지 판독
 
 
 #: decedent_estate/image_reader.py와 같은 이유로 원본 이미지 자체는 마스킹
@@ -707,20 +842,15 @@ IMAGE_UNREADABLE_MISSING: dict[str, Any] = {
 }
 
 
-#: 이미지 판독이 liability type으로 내놓을 수 있는 값의 전부 — extract_
-#: liabilities()의 정규식 경로(_LiabilityLabel)와 동일한 화이트리스트에
-#: "기타"만 더한 것(자산 쪽 _VALID_ASSET_TYPES와 같은 catch-all 관례).
-#: 프롬프트가 이 값들만 쓰라고 지시하지만, 모델이 그 지시를 무시하고
-#: "국민은행 대출(계좌 110-xxx, 홍길동)"처럼 계좌번호·이름이 섞인 문자열을
-#: 채워 보내는 경우를 대비해 여기서 한 번 더 막는다(수집 최소화 원칙,
-#: 4-6절) — 화이트리스트 밖 값은 원문(오염 가능성 있는 문자열)만 버리고
-#: "기타"로 대체한다. 항목 자체를 통째로 드롭하면 실제 부채가 사용자
-#: 재무 상태에서 사라져 순자산이 실제보다 좋아 보이게 왜곡된다 — PII를
-#:막으려다 반대 방향으로 더 위험한 실수를 하는 셈이라, "기타"(이미 검증된
-#: 정상 카테고리라 새로 추측하는 게 아님)로 보존한다.
-#: 자산 쪽 _VALID_ASSET_TYPES와 동일하게 _LIABILITY_KEYWORDS.keys()에서
-#: 자동 파생된다 — 새 부채 유형은 _LiabilityLabel/_LIABILITY_KEYWORDS에만
-#: 추가하면 이 화이트리스트와 프롬프트 문구까지 자동으로 따라온다.
+#: 이미지 판독이 liability type으로 내놓을 수 있는 값의 전부 — 정규식 경로
+#: (_LiabilityLabel)와 같은 화이트리스트에 catch-all "기타"를 더한 것
+#: (자산 쪽 _VALID_ASSET_TYPES와 같은 관례).
+#: 모델이 프롬프트를 무시하고 "국민은행 대출(계좌 110-xxx, 홍길동)"처럼
+#: 계좌번호·이름이 섞인 문자열을 채울 수 있어(수집 최소화 원칙, 4-6절)
+#: 화이트리스트 밖 값은 원문만 버리고 "기타"로 대체한다. 항목 자체를 드롭하면
+#: 실제 부채가 사라져 순자산이 좋아 보이게 왜곡된다.
+#: _LIABILITY_KEYWORDS.keys()에서 자동 파생되므로 새 부채 유형은
+#: _LiabilityLabel/_LIABILITY_KEYWORDS에만 추가하면 프롬프트 문구까지 따라온다.
 _VALID_LIABILITY_TYPES = (*_LIABILITY_KEYWORDS.keys(), "기타")
 
 
@@ -865,22 +995,33 @@ def extract_from_image(
     return result, liabilities, liability_missing
 
 
-# --------------------------------------------------- 사후 모드: 조회 결과 해석
+# 사후 모드: 조회 결과 해석
 
 
 @dataclass
 class DisclosureItem:
     """안심상속 원스톱서비스 등 여러 기관의 조회 결과 한 문장에서 뽑아낸
-    자산 하나. 기관별로 공개 수준이 다르다는 게 핵심이라(예금·부동산·세금은
-    금액까지, 보험은 가입여부만, 투자상품은 잔고 유무만 나오는 식) — 이건
-    사용자가 몰라서가 아니라 기관이 애초에 그 정보를 안 준 것이다.
+    자산(또는 보험) 하나. 기관별로 공개 수준이 다르다는 게 핵심이라(예금·
+    부동산·세금은 금액까지, 보험은 가입여부만, 투자상품은 잔고 유무만
+    나오는 식) — 이건 사용자가 몰라서가 아니라 기관이 애초에 그 정보를 안
+    준 것이다.
+
+    ⚠️ asset_type은 원래 models.AssetType(자산 전용)에 묶여 있었는데,
+    그러면 "보험 가입 사실만 확인됐다"는 문장을 표현할 방법이 없었다
+    (실측 재현 E47: 보험이 DisclosureItem 화이트리스트에 없어 "기타"
+    자산으로 오분류되거나 유실됐다). 자산 유형 화이트리스트를 공유
+    FinancialProfile까지 넓히지 않고(요구사항: shared schema 확장 불필요),
+    이 dataclass 안에서만 "보험"을 추가 허용 값으로 넣는 내부 타입
+    별칭(AssetType | Literal["보험"])으로 최소 확장했다 — agent.py의
+    _merge_disclosures()가 이 값으로 자산 목록/insurance 목록 중 어디로
+    보낼지 분기한다(models.Asset/InsuranceTag는 그대로 안 건드림).
 
     ⚠️ 기관명(은행/증권사명 등)은 의도적으로 안 담는다 — extract_from_image()
     의 "수집 최소화 원칙"(계좌번호·예금주명과 함께 은행/지점명도 결과에서
     뺀다)과 동일한 이유로, 이 결과가 소비되는 지점(agent.py)까지 기관명이
     흘러갈 필요가 없다."""
 
-    asset_type: AssetType
+    asset_type: AssetType | Literal["보험"]
     confidence: Literal["confirmed", "unknown_amount"]
     value: Optional[int]  # confidence=="confirmed"일 때만 값, 아니면 None
 
@@ -896,6 +1037,11 @@ _DISCLOSURE_SYSTEM_PROMPT_TEMPLATE = (
     "패턴일 뿐, 완벽한 전 기관 커버리지를 목표로 하지 마라 — 사용자가 "
     "실제로 말한 내용을 우선하되, 금액이 명시됐는지 애매하면 반드시 "
     "unknown_amount로 표시하고 절대 금액을 지어내지 마라.\n"
+    "금액 표기 관례: 단위 없이 '8천'/'3천'처럼만 쓰면 이 서비스 문맥에서는 "
+    "'8천만원'/'3천만원'(천만원 단위)을 뜻한다 — 8000(원)이 아니라 "
+    "80000000(원)으로, 3000이 아니라 30000000으로 환산해라. '6천5백'은 "
+    "6500만원(65000000원)이다. 이미 '원'까지 명시된 금액(예: '8천만 원')은 "
+    "그 표기 그대로 환산하면 된다.\n"
     "절대 판정하거나 조언하지 마라 — 너는 오직 값 추출만 한다.\n"
     "수집 최소화 원칙: 자산 유형·확인 수준·금액 외에는 아무것도 추출하지 "
     "마라. 은행/증권사/보험사 등 기관명, 계좌번호, 예금주명, 주민등록번호, "
@@ -909,28 +1055,66 @@ _DISCLOSURE_SYSTEM_PROMPT_TEMPLATE = (
     "}}"
 )
 
+#: DisclosureItem이 가질 수 있는 type 화이트리스트 — 자산(_VALID_ASSET_TYPES)
+#: 에 "보험"을 더한 것. E47: 보험은 존재만 확인되고 금액은 없는 경우가
+#: 흔한데(_VALID_ASSET_TYPES에는 원래 보험이 없었다), 이 화이트리스트 밖으로
+#: 오면 "기타" 자산으로 오분류되거나(자산이 아닌데 자산 목록에 섞임) 아예
+#: 유실됐다 — DisclosureItem 자체를 "자산 또는 보험" 둘 다 표현할 수 있게
+#: 최소 확장한 이유(위 DisclosureItem docstring 참고).
+_VALID_DISCLOSURE_TYPES = (*_VALID_ASSET_TYPES, "보험")
+
 
 def _build_disclosure_system_prompt() -> str:
     """_build_system_prompt()와 같은 이유로 화이트리스트에서 자동 파생 —
     자산 유형이 늘어나도 이 프롬프트를 손으로 맞출 필요가 없다."""
     return _DISCLOSURE_SYSTEM_PROMPT_TEMPLATE.format(
-        asset_types="|".join(_VALID_ASSET_TYPES)
+        asset_types="|".join(_VALID_DISCLOSURE_TYPES)
     )
 
 
-def _apply_disclosure_payload(payload: dict[str, Any]) -> list[DisclosureItem]:
+def _apply_disclosure_payload(
+    payload: dict[str, Any],
+    deterministic_amounts: Optional[dict[str, int]] = None,
+) -> list[DisclosureItem]:
     """LLM JSON을 DisclosureItem 리스트로 정리한다. 화이트리스트 밖 유형은
     자산 추출과 동일한 원칙으로 "기타"로 보존(드롭 안 함). confidence가
     화이트리스트 밖이거나 값 자체가 이상하면 안전한 쪽("unknown_amount")
     으로 떨어뜨린다 — 애매할 때 실제보다 좋아 보이는 쪽으로 왜곡되면
-    안 되기 때문이다."""
+    안 되기 때문이다.
+
+    deterministic_amounts는 extract_disclosures()가 원문 세그먼트에서
+    `_parse_amount()`(일반 자산 추출과 완전히 같은 금액 파싱 규칙 —
+    "8천"=8천만원 같은 이 서비스 고유의 단위 관례)로 미리 뽑아둔
+    "유형 -> 금액"이다(그 유형이 세그먼트 하나에만 한 번 등장해 모호하지
+    않을 때만 채워진다). LLM이 confirmed로 돌려준 값이 있어도, 같은
+    유형에 이 사전 파싱값이 있으면 그 값으로 덮어써서 최종 확정한다 —
+    LLM이 "8천"을 일반적인 숫자 관례(8,000원)로 오독해도(실측 재현 E45:
+    80,000,000이어야 할 게 8,000,000으로 축소됨) 기존 extractor의 도메인
+    금액 규칙(`_parse_amount`, 하나의 source of truth)이 최종적으로
+    이긴다 — 프롬프트 문구만으로 LLM 판단에 기대지 않는다(요구사항 C)."""
+    deterministic_amounts = deterministic_amounts or {}
     items: list[DisclosureItem] = []
     for raw in payload.get("disclosures") or []:
         if not isinstance(raw, dict):
             continue
         asset_type = raw.get("type")
-        if asset_type not in _VALID_ASSET_TYPES:
+        if asset_type not in _VALID_DISCLOSURE_TYPES:
             asset_type = "기타"
+
+        deterministic_value = deterministic_amounts.get(asset_type)
+        if deterministic_value is not None:
+            # 원문에서 명시적으로 파싱되는 금액이 있으면 LLM의 confidence/
+            # value 판단과 무관하게 그 금액으로 confirmed 확정한다 — 금액이
+            # 실제로 문장에 있는데 LLM이 unknown_amount로 강등했을 가능성도
+            # 같이 막는다(가짜 음성 방지).
+            items.append(
+                DisclosureItem(
+                    asset_type=asset_type,
+                    confidence="confirmed",
+                    value=deterministic_value,
+                )
+            )
+            continue
 
         confidence = raw.get("confidence")
         value = raw.get("value")
@@ -996,6 +1180,26 @@ def extract_disclosures(text: str) -> Optional[list[DisclosureItem]]:
         return []
     filtered_text = " ".join(disclosure_segments)
 
+    # 요구사항 C: LLM이 "8천"류 표현을 이 서비스 고유의 단위 관례(=8천만원)
+    # 대신 일반적인 숫자 관례(=8천원)로 오독할 수 있어(실측 재현 E45), 원문
+    # 세그먼트에서 자산 유형+금액을 그대로 _parse_amount()(일반 자산 추출과
+    # 동일한 단일 source of truth)로 먼저 결정론적으로 뽑아둔다. 같은 유형이
+    # 세그먼트 여러 곳에 등장하면(모호함) 그 유형은 override 후보에서 뺀다 —
+    # 어느 세그먼트 금액을 써야 할지 추측하지 않는다.
+    deterministic_amounts: dict[str, int] = {}
+    _ambiguous_types: set[str] = set()
+    for segment in disclosure_segments:
+        asset_type = _match_asset_type(segment)
+        if asset_type is None:
+            continue
+        if asset_type in deterministic_amounts or asset_type in _ambiguous_types:
+            _ambiguous_types.add(asset_type)
+            deterministic_amounts.pop(asset_type, None)
+            continue
+        amount = _parse_amount(segment)
+        if amount is not None:
+            deterministic_amounts[asset_type] = amount
+
     client = _client()
     if client is None:
         return None
@@ -1015,4 +1219,4 @@ def extract_disclosures(text: str) -> Optional[list[DisclosureItem]]:
     if payload is None:
         return None
 
-    return _apply_disclosure_payload(payload)
+    return _apply_disclosure_payload(payload, deterministic_amounts)

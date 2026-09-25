@@ -1,6 +1,6 @@
 /** EZNEXT 화면별 스타일 — auth · onboarding · family · home · chat. */
 
-/* ============ AUTH ============ */
+/* AUTH */
 .auth-screen {
   min-height: 100dvh;
   display: flex;
@@ -99,7 +99,7 @@
   text-underline-offset: 3px;
 }
 
-/* ============ ONBOARDING (role · family) ============ */
+/* ONBOARDING (role · family) */
 .onboarding-screen {
   min-height: 100dvh;
   display: flex;
@@ -219,7 +219,7 @@
   color: var(--ink);
 }
 
-/* ============ FAMILY TREE ============ */
+/* FAMILY TREE */
 .family-tree {
   display: flex;
   flex-direction: column;
@@ -311,7 +311,7 @@
   color: var(--ink-muted);
 }
 
-/* ============ HOME ============ */
+/* HOME */
 .home-screen {
   flex: 1;
   padding: var(--sp-6);
@@ -395,7 +395,7 @@
   color: var(--ink-muted);
 }
 
-/* ============ CHAT / 작업 공간 ============ */
+/* CHAT / 작업 공간 */
 .chat-screen {
   flex: 1;
   display: flex;
@@ -840,6 +840,19 @@
 .agent-cards {
   display: grid;
   gap: var(--sp-2);
+}
+
+/* opt-in 후속 제안(SuggestedActionCard) — followup-block(답이 필요한 질문,
+ * 골드 배경)과 달리 "원하면 눌러보라"는 참고용 제안이라 중립 카드 톤을 쓴다. */
+.suggested-action-card {
+  display: grid;
+  gap: var(--sp-3);
+  justify-items: start;
+}
+.suggested-action-prompt {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.6;
 }
 .signal-list {
   margin-top: var(--sp-1);
@@ -1325,7 +1338,7 @@
   flex: 1;
 }
 
-/* ============ STARTER PROMPTS (채팅 첫 진입 예시 질문) ============ */
+/* STARTER PROMPTS (채팅 첫 진입 예시 질문) */
 .starter-prompts {
   margin: var(--sp-2) 0 var(--sp-5);
 }
@@ -1377,7 +1390,7 @@
   margin: var(--sp-4) 0 var(--sp-2);
 }
 
-/* ============ FAMILY — 기준 인물 앵커 + 이름 입력 ============ */
+/* FAMILY — 기준 인물 앵커 + 이름 입력 */
 .family-anchor {
   margin: var(--sp-4) 0 var(--sp-5);
   padding: var(--sp-4);

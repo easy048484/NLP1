@@ -195,7 +195,7 @@ class SessionState:
         self.last_agent = agent
         self.updated_at = time.time()
 
-    # ---- DB 직렬화 (per_agent_context JSON 하나에 공유 상태까지 같이 담는다)
+    # DB 직렬화 (per_agent_context JSON 하나에 공유 상태까지 같이 담는다)
     SHARED_KEY = "_shared"
 
     def to_json_context(self) -> dict[str, Any]:

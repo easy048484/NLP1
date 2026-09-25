@@ -39,7 +39,7 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from schemas import AgentInput, AgentName, AgentOutput, WillStatus
+from schemas import AgentInput, AgentName, AgentOutput, SuggestedAction, WillStatus
 
 from .date_parser import parse_dates
 from .image_reader import PHOTO_FIELD_IDS, extract_will_photo_fields
@@ -132,7 +132,7 @@ def _explicit_will_type_this_turn(context: Optional[dict[str, Any]]) -> Optional
     return None
 
 
-# type switch(2026-09-07) 시 이전 방식 전용 진행 상태가 새 방식 파이프라인에
+# type switch 시 이전 방식 전용 진행 상태가 새 방식 파이프라인에
 # 잘못 재사용되지 않도록 최소 reset한다. 방식이 실제로 바뀌었을 때만(같은
 # 값으로 "바뀐" 경우는 no-op) 적용되며, intent(review/prepare)는 유지한다 —
 # "유언 안내 완료"와 "이용 목적"은 서로 다른 축이라 방식이 바뀌어도 사용자가
@@ -199,6 +199,26 @@ _PREPARE_CREATE_INTENT_MARKERS = (
     "녹음하려고",
     "녹음하고 싶",
 )
+# 위 marker는 "유언장을 쓰려고"처럼 조사·부사가 끼어들지 않는 exact substring만
+# 잡는다 — 실측 재현(2026-09-07 자연어 QA): "유언장을 미리 써두려고 하는데 뭐
+# 챙겨야 돼?"(보조용언 삽입), "자필로 유언장 하나 남겨두려고 하는데"(다른
+# 동사 어간 + 중간에 다른 단어 삽입), "유언장 미리 준비해두고 싶은데 뭐부터
+# 봐야 해?"(준비하다 어간 자체가 marker에 없음)처럼 자연스럽게 말이 늘어지면
+# 안 걸려서,
+# 아직 will_type도 모르는 시점에 이미 명백했던 prepare 의도가 저장되지
+# 못하거나(will_type 미확정 turn) will_type이 같은 turn에 바로 확정돼도
+# review로 default되는 버그가 있었다. 위 marker를 지우지 않고(하위 호환)
+# "유언"이 먼저 나오고 그 뒤 가까운 곳에("[^.?!\n]{0,10}" — 문장 경계를 넘지
+# 않는 범위에서 다른 단어 삽입 허용, no_will.inference_patterns와 동일한
+# 관용구) 쓰기/작성/녹음/남기기 동사 어간 + "하려고/하고 싶/-려고/-고 싶" 류의
+# "아직 안 했지만 하겠다" 어미가 붙을 때만 매치한다. "직접 손으로 쓰신
+# 유언장을 찾았는데"처럼 동사가 "유언"보다 앞에 오거나, "유언장을
+# 남기셨는데"처럼 완료형 어미로 끝나는 review 표현과는 섞이지 않는다(둘 다
+# 어간 뒤 6자 이내에 미래/의도 어미가 없어 매치되지 않음).
+_PREPARE_CREATE_INTENT_PATTERN = re.compile(
+    r"유언[^.?!\n]{0,10}(?:쓰|써|작성|녹음|남기|남겨|준비)\S{0,6}"
+    r"(?:하려고|하고\s*싶|려고|고\s*싶)"
+)
 
 
 def _infer_intent_from_message(user_message: str) -> Optional[str]:
@@ -207,6 +227,8 @@ def _infer_intent_from_message(user_message: str) -> Optional[str]:
     if any(marker in user_message for marker in _PREPARE_NOT_YET_DONE_MARKERS):
         return _PREPARE_INTENT
     if any(marker in user_message for marker in _PREPARE_CREATE_INTENT_MARKERS):
+        return _PREPARE_INTENT
+    if _PREPARE_CREATE_INTENT_PATTERN.search(user_message):
         return _PREPARE_INTENT
     return None
 
@@ -418,7 +440,20 @@ _DRAFT_TITLE_LINE_RE = re.compile(r"^\s*(?:유언장|유언)\s*$")
 # 찍혀 있습니다"처럼 답할 수도 있다. 명백한 표현만 deterministic하게 인정하고
 # (LLM 분류 없음), 모호한 표현은 추측하지 않는다 — 기존 미확인(PENDING) 상태를
 # 그대로 유지한다.
-_HANDWRITING_CONFIRMED_RE = re.compile(r"직접\s*손으로\s*(?:쓰|썼|쓰신|쓰셨)")
+#
+# 2026-09-07 자연어 QA에서 발견 1: "손으로"와 동사 사이에 공백만 허용해서
+# "직접 손으로 다 썼고 도장도 찍혀있어"처럼 "다" 같은 부사가 끼어드는 매우
+# 흔한 화법을 놓쳤다 — 같은 문장의 도장 확인(_SEAL_CONFIRMED_RE, "도장도
+# 찍혀있어")은 이미 \S{0,3} 갭을 허용해서 정상 인식됐는데 자서 쪽만 놓쳐서,
+# 한 문장으로 두 항목을 동시에 답해도 하나만 반영되는 비대칭이 있었다.
+# _SEAL_CONFIRMED_RE와 동일하게 짧은 삽입어를 허용한다.
+#
+# 발견 2(탐색적 QA): "자필로 쓰셨고 도장도 찍혀있어요"처럼 "직접 손으로"
+# 대신 "자필로"만 쓰는 경우도 전문 자서 확인으로는 명백한데 놓쳤다 —
+# "자필로" + 쓰기 동사도 동일하게 인정한다.
+_HANDWRITING_CONFIRMED_RE = re.compile(
+    r"(?:직접\s*손으로|자필로)\s*\S{0,4}\s*(?:쓰|썼|쓰신|쓰셨)"
+)
 _SEAL_CONFIRMED_RE = re.compile(r"(?:도장|지장|손도장)\S{0,3}\s*찍(?:혀|혔)")
 
 # review 진행 중 자연어 확인 답변 — recording witness 2문항(rec_witness_present_answer/
@@ -430,8 +465,10 @@ _SEAL_CONFIRMED_RE = re.compile(r"(?:도장|지장|손도장)\S{0,3}\s*찍(?:혀
 _REC_WITNESS_PRESENT_NEGATIVE_RE = re.compile(
     r"증인[^.?!\n]{0,15}참여\s*(?:하지\s*않|안\s*했)|증인\s*없이\s*녹음"
 )
+# 2026-09-07 자연어 QA에서 "같이 계셨고"(높임말)가 "같이 있었"에 안 걸려
+# 놓친 것을 발견 — "계셨"(있다의 높임)/"함께"(같이의 동의어)를 추가했다.
 _REC_WITNESS_PRESENT_POSITIVE_RE = re.compile(
-    r"증인[^.?!\n]{0,15}(?:실제로\s*참여|참여\s*했|같이\s*있었)"
+    r"증인[^.?!\n]{0,15}(?:실제로\s*참여|참여\s*했|같이\s*있었|같이\s*계셨|함께\s*있었|함께\s*계셨)"
 )
 _REC_WITNESS_ELIGIBLE_DISQUALIFIED_RE = re.compile(
     r"결격\s*사유[^.?!\n]{0,8}해당(?:합니다|한다|해요|됩니다|된다)"
@@ -951,7 +988,7 @@ def _requirement_result_from_stored(stored: dict[str, Any]) -> RequirementResult
 
 
 #: recording의 text-derived 5요건 — handwritten의 date/address/name과 동일한
-#: "이번 턴에 못 찾았다고 이전 판정을 잃지 않는다" 병합이 필요하다(2026-09-05).
+#: "이번 턴에 못 찾았다고 이전 판정을 잃지 않는다" 병합이 필요하다.
 #: 실측 확인: transcript intake gate를 지나 review가 시작된 뒤 증인 참여/결격
 #: 답변만 담긴 짧은 메시지가 오면, 이 5개를 그 메시지만으로 다시 판정해 이미
 #: GREEN이었던 결과가 전부 RED/absent로 되돌아갔다. rec_witness_present/
@@ -1401,16 +1438,82 @@ def _run_recording_prepare_pipeline(
     )
 
 
+#: 유류분 영향 확인 opt-in 제안(CTA). 절대 자동 handoff하지 않는다 — 사용자가
+#: 버튼을 눌러야만 아래 message가 새 user_message로 전송되고, 그 메시지는
+#: 기존 router.classify()를 그대로 통과해 "유류분" 키워드로 heir_share_analyzer에
+#: 도달한다(SuggestedAction 계약 자체는 decedent-specific하지 않다 — 향후
+#: asset_organizer → tax_calculator 같은 다른 조합에도 재사용 가능).
+_HEIR_SHARE_CTA = SuggestedAction(
+    prompt="유언 내용이 상속인의 유류분에 영향을 줄 수 있는지 참고용으로 확인해 볼까요?",
+    label="유류분 영향 확인하기",
+    message="유언 내용이 상속인의 유류분에 영향을 줄 수 있는지 확인해 주세요.",
+)
+
+
+def _review_complete_for_heir_share_cta(output: AgentOutput) -> bool:
+    """이 턴의 응답이 "요건 점검이 실제로 끝난 handwritten/recording review"인지.
+
+    구조화 state/data만 보고 판정한다(reply 문자열 파싱 금지). 아래 중 하나라도
+    아니면 CTA를 내지 않는다:
+    - will_type이 handwritten/recording으로 확정(_run_pipeline이 unknown도
+      handwritten으로 정규화해서 저장하므로 이 둘만 보면 된다)
+    - intent == "review" (prepare는 제외 — 초안이 있어 내부적으로 review
+      파이프라인을 이어붙인 경우도 최상위 intent는 "prepare"로 남는다)
+    - requirements 결과가 실제로 존재(빈 dict면 아직 본문/대본을 받기 전
+      intake 단계 — document/recording intake, will_type·intent 질문 등)
+    - pending_questions가 비어 있음
+    - requirements 중 PENDING 등급이 남아 있지 않음
+    - next_action이 await_user_confirmation이 아님 (RED/후속질문이 남아
+      있으면 _next_action*이 AWAIT_USER를 반환하므로 자연히 걸러진다)
+
+    will_type 체크는 방어적 안전장치다 — _run_no_will_pipeline/
+    _guidance_only_output은 intent/requirements를 명시적으로 초기화하지
+    않아서, 이전 턴에 완료된 review가 있던 세션이 "유언장이 없어요"로
+    전환되면 stale한 review 상태(intent="review", requirements 비어있지
+    않음)가 그대로 남을 수 있다.
+    """
+    ns = output.data.get(STATE_KEY, {}) if isinstance(output.data, dict) else {}
+    if ns.get("will_type") not in (_HANDWRITTEN_WILL_TYPE, _RECORDING_WILL_TYPE):
+        return False
+    if ns.get("intent") != _REVIEW_INTENT:
+        return False
+    requirements = ns.get("requirements") or {}
+    if not requirements:
+        return False
+    if ns.get("pending_questions"):
+        return False
+    if any(
+        isinstance(r, dict) and r.get("grade") == "PENDING"
+        for r in requirements.values()
+    ):
+        return False
+    if output.next_action == NEXT_ACTION_AWAIT_USER:
+        return False
+    return True
+
+
+def _with_suggested_actions(output: AgentOutput) -> AgentOutput:
+    """완료된 review 응답 뒤에만 유류분 CTA를 붙인다.
+
+    ⚠️ handoffs/next_action은 절대 건드리지 않는다 — CTA는 opt-in 제안일
+    뿐, 이 함수가 자동 handoff나 pending_handoff를 만들어서는 안 된다.
+    """
+    if _review_complete_for_heir_share_cta(output):
+        output.suggested_actions = [_HEIR_SHARE_CTA]
+    return output
+
+
 def run(payload: AgentInput) -> AgentOutput:
     """대화형 유언장 점검 실행 + 공유 will_status 요약을 얹어 돌려준다.
 
     실제 파이프라인은 _run_pipeline 이 담당하고, 이 함수는 그 결과에서
     tax_calculator·heir_share_analyzer 가 참고할 compact WillStatus 를 뽑아
-    AgentOutput.will_status 로 붙인다 (schemas.WillStatus).
+    AgentOutput.will_status 로 붙인다 (schemas.WillStatus). 요건 점검이 실제로
+    끝난 응답에는 유류분 영향 확인 opt-in 제안(suggested_actions)도 붙인다.
     """
     output = _run_pipeline(payload)
     output.will_status = _derive_will_status(output)
-    return output
+    return _with_suggested_actions(output)
 
 
 #: 요건 판정 등급(rules/requirements.json) → 공유 WillStatus 등급.
@@ -1464,7 +1567,7 @@ def _run_pipeline(payload: AgentInput) -> AgentOutput:
         if inferred is None:
             # will_type을 아직 몰라 방식 선택 질문으로 돌아가더라도, 이번 턴
             # 메시지에 이미 명백한 prepare 의도가 있으면 잃지 않고 저장해둔다
-            # (2026-09-05) — 그래야 다음 턴에 will_type만 답해도(예: "직접
+            # — 그래야 다음 턴에 will_type만 답해도(예: "직접
             # 손으로 쓴 유언장") intent를 다시 물을 필요 없이 곧장 작성
             # 가이드로 들어간다. 이미 explicit/저장된 intent가 있으면 덮지
             # 않는다(명시값 우선 원칙 유지).
@@ -1540,7 +1643,7 @@ def _run_pipeline(payload: AgentInput) -> AgentOutput:
     will_type_info = get_will_type(will_type)  # notarial / secret / oral
 
     if will_type == _NOTARIAL_WILL_TYPE:
-        # 자동 handoff 없음(2026-09-06) — handwritten/recording의 #126/#127과
+        # 자동 handoff 없음 — handwritten/recording의 #126/#127과
         # 동일 원칙. 공정증서 안내 완료가 곧 사용자의 유언 관련 질문이 전부
         # 끝났다는 뜻은 아니다 — "이 유언장은 따로 확인할 건 없나요?" 같은
         # 후속 질문이 decedent_estate를 벗어나지 않게, 실제 "상속 절차" 의도가

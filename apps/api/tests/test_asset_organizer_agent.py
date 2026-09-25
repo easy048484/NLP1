@@ -326,7 +326,7 @@ def test_finalize_no_longer_hands_off_to_retirement_planner():
     assert "시뮬레이션" not in output.reply
 
 
-# ======================================= financial_assets/other_assets 분류
+# financial_assets/other_assets 분류
 
 
 def test_deposit_stock_fund_classified_as_financial_assets():
@@ -408,7 +408,7 @@ def test_parse_end_age_rejects_calendar_year_expression():
     assert agent._parse_end_age("2030년까지 갚아요", current_age=58) is None
 
 
-# ================================ 대출 후속질문 단순화 (monthly_payment/end_age 안 물어봄)
+# 대출 후속질문 단순화 (monthly_payment/end_age 안 물어봄)
 
 
 def test_liability_balance_confirmed_never_triggers_repayment_followup():
@@ -477,7 +477,7 @@ def test_pension_followup_asked_right_after_liability_balance_confirmed():
     assert "퇴직연금은 일시금으로" not in output3.reply
 
 
-# =============================================== 퇴직연금 수령 방식 후속질문
+# 퇴직연금 수령 방식 후속질문
 
 
 def test_pension_followup_asked_once_when_pension_asset_present():
@@ -635,7 +635,7 @@ def test_no_pension_asset_skips_followup_entirely():
     assert state2["status"] == "reviewing"
 
 
-# ================================================ 자동차/퇴직연금/임대보증금반환채무
+# 자동차/퇴직연금/임대보증금반환채무
 
 
 def test_vehicle_and_pension_mentions_are_not_reasked_as_missing():
@@ -687,7 +687,7 @@ def test_lease_deposit_liability_recognized_under_debt_category_simple_mode():
     assert liability["end_age"] is None
 
 
-# ============================================================ 보험 카테고리
+# 보험 카테고리
 
 
 def test_insurance_without_amount_asks_pre_need_followup_once():
@@ -885,7 +885,7 @@ def test_insurance_extra_preserved_through_to_finalize():
     assert extra["insurance"][0]["value"] == 50_000_000
 
 
-# ============================================================== 이미지 판독
+# 이미지 판독
 
 
 def test_image_recognized_merges_into_checklist(monkeypatch: pytest.MonkeyPatch):
@@ -1005,7 +1005,7 @@ def test_image_unclear_field_pii_never_reaches_reply_or_state(
     assert "주민등록번호" not in haystack
 
 
-# ============================================ 생전/사후 모드 게이트 (decedent_estate와 동일 패턴)
+# 생전/사후 모드 게이트 (decedent_estate와 동일 패턴)
 
 
 def test_mode_unset_defaults_silently_to_pre_need():
@@ -1101,7 +1101,7 @@ def test_mode_flat_key_this_turn_overrides_persisted_state():
     assert output2.data[STATE_KEY]["mode"] == "post_death"
 
 
-# ===================================================== 3단계 금액 신뢰도: "몰라요"
+# 3단계 금액 신뢰도: "몰라요"
 
 
 def test_dont_know_amount_creates_permanent_unknown_amount_asset():
@@ -1137,7 +1137,7 @@ def test_unknown_amount_asset_is_never_reasked_in_next_turn():
     assert len([a for a in state3["assets"] if a["type"] == "부동산"]) == 1
 
 
-# ============================================ 3단계 신뢰도 + 순자산 계산 제외/안내
+# 3단계 신뢰도 + 순자산 계산 제외/안내
 
 
 def test_net_worth_excludes_unknown_amount_and_shows_disclaimer():
@@ -1186,7 +1186,7 @@ def test_all_confirmed_assets_show_no_disclaimer():
     assert output.financial_profile.financial_assets == 100_000_000
 
 
-# ============ 최종 확정 요약에서 보험 합계 제외 이유 명시(실측 피드백)
+# 최종 확정 요약에서 보험 합계 제외 이유 명시(실측 피드백)
 
 
 _INSURANCE_EXCLUSION_NOTE = (
@@ -1271,7 +1271,7 @@ def test_finalized_summary_unknown_amount_asset_and_liability_disclaimers_unchan
     assert output.financial_profile.financial_assets == 100_000_000
 
 
-# ================================================ 부채 3단계 신뢰도 (unknown_amount != 0)
+# 부채 3단계 신뢰도 (unknown_amount != 0)
 
 
 def test_dont_know_liability_amount_creates_permanent_unknown_amount_liability():
@@ -1388,7 +1388,7 @@ def test_liability_model_validator_enforces_unknown_amount_balance_is_none():
         Liability(type="대출", remaining_balance=None, confidence="confirmed")
 
 
-# ===================================================== 사후 모드: 다기관 조회 결과 해석
+# 사후 모드: 다기관 조회 결과 해석
 
 
 def test_post_death_mode_mixed_institution_sentence_splits_confirmed_and_unknown(
@@ -1508,7 +1508,7 @@ def test_post_death_disclosure_merge_marks_categories_checked_without_reasking(
     assert "보험" not in output.reply or "얼마" not in output.reply
 
 
-# ============================================ Round 12: 정보 유실 방어(fail-safe)
+# Round 12: 정보 유실 방어(fail-safe)
 
 
 def test_post_death_full_parse_failure_returns_explicit_reask_without_silent_drop(
@@ -1776,7 +1776,7 @@ def test_parse_failure_does_not_mark_any_category_checked():
     assert any(a["type"] == "예금" for a in state2["assets"])
 
 
-# ==================================== 수집 → review → 수정 → 확정(finalized)
+# 수집 → review → 수정 → 확정(finalized)
 
 
 def _review_target(items: list[dict], label: str) -> dict:
@@ -1835,7 +1835,6 @@ def test_edit_replaces_existing_value_without_duplicate_and_keeps_other_items():
     assert len(stock_entries) == 1  # 기존 6억 record가 사라지고 하나로 교체됨
     assert stock_entries[0]["value"] == 15_000_000
     assert stock_entries[0]["confidence"] == "confirmed"
-    # 다른 항목(예금)은 그대로.
     deposit_entries = [a for a in state["assets"] if a["type"] == "예금"]
     assert len(deposit_entries) == 1 and deposit_entries[0]["value"] == 42_000_000
     # review_items에도 수정된 값이 반영돼 다시 표시된다.
@@ -2129,3 +2128,347 @@ def test_unrecognized_input_during_review_redisplays_review_without_mutating_sta
     assert state["assets"] == before_assets
     assert output.financial_profile is None
     assert "수정" in output.reply or "확정" in output.reply
+
+
+# reviewing 상태의 자유발화 correction 회귀
+
+
+def _reach_review_with_deposit_4000(session_id: str) -> dict:
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 3천만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(
+        _continue(session_id, "아까 예금 3천이라고 했는데 4천이에요", state)
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "나머지는 없어요", state)).data[STATE_KEY]
+    assert state["status"] == "reviewing"
+    return state
+
+
+def _deposit_values(items: list[dict]) -> list[int]:
+    return [a["value"] for a in items if a["type"] == "예금"]
+
+
+def test_review_free_text_correction_replaces_and_reenters_review():
+    session_id = "rv-corr1"
+    state = _reach_review_with_deposit_4000(session_id)
+
+    output = agent.run(
+        _continue(session_id, "아까 예금 4천이라고 했는데 5천이에요", state)
+    )
+    state = output.data[STATE_KEY]
+
+    assert state["status"] == "reviewing"
+    assert _deposit_values(state["assets"]) == [50_000_000]
+    assert output.financial_profile is None
+    review_items = state["review_items"]
+    assert [i["value"] for i in review_items if i["label"] == "예금"] == [50_000_000]
+
+
+def test_review_free_text_correction_twice_keeps_only_last_value():
+    session_id = "rv-corr2"
+    state = _reach_review_with_deposit_4000(session_id)
+    state = agent.run(
+        _continue(session_id, "아까 예금 4천이라고 했는데 5천이에요", state)
+    ).data[STATE_KEY]
+    output = agent.run(
+        _continue(session_id, "아까 예금 5천이라고 했는데 6천이에요", state)
+    )
+    state = output.data[STATE_KEY]
+
+    assert state["status"] == "reviewing"
+    assert _deposit_values(state["assets"]) == [60_000_000]
+    assert [i["value"] for i in state["review_items"] if i["label"] == "예금"] == [
+        60_000_000
+    ]
+
+
+def test_review_plain_sentence_is_not_treated_as_correction():
+    session_id = "rv-corr3"
+    state = _reach_review_with_deposit_4000(session_id)
+    before = state["assets"]
+
+    output = agent.run(_continue(session_id, "예금 5천만원 있어요", state))
+    state = output.data[STATE_KEY]
+
+    assert state["status"] == "reviewing"
+    assert state["assets"] == before
+    assert output.financial_profile is None
+
+
+def test_review_correction_then_confirm_still_finalizes():
+    session_id = "rv-corr4"
+    state = _reach_review_with_deposit_4000(session_id)
+    state = agent.run(
+        _continue(session_id, "아까 예금 4천이라고 했는데 5천이에요", state)
+    ).data[STATE_KEY]
+
+    output = agent.run(
+        AgentInput(
+            session_id=session_id,
+            user_message="",
+            context={"confirm_review": True, STATE_KEY: state},
+        )
+    )
+    assert output.data[STATE_KEY]["status"] == "finalized"
+    assert output.financial_profile is not None
+
+
+# golden-set 회귀 (이번 라운드)
+
+
+# 정정(correction) 요구사항 A
+
+
+def test_correction_with_explicit_type_replaces_single_existing_asset_record():
+    """실측 재현(E20): "예금 3천만원 있어요" -> "아까 예금 3천이라고
+    했는데 4천이에요"가 기존엔 3천만원+7천만원(3천+4천 합산 버그)=
+    1억으로 중복 합산됐다. 정정 의도가 확인되면 기존 단일 record를
+    REPLACE해서 최종 예금이 4천만원 하나여야 한다."""
+    session_id = "corr-e20"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 3천만원 있어요")
+    ).data[STATE_KEY]
+    assert any(
+        a["type"] == "예금" and a["value"] == 30_000_000 for a in state["assets"]
+    )
+
+    output = agent.run(
+        _continue(session_id, "아까 예금 3천이라고 했는데 4천이에요", state)
+    )
+    state2 = output.data[STATE_KEY]
+
+    deposits = [a for a in state2["assets"] if a["type"] == "예금"]
+    assert len(deposits) == 1
+    assert deposits[0]["value"] == 40_000_000
+    assert deposits[0]["confidence"] == "confirmed"
+
+
+def test_correction_without_type_replaces_the_single_existing_record():
+    """실측 재현(E21): "집은 5억이에요" -> "정정할게요 5억 5천이에요"에서
+    타입이 생략돼도, state 전체에서 정정 대상이 명백히 하나(부동산
+    하나뿐)면 그 record를 REPLACE해야 한다. 기대값은 5억+5천만원=
+    550,000,000 (직전 golden 보고서의 555,000,000은 기대값 작성 오류)."""
+    session_id = "corr-e21"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="집은 5억이에요")
+    ).data[STATE_KEY]
+    assert any(
+        a["type"] == "부동산" and a["value"] == 500_000_000 for a in state["assets"]
+    )
+
+    output = agent.run(_continue(session_id, "정정할게요 5억 5천이에요", state))
+    state2 = output.data[STATE_KEY]
+
+    real_estate = [a for a in state2["assets"] if a["type"] == "부동산"]
+    assert len(real_estate) == 1
+    assert real_estate[0]["value"] == 550_000_000
+    assert real_estate[0]["confidence"] == "confirmed"
+
+
+def test_correction_with_explicit_type_replaces_single_existing_liability_record():
+    """실측 재현(E23): "대출 1억이에요" -> "대출 1억이라고 했는데 8천
+    남았어요"가 기존엔 1억+1억8천(1억+8천 합산 버그)만큼 중복 합산됐다.
+    최종 대출은 8천만원 단일 레코드여야 한다."""
+    session_id = "corr-e23"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="대출 1억이에요")
+    ).data[STATE_KEY]
+    assert any(
+        liab["type"] == "대출" and liab["remaining_balance"] == 100_000_000
+        for liab in state["liabilities"]
+    )
+
+    output = agent.run(
+        _continue(session_id, "대출 1억이라고 했는데 8천 남았어요", state)
+    )
+    state2 = output.data[STATE_KEY]
+
+    loans = [liab for liab in state2["liabilities"] if liab["type"] == "대출"]
+    assert len(loans) == 1
+    assert loans[0]["remaining_balance"] == 80_000_000
+    assert loans[0]["confidence"] == "confirmed"
+
+
+def test_correction_negative_different_types_in_one_message_still_append_both():
+    """부정 회귀: "예금 3천, 주식 4천 있어요"는 correction 마커가 전혀
+    없다 — 같은 발화에 서로 다른 타입 두 개를 정상적으로 나열한 것이므로
+    두 자산 모두 그대로 추가돼야 한다(정정 경로를 타면 안 됨)."""
+    output = agent.run(
+        AgentInput(session_id="corr-neg1", user_message="예금 3천, 주식 4천 있어요")
+    )
+    state = output.data[STATE_KEY]
+
+    assert any(
+        a["type"] == "예금" and a["value"] == 30_000_000 for a in state["assets"]
+    )
+    assert any(
+        a["type"] == "주식" and a["value"] == 40_000_000 for a in state["assets"]
+    )
+
+
+def test_correction_negative_same_type_addition_without_marker_appends_not_replaces():
+    """부정 회귀: correction 마커 없이 같은 유형을 실제로 더 말하는
+    문장("예금 2천만원 더 있어요")은 기존 append-only 의미를 그대로
+    유지해야 한다 — 무작정 REPLACE로 바뀌면 안 된다."""
+    session_id = "corr-neg2"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 3천만원 있어요")
+    ).data[STATE_KEY]
+
+    output = agent.run(_continue(session_id, "예금 2천만원 더 있어요", state))
+    state2 = output.data[STATE_KEY]
+
+    deposits = [a for a in state2["assets"] if a["type"] == "예금"]
+    assert len(deposits) == 2
+    assert sorted(a["value"] for a in deposits) == [20_000_000, 30_000_000]
+
+
+def test_correction_ambiguous_same_type_multiple_records_type_omitted_asks_clarification():
+    """ambiguous correction 회귀: 같은 유형(예금) record가 이미 2개 쌓여
+    있는 상태에서 타입 생략 정정("정정할게요 5천만원이에요")이 오면,
+    둘 중 어느 걸 고치는지 추측하지 않고 clarification으로 되물어야
+    한다 — 두 record 모두 그대로 남아 있어야 한다."""
+    session_id = "corr-ambig1"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 3천만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "예금 2천만원 더 있어요", state)).data[
+        STATE_KEY
+    ]
+    assert len([a for a in state["assets"] if a["type"] == "예금"]) == 2
+
+    output = agent.run(_continue(session_id, "정정할게요 5천만원이에요", state))
+    state2 = output.data[STATE_KEY]
+
+    deposits = [a for a in state2["assets"] if a["type"] == "예금"]
+    assert len(deposits) == 2  # 추측으로 REPLACE되지 않고 그대로 보존
+    assert sorted(a["value"] for a in deposits) == [20_000_000, 30_000_000]
+    assert "말씀해주시겠어요" in output.reply or "어떤" in output.reply
+
+
+def test_correction_ambiguous_explicit_type_multiple_records_asks_clarification():
+    """ambiguous correction 회귀(타입 명시 버전): 예금 record가 2개인
+    상태에서 "예금 정정할게요 6천만원이에요"처럼 타입은 명시됐지만 그
+    타입의 기존 record가 여러 개면 어느 걸 고치는지 추측하지 않는다."""
+    session_id = "corr-ambig2"
+    state = agent.run(
+        AgentInput(session_id=session_id, user_message="예금 3천만원 있어요")
+    ).data[STATE_KEY]
+    state = agent.run(_continue(session_id, "예금 2천만원 더 있어요", state)).data[
+        STATE_KEY
+    ]
+
+    output = agent.run(_continue(session_id, "예금 정정할게요 6천만원이에요", state))
+    state2 = output.data[STATE_KEY]
+
+    deposits = [a for a in state2["assets"] if a["type"] == "예금"]
+    assert len(deposits) == 2
+    assert sorted(a["value"] for a in deposits) == [20_000_000, 30_000_000]
+
+
+# E25) 단위 공백 중복
+
+
+def test_amount_spaced_unit_word_no_duplicate_at_full_agent_flow():
+    """실측 재현(E25): "예금 3200 만원 있어요"가 32,010,000으로 중복
+    합산되던 버그 — 전체 agent 흐름까지 32,000,000이어야 한다."""
+    output = agent.run(
+        AgentInput(session_id="e25", user_message="예금 3200 만원 있어요")
+    )
+    state = output.data[STATE_KEY]
+
+    assert any(
+        a["type"] == "예금" and a["value"] == 32_000_000 for a in state["assets"]
+    )
+    assert not any(a["value"] == 32_010_000 for a in state["assets"])
+
+
+# E45) 사후 disclosure 금액 축약
+
+
+def test_post_death_disclosure_bare_thousand_uses_domain_convention(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """실측 재현(E45): "안심상속 조회 결과 예금 8천, 아파트 5억,
+    카드대출 2천"에서 예금이 8,000,000(LLM의 일반 숫자 오독)으로 축소
+    등록되던 버그 — extract_disclosures()의 결정론적 override 이후에는
+    80,000,000이어야 하고, 카드대출은 자산에 중복 등록되지 않아야
+    한다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "disclosures": [
+                    {"type": "예금", "confidence": "confirmed", "value": 8_000_000},
+                    {
+                        "type": "부동산",
+                        "confidence": "confirmed",
+                        "value": 500_000_000,
+                    },
+                ]
+            }
+        ),
+    )
+
+    output = agent.run(
+        AgentInput(
+            session_id="e45",
+            user_message="안심상속 조회 결과 예금 8천, 아파트 5억, 카드대출 2천",
+            context={"mode": "post_death"},
+        )
+    )
+    state = output.data[STATE_KEY]
+
+    assert any(
+        a["type"] == "예금" and a["value"] == 80_000_000 for a in state["assets"]
+    )
+    assert any(
+        a["type"] == "부동산" and a["value"] == 500_000_000 for a in state["assets"]
+    )
+    assert len(state["liabilities"]) == 1
+    assert state["liabilities"][0]["type"] == "대출"
+    assert state["liabilities"][0]["remaining_balance"] == 20_000_000
+    assert not any(a["type"] in ("기타", "대출") for a in state["assets"])
+
+
+# E47) 사후 disclosure 보험 유실
+
+
+def test_post_death_insurance_disclosure_unknown_amount_lands_in_insurance_state(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """실측 재현(E47): "보험 가입 사실만 확인됐고 금액은 확인되지
+    않았어요"가 DisclosureItem이 보험을 표현하지 못해 유실되거나 자산
+    "기타"로 잘못 반영됐다. 이제는 state["insurance"]에 unknown_amount로
+    남아야 하고, 자산 목록에는 절대 섞이면 안 된다."""
+    _install_fake_llm(
+        monkeypatch,
+        text=json.dumps(
+            {
+                "disclosures": [
+                    {"type": "보험", "confidence": "unknown_amount", "value": None},
+                ]
+            }
+        ),
+    )
+
+    output = agent.run(
+        AgentInput(
+            session_id="e47",
+            user_message="보험 가입 사실만 확인됐고 금액은 확인되지 않았어요",
+            context={"mode": "post_death"},
+        )
+    )
+    state = output.data[STATE_KEY]
+
+    assert state["insurance"] == [
+        {
+            "type": "보험",
+            "value": None,
+            "note": None,
+            "confidence": "unknown_amount",
+        }
+    ]
+    assert not any(a["type"] in ("보험", "기타") for a in state["assets"])
+    assert "보험" in state["checked_categories"]

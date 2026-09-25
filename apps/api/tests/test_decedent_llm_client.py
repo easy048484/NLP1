@@ -102,10 +102,8 @@ def test_rejects_name_that_does_not_look_korean(
     assert llm_client.extract_testator_name("텍스트") is None
 
 
-# ---------------------------------------------------------------------------
 # extract_will_date — extract_testator_name 과 동일한 케이스 구조를 그대로
 # 복제한다(키 없음/성공/찾지 못함/형식 오류/예외/형식 검증).
-# ---------------------------------------------------------------------------
 
 
 def test_will_date_returns_none_when_api_key_missing(
@@ -168,9 +166,7 @@ def test_will_date_rejects_empty_string(monkeypatch: pytest.MonkeyPatch) -> None
     assert llm_client.extract_will_date("텍스트") is None
 
 
-# ---------------------------------------------------------------------------
 # extract_will_address — 위와 동일한 케이스 구조.
-# ---------------------------------------------------------------------------
 
 
 def test_will_address_returns_none_when_api_key_missing(
@@ -231,8 +227,7 @@ def test_will_address_rejects_overly_long_response(
     assert llm_client.extract_will_address("텍스트") is None
 
 
-# ---------------------------------------------------------------------------
-# 코드펜스 파싱 버그 회귀 테스트 (2026-08-25).
+# 코드펜스 파싱 버그 회귀 테스트.
 #
 # 실전 검증에서 claude-haiku-4-5 가 시스템 프롬프트의 "JSON만 반환하라, 다른
 # 설명이나 문장을 절대 덧붙이지 마라" 지시에도 불구하고 응답을 마크다운
@@ -242,7 +237,6 @@ def test_will_address_rejects_overly_long_response(
 # 조용히 100% 실패하고 있었다 — 아래 기존 테스트들은 전부 펜스 없는 순수
 # JSON('{"name": "김영수"}')만 흉내 내서, 393개 테스트가 전부 통과하면서도
 # 이 버그를 한 번도 잡지 못했다.
-# ---------------------------------------------------------------------------
 
 
 def test_strip_code_fence_removes_json_tagged_fence() -> None:

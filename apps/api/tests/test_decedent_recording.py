@@ -53,15 +53,13 @@ def _run_namespaced(text: str, **context: str):
     return decedent_estate.run(payload)
 
 
-# ---------------------------------------------------------------------------
-# transcript intake gate (2026-09-05)
+# transcript intake gate
 #
 # 실측 재현: will_type=recording이 확정된 직후 "녹음·영상"(UI 방식 선택
 # 문구)이 user_message로 그대로 들어와도 check_recording_requirements가
 # 실행돼, 아직 대본을 입력하지 않았는데 "2가지만 직접 확인해주세요...
 # (5/7 확인됨)"과 증인 참여/결격 질문부터 노출됐다. 실제 대본이 들어오기
 # 전에는 checker를 아예 돌리지 않아야 한다.
-# ---------------------------------------------------------------------------
 
 
 def test_voice_memo_first_turn_goes_straight_to_transcript_intake() -> None:
@@ -237,14 +235,12 @@ def test_witness_structured_answers_after_transcript_yield_final_seven() -> None
     assert "민법 제1066조" not in output.reply
 
 
-# ---------------------------------------------------------------------------
 # 증인 참여/결격 자연어 확인 답변 (production 재현 버그 수정)
 #
 # 버튼(구조화 context) 대신 자연어로 "증인은 실제로 참여했고, 결격사유에는
 # 해당하지 않습니다" 처럼 답해도 명백한 표현이면 반영되어야 한다.
 # handwriting_answer/seal_answer의 자연어 확인과 동일한 원칙 —
 # _infer_rec_witness_present/_infer_rec_witness_eligible 참고.
-# ---------------------------------------------------------------------------
 
 
 def test_natural_language_answers_both_fields_yield_final_seven() -> None:
@@ -278,6 +274,31 @@ def test_natural_language_answers_both_fields_yield_final_seven() -> None:
         assert reqs[rid]["grade"] == "GREEN", rid
     assert witness_turn.data["progress"] == {"checked": 7, "total": 7}
     assert "형식 요건상 문제가 발견되지 않았습니다" in witness_turn.reply
+
+
+def test_natural_language_honorific_witness_present_phrasing_is_recognized() -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "증인은 옆에 같이 계셨고,
+    결격사유는 없으세요"처럼 높임말 "계셨"(있다의 높임)을 쓰면 기존
+    "같이 있었" 정규식에 안 걸려 결격 여부만 반영되고 참여 여부는 PENDING에
+    머물렀다."""
+    transcript_turn = _run(_COMPLETE_TRANSCRIPT)
+
+    witness_turn = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="증인은 옆에 같이 계셨고, 결격사유는 없으세요",
+            context={"decedent_estate": transcript_turn.data["decedent_estate"]},
+        )
+    )
+
+    assert witness_turn.data["decedent_estate"]["rec_witness_present_answer"] == "yes"
+    assert (
+        witness_turn.data["decedent_estate"]["rec_witness_eligible_answer"]
+        == "not_disqualified"
+    )
+    reqs = witness_turn.data["requirements"]
+    assert reqs["rec_witness_present"]["grade"] == "GREEN"
+    assert reqs["rec_witness_eligible"]["grade"] == "GREEN"
 
 
 def test_natural_language_present_only_leaves_eligible_pending() -> None:
@@ -433,9 +454,7 @@ def test_stored_valid_answer_is_not_overwritten_by_later_ambiguous_message() -> 
     )
 
 
-# ---------------------------------------------------------------------------
 # _looks_like_recording_transcript 단위 테스트
-# ---------------------------------------------------------------------------
 
 _NOT_TRANSCRIPT_MESSAGES = [
     "녹음·영상",

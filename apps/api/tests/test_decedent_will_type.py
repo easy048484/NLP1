@@ -102,7 +102,6 @@ def test_handwritten_runs_existing_pipeline_unchanged() -> None:
 
     assert output.data["will_type"] == "handwritten"
     assert "requirements" in output.data
-    # 종결돼도 더 이상 자동 handoff 없음(2026-09-05).
     assert output.next_action is None
     assert "형식 요건상 문제가 발견되지 않았습니다" in output.reply
 
@@ -126,7 +125,6 @@ def test_unknown_defaults_to_handwritten_with_notice() -> None:
     )  # 파이프라인이 그대로 이어짐
     assert output.data["will_type"] == "handwritten"
     assert "requirements" in output.data
-    # 종결돼도 더 이상 자동 handoff 없음(2026-09-05).
     assert output.next_action is None
 
 
@@ -142,7 +140,6 @@ def test_handwritten_mentioned_in_message_is_not_reasked() -> None:
     payload = AgentInput(
         session_id="s1",
         user_message="자필로 쓴 유언장이 있는데 효력이 있나요?",
-        # context 없음 — will_type 미확인
     )
 
     output = decedent_estate.run(payload)
@@ -214,15 +211,13 @@ def test_explicit_context_will_type_still_wins_over_message_inference() -> None:
     )  # notarial 은 판정 파이프라인 자체를 안 돈다
 
 
-# ---------------------------------------------------------------------------
-# recording(§1067) 자연어 will_type 추론 (2026-09-05)
+# recording(§1067) 자연어 will_type 추론
 #
 # 실측 재현: "휴대폰을 정리하다가 재산 얘기를 남긴 음성메모를 발견했어요"처럼
 # 이미 명백히 녹음임을 밝혔는데도 방식 선택 질문을 다시 했다.
 # handwritten과 동일 원칙 — 최소·명백한 표현만 deterministic하게 매칭하고
 # LLM은 쓰지 않는다. "메모"/"파일"/"영상"/"말"/"기록" 같은 단어 하나만으로는
 # 추론하지 않는다.
-# ---------------------------------------------------------------------------
 
 
 def test_voice_memo_message_is_inferred_as_recording_without_reasking() -> None:
@@ -243,6 +238,20 @@ def test_voice_memo_message_is_inferred_as_recording_without_reasking() -> None:
     assert "requirements" not in output.data  # 아직 대본이 없어 판정을 안 돈다
     assert output.next_action == NEXT_ACTION_AWAIT_USER
     assert output.reply.startswith("📼 녹음하신 내용을 그대로 적어주세요")
+
+
+def test_voice_recording_synonym_is_inferred_as_recording() -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "목소리 녹음"은 "음성메모"와
+    같은 뜻의 흔한 동의어인데 기존 marker에 없어 방식 재질문으로 빠졌다."""
+    output = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="핸드폰에 남겨진 목소리 녹음이 있는데 유산 얘기를 하신 것 같아요",
+        )
+    )
+
+    assert "어떤 형태의 유언인가요?" not in output.reply
+    assert output.data["will_type"] == "recording"
 
 
 def test_recorded_will_phrase_is_inferred_as_recording() -> None:
@@ -293,15 +302,13 @@ def test_explicit_handwritten_wins_over_voice_memo_phrase_in_message() -> None:
     assert output.data["will_type"] == "handwritten"
 
 
-# ---------------------------------------------------------------------------
-# notarial(공정증서, §1068) 자연어 will_type 추론 (2026-09-06)
+# notarial(공정증서, §1068) 자연어 will_type 추론
 #
 # 실측 재현: "아버지가 돌아가시고 서류를 정리하다가 공증받은 유언장을
 # 발견했어요"처럼 이미 명백히 공정증서임을 밝혔는데도 방식 선택 질문을
 # 다시 했다. handwritten/recording과 동일 원칙 — 최소·명백한 표현만
 # deterministic하게 매칭하고 LLM은 쓰지 않는다. "공증"/"서류"/"증서"/
 # "공증사무소" 같은 단어 하나만으로는 추론하지 않는다.
-# ---------------------------------------------------------------------------
 
 
 def test_notarized_will_found_message_is_inferred_as_notarial_without_reasking() -> (
@@ -383,8 +390,7 @@ def test_explicit_handwritten_wins_over_notarized_will_phrase_in_message() -> No
     assert output.data["will_type"] == "handwritten"
 
 
-# ---------------------------------------------------------------------------
-# rules 기반 generic will_type 자연어 추론 (2026-09-06)
+# rules 기반 generic will_type 자연어 추론
 #
 # _infer_will_type_from_message()가 방식별 marker 상수를 하드코딩하는 대신
 # rules/will_types.json 의 will_types[].inference_markers 를 generic하게
@@ -392,7 +398,6 @@ def test_explicit_handwritten_wins_over_notarized_will_phrase_in_message() -> No
 # 민법상 유언 방식을 명백하게 특정했다면, 그 방식이 full-support(handwritten/
 # recording)인지 guidance-only(notarial/secret/oral)인지와 무관하게 방식
 # 선택 질문을 다시 하지 않는다.
-# ---------------------------------------------------------------------------
 
 _FIVE_WAY_INFERENCE_CASES = [
     ("handwritten", "아버지가 자필증서 유언을 남겼어요"),
@@ -443,6 +448,108 @@ def test_ambiguous_or_underspecified_messages_do_not_infer_will_type(
     assert "requirements" not in output.data
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "자필인지 공증인지 모르겠어요",
+        "손으로 쓴 건지 공증받은 건지 모르겠습니다",
+        "자필이거나 공증받은 것 같아요",
+        "녹음인지 자필인지 애매해요",
+        "공증받은 건지 그냥 손으로 쓴 건지 모르겠어요",
+        "남긴 건 맞는데 자필인지 녹음인지 모르겠어요",
+    ],
+)
+def test_weak_conflict_alias_prevents_silent_handwritten_confirmation(
+    message: str,
+) -> None:
+    """실측 재현(2026-09-18, P6 95-case QA) — 위 문장들은 모두 두 방식을
+    명시적 대안으로 놓고 "인지/건지/거나/모르겠다/애매하다"류로 불확실성을
+    표현하는데도, 기존 충돌 방어는 두 후보 모두 "강한" inference_markers/
+    patterns에 걸릴 때만 작동해서 handwritten("자필")만 단독으로 걸리고
+    notarial("공증")/recording("녹음")은 안 걸려(오탐 방지로 의도적으로
+    약하게 설계됨) 조용히 handwritten으로 확정됐다. rules/will_types.json
+    의 conflict_guard가 이런 "약한" 후보도 명시적 불확실성 표현과 함께면
+    second-candidate로 잡아 None(재질문)을 반환해야 한다."""
+    output = decedent_estate.run(AgentInput(session_id="s1", user_message=message))
+
+    assert "어떤 형태의 유언인가요?" in output.reply
+    assert output.data.get("will_type") != "handwritten"
+    assert "requirements" not in output.data
+
+
+def test_conflict_guard_catches_elided_notarial_mention() -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "유언장이 자필인지 공증받은
+    건지 잘 모르겠어"는 "유언장"을 한 번만 말하고 "공증받은" 뒤에서는
+    생략하는 흔한 화법이라, 기존 notarial marker("공증받은 유언(장)")가 전혀
+    안 걸려 "자필"만 단독으로 매치되고 충돌 방어 없이 handwritten으로
+    확정됐다 — 사용자는 명백히 모르겠다고 말했는데도. "유언"과 "공증받은"이
+    순서 무관하게 같이 등장하면 후보로 잡도록 고쳐서 충돌 방어가 정상
+    작동해야 한다."""
+    output = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="유언장이 자필인지 공증받은 건지 잘 모르겠어",
+        )
+    )
+
+    assert "어떤 형태의 유언인가요?" in output.reply
+    assert "requirements" not in output.data
+
+
+def test_notarial_conjugation_variant_infers_without_reasking() -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "공증 받아서 만들어 둔
+    유언장이 나왔어요"처럼 "받은"이 아니라 "받아서" 활용형을 쓰면 기존
+    notarial marker/pattern("공증받은 유언(장)")에 안 걸려 방식 재질문으로
+    빠졌다."""
+    output = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="공증 받아서 만들어 둔 유언장이 나왔어요",
+        )
+    )
+
+    assert "어떤 형태의 유언인가요?" not in output.reply
+    assert output.data["will_type"] == "notarial"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "아버지가 돌아가시고 유품 정리하다가 직접 손으로 쓰신 유언장을 찾았는데, 효력이 있는지 궁금해요",
+        "돌아가신 아버지가 손수 쓰신 유언장이 나왔는데 효력이 있는지 봐주세요",
+        "돌아가시기 전에 직접 쓰신 유언장이라고 하더라고요",
+        "유언장을 손으로 쓰셨는데 효력있나요",  # 탐색적 QA — "직접" 없이 "손으로"만
+    ],
+)
+def test_handwritten_honorific_and_synonym_phrasings_infer_without_reasking(
+    message: str,
+) -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "직접 손으로 쓰신"/"손수 쓰신"처럼
+    존댓말(-시-)이 붙거나 "손수"/"본인이 직접" 같은 동의 표현을 쓰면
+    inference_markers의 exact substring("직접 손으로 쓴")에 안 걸려 불필요하게
+    방식 선택 질문으로 되돌아갔다. rules/will_types.json 의 handwritten
+    inference_patterns(regex)로 일반화해서 고쳤다 — "대필로 썼다"처럼 본인
+    행위 표현이 없는 문장과는 구분되어야 한다(아래 다른 테스트에서 확인)."""
+    output = decedent_estate.run(AgentInput(session_id="s1", user_message=message))
+
+    assert "어떤 형태의 유언인가요?" not in output.reply
+    assert output.data["will_type"] == "handwritten"
+
+
+def test_ghostwritten_mention_does_not_infer_handwritten() -> None:
+    """ "대필"(본인이 아닌 사람이 대신 씀)은 자필증서의 반대 개념이다 — handwritten
+    inference_patterns의 "직접/손수/본인이 직접/스스로" 행위 표현이 없으므로
+    매치되면 안 된다(오탐 방지 회귀)."""
+    output = decedent_estate.run(
+        AgentInput(
+            session_id="s1",
+            user_message="아버지 유언장이 대필로 썼다고 하던데 효력이 있나요?",
+        )
+    )
+
+    assert "어떤 형태의 유언인가요?" in output.reply
+
+
 def test_secret_exact_production_scenario_infers_secret_without_reasking() -> None:
     """정확한 production 재현 — "봉인된 유언장"(모호) + "비밀증서 유언이라고
     적혀 있어요"(명백한 방식 특정)가 함께 있는 문장에서, 명백한 방식 명칭이
@@ -483,7 +590,6 @@ def test_oral_natural_language_mention_infers_oral_without_reasking() -> None:
     assert "민법 제1070조" in output.reply
 
 
-# ---------------------------------------------------------------------------
 # will_type 자연어 변경(type switch, 2026-09-07)
 #
 # 실측 재현: handwritten이 이미 저장된 뒤 "아아 녹음으로 하려고"처럼 명백히
@@ -493,7 +599,6 @@ def test_oral_natural_language_mention_infers_oral_without_reasking() -> None:
 # 구분해야 하므로, 방식명 뒤에 선택/변경 어미가 곧장 붙은 경우만 switch로
 # 인정한다(rules/will_types.json 의 type_switch.intent_suffix_pattern +
 # will_types[].switch_markers).
-# ---------------------------------------------------------------------------
 
 
 def _stored(will_type: str, **extra: str) -> dict:
@@ -539,6 +644,48 @@ def test_explicit_type_change_switches_stored_will_type(
     assert output.data["decedent_estate"]["will_type"] == expected_type
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "그냥 녹음해서 할래",
+        "녹음할래",
+        "녹음하려고",
+    ],
+)
+def test_switch_recognizes_marker_used_as_direct_verb_without_particle(
+    message: str,
+) -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — 기존 intent_suffix_pattern은
+    "(으로|로)" 조사를 필수로 요구해서 "자필로 할래"류는 잡아도 "녹음"처럼
+    '~하다'로 바로 동사화되는 marker의 "녹음할래"/"녹음해서 할래"/"녹음하려고"
+    (조사 없이 바로 어미가 붙는, 오히려 더 흔한 표현)를 놓쳤다 — 과제 예시
+    문구 "그냥 녹음해서 할래" 자체가 재현 실패했다."""
+    stored = _stored("handwritten")
+    output = _run_with_stored(stored, message)
+
+    assert output.data["decedent_estate"]["will_type"] == "recording"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "자필증서인지 공정증서인지 모르겠습니다",
+        "녹음 유언은 자필이랑 뭐가 달라?",
+        "녹음 파일이 있어요",
+    ],
+)
+def test_switch_suffix_widening_does_not_cause_new_false_positives(
+    message: str,
+) -> None:
+    """intent_suffix_pattern에서 (으로|로) 조사를 선택적으로 바꾼 뒤에도, 단순
+    언급/비교나 무관한 표현(파일 언급 등)은 여전히 switch로 오인하면 안 된다
+    (widening으로 인한 회귀 방지)."""
+    stored = _stored("handwritten")
+    output = _run_with_stored(stored, message)
+
+    assert output.data["decedent_estate"]["will_type"] == "handwritten"
+
+
 def test_type_switch_resets_previous_type_progress_state() -> None:
     """방식이 실제로 바뀌면 이전 방식 전용 진행 상태(요건 판정·확인 답변)가
     새 방식에 오염되지 않도록 초기화돼야 한다."""
@@ -573,6 +720,9 @@ def test_type_switch_resets_previous_type_progress_state() -> None:
         "공정증서 유언도 있나요?",
         "다른 방식도 궁금해요",
         "다른 방식으로 할까 고민 중이야",
+        "공증도 가능한가요?",
+        "공증 유언은 뭐가 달라요?",
+        "공정증서가 더 안전한가요?",
     ],
 )
 def test_mention_or_ambiguous_change_does_not_switch_stored_will_type(
@@ -580,11 +730,38 @@ def test_mention_or_ambiguous_change_does_not_switch_stored_will_type(
 ) -> None:
     """단순 언급/비교 질문이나 모호한 변경 의도는 저장된 will_type을 바꾸지
     않는다 — "~로 하려고/할게/바꿀게" 같은 선택·변경 어미가 방식명 바로 뒤에
-    붙어야만 switch로 인정한다."""
+    붙어야만 switch로 인정한다. 마지막 세 개는 2026-09-18(P6 QA)에 notarial
+    switch alias("공증")를 추가하면서 함께 넣은 회귀 방지 케이스 — "공증"
+    단어 등장 자체가 아니라 명백한 변경 의도와 결합될 때만 switch돼야
+    한다."""
     stored = _stored("handwritten")
     output = _run_with_stored(stored, message)
 
     assert output.data["decedent_estate"]["will_type"] == "handwritten"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "공증받은 걸로 하기로 했어요",
+        "공증 받은 걸로 바꿀게요",
+        "공증으로 할게요",
+        "공증받기로 했어요",
+    ],
+)
+def test_notarial_colloquial_switch_phrasings_switch_stored_will_type(
+    message: str,
+) -> None:
+    """실측 재현(2026-09-18, P6 95-case QA) — notarial의 switch_markers가
+    기존에 "공정증서"뿐이라, handwritten 저장 상태에서 위 문장들(훨씬 흔한
+    구어체 "공증받은/공증으로" 전환 표현)을 보내도 switch가 안 되고
+    handwritten이 그대로 유지됐다. rules/will_types.json 의 notarial
+    switch_markers/switch_marker_patterns/switch_full_patterns 확장으로
+    고쳤다."""
+    stored = _stored("handwritten")
+    output = _run_with_stored(stored, message)
+
+    assert output.data["decedent_estate"]["will_type"] == "notarial"
 
 
 def test_explicit_context_will_type_wins_over_switch_phrase_in_message() -> None:

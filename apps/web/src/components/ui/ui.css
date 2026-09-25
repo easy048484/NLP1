@@ -3,7 +3,7 @@
  * 화면(screens/*.css)·셸(styles/layout.css)은 별도.
  */
 
-/* ============ 버튼 ============ */
+/* 버튼 */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -69,7 +69,7 @@
   background: var(--surface-sunken);
 }
 
-/* ============ 워드마크 ============ */
+/* 워드마크 */
 .wordmark {
   display: inline-flex;
   align-items: center;
@@ -113,7 +113,7 @@
   margin-top: var(--sp-2);
 }
 
-/* ============ 헤어라인 · 아이브로 ============ */
+/* 헤어라인 · 아이브로 */
 .gold-rule {
   display: block;
   width: 36px;
@@ -130,7 +130,7 @@
   color: var(--brand-gold);
 }
 
-/* ============ 카드 ============ */
+/* 카드 */
 .card {
   background: var(--surface-card);
   border: 1px solid var(--line);
@@ -166,7 +166,7 @@
   color: var(--ink-faint);
 }
 
-/* ============ 상태 pill ============ */
+/* 상태 pill */
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -192,7 +192,7 @@
   color: var(--state-bad);
 }
 
-/* ============ 신호등 (SignalRow) ============ */
+/* 신호등 (SignalRow) */
 .signal-row {
   border-bottom: 1px solid var(--line);
   padding: var(--sp-3) 0;
@@ -273,7 +273,7 @@
   color: var(--brand-navy);
 }
 
-/* ============ 판례 카드 ============ */
+/* 판례 카드 */
 .precedent-cards {
   margin-top: var(--sp-3);
   display: grid;
@@ -305,7 +305,7 @@
   }
 }
 
-/* ============ 스텝퍼 ============ */
+/* 스텝퍼 */
 .stepper {
   margin-bottom: var(--sp-4);
 }
@@ -328,7 +328,7 @@
   color: var(--ink-muted);
 }
 
-/* ============ 타임라인 ============ */
+/* 타임라인 */
 .timeline-deadlines {
   list-style: none;
   padding: 0;
@@ -421,7 +421,7 @@
   margin-top: var(--sp-4);
 }
 
-/* ============ 금액 표시 ============ */
+/* 금액 표시 */
 .amount-display {
   padding: var(--sp-4);
   border-radius: var(--radius-lg);
@@ -458,7 +458,7 @@
   color: var(--ink-muted);
 }
 
-/* ============ 세액 내역 ============ */
+/* 세액 내역 */
 .tax-breakdown {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -503,7 +503,7 @@
   color: var(--ink-faint);
 }
 
-/* ============ 게이지 ============ */
+/* 게이지 */
 .gauge {
   display: grid;
   gap: var(--sp-2);
@@ -541,7 +541,7 @@
   transition: width var(--motion-slow);
 }
 
-/* ============ 선택 버튼 ============ */
+/* 선택 버튼 */
 .choice-group {
   display: flex;
   flex-wrap: wrap;
@@ -610,7 +610,7 @@
   color: var(--ink-muted);
 }
 
-/* ============ 에이전트 pill ============ */
+/* 에이전트 pill */
 .agent-pill {
   display: inline-flex;
   align-items: center;
@@ -622,7 +622,7 @@
   letter-spacing: 0.02em;
 }
 
-/* ============ 배지 · 고지 ============ */
+/* 배지 · 고지 */
 .needs-review {
   display: flex;
   align-items: flex-start;
@@ -652,7 +652,7 @@
   text-align: center;
 }
 
-/* ============ 음성 입력 ============ */
+/* 음성 입력 */
 .voice-btn {
   display: inline-flex;
   align-items: center;
@@ -676,7 +676,7 @@
   white-space: nowrap;
 }
 
-/* ============ 다이얼로그 ============ */
+/* 다이얼로그 */
 .dialog-overlay {
   position: fixed;
   inset: 0;
@@ -739,7 +739,7 @@
   justify-content: flex-end;
 }
 
-/* ============ 업로드 전 고지 (Composer 사진 첨부) ============ */
+/* 업로드 전 고지 (Composer 사진 첨부) */
 .upload-notice {
   display: flex;
   flex-direction: column;
@@ -816,7 +816,7 @@
   font-weight: 700;
 }
 
-/* ============ 마크다운 본문 ============ */
+/* 마크다운 본문 */
 .md {
   font-size: var(--text-body);
   line-height: var(--leading-body);

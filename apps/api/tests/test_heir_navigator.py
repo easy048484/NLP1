@@ -33,7 +33,7 @@ from agents.heir_navigator.state import (
 from schemas import AgentInput, AgentName  # noqa: E402
 
 
-# --------------------------------------------------------------- 날짜 산술
+# 날짜 산술
 
 
 @pytest.mark.parametrize(
@@ -56,7 +56,7 @@ def test_month_end():
     assert month_end(date(2026, 12, 1)) == date(2026, 12, 31)
 
 
-# ----------------------------------------------------------------- 기한 계산
+# 기한 계산
 
 
 def test_no_death_date_means_no_deadlines():
@@ -143,7 +143,7 @@ def test_completed_steps_sort_last():
     assert items[-1].completed is True
 
 
-# ------------------------------------------------------------------- 절차 DAG
+# 절차 DAG
 
 
 def test_accept_decide_is_not_blocked_by_asset_search():
@@ -180,7 +180,7 @@ def test_handoff_to_decedent_estate_when_will_exists():
     assert build_plan(state, today=date(2026, 2, 1)).handoff == "decedent_estate"
 
 
-# ------------------------------------------------------------------- 경계
+# 경계
 
 
 @pytest.mark.parametrize(
@@ -226,7 +226,7 @@ def test_output_guardrail_catches_recommendation():
     )
 
 
-# ------------------------------------------------------------------- 슬롯
+# 슬롯
 
 
 def test_rule_based_extracts_explicit_date():
@@ -256,7 +256,7 @@ def test_merge_does_not_erase_known_values():
     assert merged.has_debt == "yes"
 
 
-# ------------------------------------------------------------------- 협의
+# 협의
 
 
 def test_consent_checklist_from_minimal_family_graph():
@@ -276,7 +276,7 @@ def test_consent_checklist_degrades_without_graph():
     assert build_checklist(None).available is False
 
 
-# ------------------------------------------------------------------- 캘린더
+# 캘린더
 
 
 def test_ics_has_one_event_per_pending_deadline():
@@ -287,7 +287,7 @@ def test_ics_has_one_event_per_pending_deadline():
     assert "END:VCALENDAR" in text
 
 
-# ------------------------------------------------------------------- 계약
+# 계약
 
 
 def test_first_turn_asks_for_death_date():
@@ -337,10 +337,8 @@ def test_guidance_comes_before_follow_up_question():
             context={"today": "2026-02-01"},
         )
     )
-    # 안내가 먼저 나오고
     assert "안내 기준" in output.reply
     assert output.data["plan"]["next_actions"]
-    # 되묻는 건 뒤에 하나만
     assert output.data["plan"]["blocking_slot"] is None
     assert output.data["asked_slot"] == output.data["plan"]["follow_up"]
     # 그 질문은 답변 본문이 아니라 별도 질문 블록(pending_questions)으로 나간다

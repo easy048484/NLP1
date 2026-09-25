@@ -31,9 +31,7 @@ def _no_will_output():
     return _run(will_type="none")
 
 
-# ---------------------------------------------------------------------------
 # 진입 경로
-# ---------------------------------------------------------------------------
 
 
 def test_none_is_offered_as_a_will_type_option() -> None:
@@ -78,7 +76,6 @@ def test_intent_does_not_affect_no_will_path() -> None:
     assert "guide" not in prepare.data
 
 
-# ---------------------------------------------------------------------------
 # [1-1] 유언장 존재 자체가 불확실한 자연어 → none 자동 추론 (2026-09-06, #150)
 #
 # 실측 재현 1: "유언장이 있는지 확실하지 않아요"처럼 유언장 존재 자체가
@@ -92,7 +89,13 @@ def test_intent_does_not_affect_no_will_path() -> None:
 # /exclusion_patterns 를 단일 출처로 삼아 will_types.infer_will_type_from_message()
 # 가 5방식·marker와 함께 generic하게 처리한다 — 아래는 marker/pattern을
 # exact phrase가 아니라 paraphrase family로 고정한 회귀 테스트다.
-# ---------------------------------------------------------------------------
+#
+# 실측 재현 3(2026-09-18, P6 95-case QA): 위 patterns는 전부 "모르다/확실하지
+# 않다/같다" 같은 헤지 동사가 붙어야만 걸려서, 가장 직접적인 평서형("유언장이
+# 없어요")이 오히려 빠져 있었다. no_will.inference_patterns에 유언장 앵커 +
+# "없어요/없다/없습니다" 평서형 패턴을 추가했다 — 주어가 생략된 "없어요"/"못
+# 봤어요" 단독형은 직전 질문 맥락 없이는 오탐 위험이 커 이번 범위에서
+# 의도적으로 제외했다(정책 판단 보류).
 
 _NO_WILL_EXISTENCE_UNCERTAIN_PARAPHRASES = [
     "유언장이 있는지 확실하지 않아요",
@@ -104,6 +107,12 @@ _NO_WILL_EXISTENCE_UNCERTAIN_PARAPHRASES = [
     "유언장을 아무리 찾아도 못 찾겠어요",
     "유언장을 찾지 못했습니다",
     "유언장이 없는 것 같아요",
+    "애초에 유언장을 남겼는지도 모르겠어요",  # 실측 재현(2026-09-07 자연어 QA) — "있다/없다" 대신 "남기다"로 존재 불확실을 표현
+    "집을 다 뒤졌는데 유언장을 못 찾겠어요",  # 실측 재현(2026-09-07) — "찾지 못" 대신 어순이 뒤바뀐 "못 찾다"
+    "유언장이 없어요",  # 실측 재현(2026-09-18, P6 95-case QA) — 헤지 없는 가장 단순한 평서형
+    "유언장은 없어요",
+    "유언장을 못 찾겠어요",
+    "유언장을 아무리 찾아도 못 찾겠어요",
 ]
 
 _NO_WILL_FALSE_POSITIVE_PARAPHRASES = [
@@ -113,6 +122,8 @@ _NO_WILL_FALSE_POSITIVE_PARAPHRASES = [
     "유언장에 적힌 주소가 맞는지 모르겠어요",
     "자필증서인지 공정증서인지 모르겠어요",
     "유언장에 대해 잘 모르겠어요",
+    "유언장이 있는데 효력이 있는지 모르겠어요",  # 실측 재현(2026-09-18, P6 QA) — "없" 평서형 신규 패턴의 오탐 방어
+    "유언장 주소가 맞는지 모르겠어요",
 ]
 
 
@@ -162,9 +173,7 @@ def test_explicit_handwritten_wins_over_no_will_phrase_in_message() -> None:
     assert output.data["will_type"] == "handwritten"
 
 
-# ---------------------------------------------------------------------------
 # [2] 공정증서 고지 — 1회, 탐색 안내 아님
-# ---------------------------------------------------------------------------
 
 
 def test_notarial_notice_appears_exactly_once() -> None:
@@ -202,9 +211,7 @@ def test_notarial_notice_does_not_name_unverified_institution() -> None:
         assert unverified not in reply, unverified
 
 
-# ---------------------------------------------------------------------------
 # [3] 법정상속 안내 — 무단정, 상속인 범위·지분은 침범하지 않음
-# ---------------------------------------------------------------------------
 
 
 def test_legal_succession_guidance_is_not_assertive() -> None:
@@ -251,9 +258,7 @@ def test_closing_lines_present_once() -> None:
     assert reply.count("법률 자문이 아닙니다") == 1
 
 
-# ---------------------------------------------------------------------------
-# [4] heir_navigator로의 직접 핸드오프 없음 (2026-08-25 제거 — 라우터가 담당)
-# ---------------------------------------------------------------------------
+# [4] heir_navigator로의 직접 핸드오프 없음 (라우터가 담당)
 
 
 def test_does_not_hand_off_to_heir_navigator() -> None:
@@ -296,9 +301,7 @@ def test_no_will_state_is_persisted_to_session_namespace() -> None:
     assert persisted.get("will_type") == "none"
 
 
-# ---------------------------------------------------------------------------
 # 회귀 — 기존 경로 무영향
-# ---------------------------------------------------------------------------
 
 
 def test_existing_will_types_unaffected() -> None:
@@ -328,9 +331,7 @@ def test_unknown_will_type_still_reasks() -> None:
     assert "none" in output.data["warnings"][0]["allowed"]
 
 
-# ---------------------------------------------------------------------------
 # [4] inference_patterns/exclusion_patterns 안전 처리 (#150)
-# ---------------------------------------------------------------------------
 
 
 def test_malformed_regex_pattern_is_skipped_not_crashed() -> None:

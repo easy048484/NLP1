@@ -10,6 +10,7 @@ import { FaqPage } from "./screens/site/FaqPage";
 import { GuidePage } from "./screens/site/GuidePage";
 import { HomePage } from "./screens/site/HomePage";
 import { ServicePage } from "./screens/site/ServicePage";
+import { AfterFlow, MobileHome, PrepareFlow, TipPage } from "./mobile";
 
 function ShellLayout() {
   return (
@@ -43,6 +44,14 @@ export default function App() {
         <Route path="/home" element={<HomeScreen />} />
         <Route path="/chat" element={<ChatScreen />} />
       </Route>
+
+      {/* 모바일 간단 버전 — 부모님용(prepare)·자녀용(after) 두 입구 */}
+      <Route path="/m" element={<MobileHome />} />
+      <Route path="/m/tips/:id" element={<TipPage />} />
+      <Route path="/m/prepare" element={<PrepareFlow />} />
+      <Route path="/m/prepare/:step" element={<PrepareFlow />} />
+      <Route path="/m/after" element={<AfterFlow />} />
+      <Route path="/m/after/:step" element={<AfterFlow />} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
