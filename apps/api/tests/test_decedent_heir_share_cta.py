@@ -21,7 +21,9 @@ from orchestrator.handoff import extract_state_to_persist
 from orchestrator.session_store import InMemorySessionStore
 from schemas import AgentInput, AgentName
 
-_HEIR_SHARE_PROMPT = "유언 내용이 상속인의 유류분에 영향을 줄 수 있는지 참고용으로 확인해 볼까요?"
+_HEIR_SHARE_PROMPT = (
+    "유언 내용이 상속인의 유류분에 영향을 줄 수 있는지 참고용으로 확인해 볼까요?"
+)
 _HEIR_SHARE_LABEL = "유류분 영향 확인하기"
 _HEIR_SHARE_MESSAGE = "유언 내용이 상속인의 유류분에 영향을 줄 수 있는지 확인해 주세요."
 
