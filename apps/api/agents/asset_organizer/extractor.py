@@ -382,7 +382,21 @@ def _regex_extract(text: str) -> tuple[ExtractionResult, list[str]]:
             continue
 
         matched_types = _match_all_asset_types(segment)
-        if not matched_types:
+        if not matched_types or _match_liability_type(segment) is not None:
+            # 실측 재현된 버그: "주택담보대출 1억"은 "주택"(부동산 키워드)과
+            # "대출"(부채 키워드)을 한 세그먼트 안에 동시에 담고 있다.
+            # matched_types만 보면 부동산으로 오인해 자산까지 만들어버려서,
+            # extract_liabilities()가 독립적으로 잡는 "대출" 부채와
+            # 이중으로 집계됐다("주담대 1억"이 부동산 1억 + 부채 1억으로
+            # 잡히던 버그). "주담대"는 담보 주택의 자산가치가 아니라 대출
+            # 잔액을 가리키는 표현이므로, 세그먼트가 _match_liability_type()
+            # 으로 명확히 부채 식별이 되면(자산 키워드와 우연히 겹치더라도)
+            # 이 함수의 asset 후보에서 완전히 뺀다 — unresolved로 보내면
+            # extract_financial_slots()의 기존 P0 구조적 exclusion(unresolved
+            # 중 _match_liability_type()로 식별되는 세그먼트는 asset LLM
+            # 폴백 후보에서 제외)이 그대로 걸려 LLM에도 안 넘어간다. 부채
+            # 쪽 소유권은 extract_liabilities()에게 있으므로 정보 유실이
+            # 아니다(P0 카드대출 버그 수정과 동일 원칙, 위 docstring 참고).
             flush_as_missing()
             unresolved.append(segment)
             continue
@@ -461,7 +475,15 @@ def _regex_extract(text: str) -> tuple[ExtractionResult, list[str]]:
 
 
 _LIABILITY_KEYWORDS: dict[_LiabilityLabel, tuple[str, ...]] = {
-    "대출": ("대출", "융자", "빚"),
+    # "주담대"는 "주택담보대출"의 구어체 축약이지만 "대출"이라는 글자
+    # 자체를 포함하지 않아("주"+"담"+"대") 위 "대출" 키워드로 안 잡힌다
+    # (실측 재현: "주담대 1억"이 부채로 전혀 인식되지 못하고 유실되거나,
+    # 구조적 exclusion을 못 타서 asset LLM 폴백에 그대로 넘어갔다). 반면
+    # "주택담보대출"/"주택 담보 대출"/"담보대출"은 이미 "대출" 글자를
+    # 포함해 여기 추가할 필요가 없다 — 축약형 "주담대" 하나만 좁게
+    # 동의어로 추가한다("담보" 단독은 담보물/담보 설정 등 무관한 문장까지
+    # 넓게 잡을 위험이 있어 요구사항대로 추가하지 않는다).
+    "대출": ("대출", "융자", "빚", "주담대"),
     "카드론": ("카드론",),
     "전세자금대출": ("전세자금대출", "전세대출"),
     "임대보증금반환채무": ("임대보증금", "보증금반환", "보증금 반환"),
