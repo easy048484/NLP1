@@ -180,4 +180,54 @@ describe("MessageList — 최신 assistant 턴만 interactive(stale follow-up �
     // 최신 턴(수정 답변용 AmountInputCard)만 활성화된다.
     expect(html).toContain("이 금액으로 답하기");
   });
+
+  it("과거 decedent_estate 유류분 CTA는 다음 턴이 오면 비활성/숨김 처리된다", () => {
+    const ctaLabel = "유류분 영향 확인하기";
+    const ctaResponse: ChatResponse = {
+      reply: "형식 요건상 문제가 발견되지 않았습니다.",
+      needs_review: false,
+      agents: ["decedent_estate"],
+      path: "standard",
+      verification: null,
+      contributions: [
+        {
+          agent: "decedent_estate",
+          reply: "형식 요건상 문제가 발견되지 않았습니다.",
+          data: {},
+          suggested_actions: [
+            {
+              prompt: "유언 내용이 상속인의 유류분에 영향을 줄 수 있는지 참고용으로 확인해 볼까요?",
+              label: ctaLabel,
+              message: "유언 내용이 상속인의 유류분에 영향을 줄 수 있는지 확인해 주세요.",
+            },
+          ],
+        },
+      ],
+    } as unknown as ChatResponse;
+
+    const heirShareResponse: ChatResponse = {
+      reply: "법정상속분과 유류분을 비교했습니다.",
+      needs_review: false,
+      agents: ["heir_share_analyzer"],
+      path: "standard",
+      verification: null,
+      contributions: [
+        { agent: "heir_share_analyzer", reply: "법정상속분과 유류분을 비교했습니다.", data: {} },
+      ],
+    } as unknown as ChatResponse;
+
+    const turns: Turn[] = [
+      { id: "a1", role: "assistant", response: ctaResponse },
+      { id: "u2", role: "user", text: ctaResponse.contributions[0].suggested_actions![0].message },
+      { id: "a2", role: "assistant", response: heirShareResponse },
+    ];
+    const html = render(turns);
+
+    // CTA 버튼은 과거 턴이 되면서 사라진다 — 다시 눌러 재전송할 수 없다.
+    expect(html).not.toContain(ctaLabel);
+    // 과거 턴의 본문은 그대로 남는다.
+    expect(html).toContain("형식 요건상 문제가 발견되지 않았습니다.");
+    // 최신 턴(heir_share_analyzer 응답)이 이어져 있다.
+    expect(html).toContain("법정상속분과 유류분을 비교했습니다.");
+  });
 });
