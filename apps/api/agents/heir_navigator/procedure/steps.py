@@ -81,11 +81,11 @@ STEPS: tuple[Step, ...] = (
         ),
         deadline=Deadline(
             base=DeadlineBase.DEATH_MONTH_END,
-            months=6,
+            months=12,
             label="안심상속 원스톱 신청 기한",
-            law="사망자 등 재산조회 통합처리에 관한 기준(행정안전부)",
+            law="정부24 안심상속 원스톱서비스 안내(행정안전부) — 사망일이 속한 달의 말일부터 1년 이내",
             note="기한이 지나도 기관별로 개별 조회는 가능하지만 통합 신청은 불가합니다.",
-            verified=False,
+            verified=True,  # 2026-09-28 정부24 안내 대조 완료 (6개월 → 1년으로 정정)
         ),
         aliases=("안심상속", "원스톱", "재산조회 신청"),
     ),
