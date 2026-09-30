@@ -398,7 +398,10 @@ def test_month_end_plus_six_months_follows_civil_code():
     tax_calculator.calculator.calculate_filing_deadline 과 같은 날짜여야 한다."""
     from datetime import date
 
-    from agents.heir_navigator.procedure.deadlines import add_months_legal, compute_deadlines
+    from agents.heir_navigator.procedure.deadlines import (
+        add_months_legal,
+        compute_deadlines,
+    )
     from agents.tax_calculator.calculator import calculate_filing_deadline
 
     assert add_months_legal(date(2026, 6, 30), 6) == date(2026, 12, 31)
@@ -409,8 +412,16 @@ def test_month_end_plus_six_months_follows_civil_code():
     assert add_months_legal(date(2026, 1, 30), 3) == date(2026, 4, 30)
     import calendar
 
-    for death in (date(2026, 6, 1), date(2026, 2, 10), date(2026, 1, 31), date(2026, 8, 30)):
-        due = {i.step.value: i.due_date for i in compute_deadlines(death_date=death, today=death)}
+    for death in (
+        date(2026, 6, 1),
+        date(2026, 2, 10),
+        date(2026, 1, 31),
+        date(2026, 8, 30),
+    ):
+        due = {
+            i.step.value: i.due_date
+            for i in compute_deadlines(death_date=death, today=death)
+        }
         # 법정 만료일 = 사망일이 속한 달의 말일 + 6개월 뒤 달의 말일
         m = death.month - 1 + 6
         y, mm = death.year + m // 12, m % 12 + 1
