@@ -33,7 +33,7 @@ from orchestrator.session_store import (
 )
 from schemas import AgentInput, AgentName, AgentOutput
 
-# --------------------------------------------------------- SessionState.history
+# SessionState.history
 
 
 def test_append_history_keeps_order_and_skips_blank():
@@ -138,7 +138,7 @@ def test_empty_history_is_not_written_to_json():
     assert SessionState.SHARED_KEY not in SessionState().to_json_context()
 
 
-# ------------------------------------------------------ HeirState.confirmed
+# HeirState.confirmed
 
 
 def test_first_value_is_taken_and_marked_confirmed():
@@ -223,7 +223,7 @@ def test_confirmed_survives_json_round_trip():
     )
 
 
-# ------------------------------------------------------- normalize_messages
+# normalize_messages
 
 
 def test_leading_assistant_messages_are_dropped():
@@ -253,7 +253,7 @@ def test_all_assistant_history_normalizes_to_empty():
     assert normalize_messages([{"role": "assistant", "content": "답변뿐"}]) == []
 
 
-# ------------------------------------------------ 라우터 왕복 (에이전트까지)
+# 라우터 왕복 (에이전트까지)
 
 
 def _recording_agent(seen: list[list[dict[str, str]]]):

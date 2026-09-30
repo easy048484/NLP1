@@ -33,7 +33,7 @@ from agents.heir_navigator.state import (
 from schemas import AgentInput, AgentName  # noqa: E402
 
 
-# --------------------------------------------------------------- 날짜 산술
+# 날짜 산술
 
 
 @pytest.mark.parametrize(
@@ -56,7 +56,7 @@ def test_month_end():
     assert month_end(date(2026, 12, 1)) == date(2026, 12, 31)
 
 
-# ----------------------------------------------------------------- 기한 계산
+# 기한 계산
 
 
 def test_no_death_date_means_no_deadlines():
@@ -143,7 +143,7 @@ def test_completed_steps_sort_last():
     assert items[-1].completed is True
 
 
-# ------------------------------------------------------------------- 절차 DAG
+# 절차 DAG
 
 
 def test_accept_decide_is_not_blocked_by_asset_search():
@@ -180,7 +180,7 @@ def test_handoff_to_decedent_estate_when_will_exists():
     assert build_plan(state, today=date(2026, 2, 1)).handoff == "decedent_estate"
 
 
-# ------------------------------------------------------------------- 경계
+# 경계
 
 
 @pytest.mark.parametrize(
@@ -226,7 +226,7 @@ def test_output_guardrail_catches_recommendation():
     )
 
 
-# ------------------------------------------------------------------- 슬롯
+# 슬롯
 
 
 def test_rule_based_extracts_explicit_date():
@@ -256,7 +256,7 @@ def test_merge_does_not_erase_known_values():
     assert merged.has_debt == "yes"
 
 
-# ------------------------------------------------------------------- 협의
+# 협의
 
 
 def test_consent_checklist_from_minimal_family_graph():
@@ -276,7 +276,7 @@ def test_consent_checklist_degrades_without_graph():
     assert build_checklist(None).available is False
 
 
-# ------------------------------------------------------------------- 캘린더
+# 캘린더
 
 
 def test_ics_has_one_event_per_pending_deadline():
@@ -287,7 +287,7 @@ def test_ics_has_one_event_per_pending_deadline():
     assert "END:VCALENDAR" in text
 
 
-# ------------------------------------------------------------------- 계약
+# 계약
 
 
 def test_first_turn_asks_for_death_date():
@@ -337,10 +337,8 @@ def test_guidance_comes_before_follow_up_question():
             context={"today": "2026-02-01"},
         )
     )
-    # 안내가 먼저 나오고
     assert "안내 기준" in output.reply
     assert output.data["plan"]["next_actions"]
-    # 되묻는 건 뒤에 하나만
     assert output.data["plan"]["blocking_slot"] is None
     assert output.data["asked_slot"] == output.data["plan"]["follow_up"]
     # 그 질문은 답변 본문이 아니라 별도 질문 블록(pending_questions)으로 나간다
@@ -390,3 +388,44 @@ def test_pre_planning_hands_back_to_decedent_estate():
         )
     )
     assert output.next_action == "handoff:decedent_estate"
+
+
+# --- 기한 만료일은 민법 기간 계산(제157조 초일불산입·제160조)을 따른다 ---
+
+
+def test_month_end_plus_six_months_follows_civil_code():
+    """말일 기산 6개월: 6/30 → 7/1 기산 → 12/31. 단순 월 가산(12/30)이 아니다.
+    tax_calculator.calculator.calculate_filing_deadline 과 같은 날짜여야 한다."""
+    from datetime import date
+
+    from agents.heir_navigator.procedure.deadlines import (
+        add_months_legal,
+        compute_deadlines,
+    )
+    from agents.tax_calculator.calculator import calculate_filing_deadline
+
+    assert add_months_legal(date(2026, 6, 30), 6) == date(2026, 12, 31)
+    assert add_months_legal(date(2026, 4, 30), 6) == date(2026, 10, 31)
+    assert add_months_legal(date(2026, 2, 28), 6) == date(2026, 8, 31)
+    assert add_months_legal(date(2026, 1, 31), 6) == date(2026, 7, 31)
+    # 해당일이 없는 달은 그 달 말일 (1/30 사망 → 1/31 기산 → 3개월 → 4/31 없음 → 4/30)
+    assert add_months_legal(date(2026, 1, 30), 3) == date(2026, 4, 30)
+    import calendar
+
+    for death in (
+        date(2026, 6, 1),
+        date(2026, 2, 10),
+        date(2026, 1, 31),
+        date(2026, 8, 30),
+    ):
+        due = {
+            i.step.value: i.due_date
+            for i in compute_deadlines(death_date=death, today=death)
+        }
+        # 법정 만료일 = 사망일이 속한 달의 말일 + 6개월 뒤 달의 말일
+        m = death.month - 1 + 6
+        y, mm = death.year + m // 12, m % 12 + 1
+        expected = date(y, mm, calendar.monthrange(y, mm)[1])
+        assert due["inherit_tax"] == expected, (death, due["inherit_tax"], expected)
+        # tax_calculator 는 같은 날짜에서 주말만 다음 영업일로 미룬다
+        assert calculate_filing_deadline(death) >= expected

@@ -48,9 +48,7 @@ def _upload(monkeypatch, fields, *, user_message: str = "", **context):
     )
 
 
-# ---------------------------------------------------------------------------
 # [1]/[2] 확신도 3단 분기
-# ---------------------------------------------------------------------------
 
 
 def test_all_high_confidence_fills_immediately_without_questions(monkeypatch) -> None:
@@ -171,9 +169,7 @@ def test_none_confidence_field_is_absent_without_a_photo_question(monkeypatch) -
     )
 
 
-# ---------------------------------------------------------------------------
 # [3] 자서(전문 자서) — 절대 LLM 판정 아님, 항상 확인 질문 (설계 방침 F)
-# ---------------------------------------------------------------------------
 
 
 def test_handwriting_always_stays_a_direct_question_even_at_high_confidence(
@@ -197,9 +193,7 @@ def test_extraction_result_never_contains_a_handwriting_field(monkeypatch) -> No
     assert "handwriting" not in PHOTO_FIELD_IDS
 
 
-# ---------------------------------------------------------------------------
 # [4] 🔴 이미지 미저장
-# ---------------------------------------------------------------------------
 
 
 def test_image_data_never_appears_in_response(monkeypatch) -> None:
@@ -239,9 +233,7 @@ def test_extraction_failure_does_not_block_manual_typing(monkeypatch) -> None:
     assert out.data["decedent_estate"]["requirements"] == {}
 
 
-# ---------------------------------------------------------------------------
 # [5] 기존 텍스트 입력 경로 회귀 — 이미지 없이도 완전히 동일하게 동작
-# ---------------------------------------------------------------------------
 
 
 def test_no_image_leaves_existing_text_path_untouched(monkeypatch) -> None:

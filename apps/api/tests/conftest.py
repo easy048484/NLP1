@@ -27,7 +27,6 @@ from sqlalchemy.exc import OperationalError
 
 from db.base import DatabaseNotConfigured, get_engine
 
-# ---------------------------------------------------------------------------
 # decedent_estate LLM 폴백을 실제 네트워크로부터 격리 (담당: 정호, 2026-08-25).
 #
 # 실전 검증에서 21개 테스트가 mock 없이 실제 Anthropic API를 호출하고
@@ -55,7 +54,6 @@ from db.base import DatabaseNotConfigured, get_engine
 # API를 검증하고 싶을 때 opt-in 하는 경로다. 기본 실행(`pytest -q`)에서는
 # pytest_collection_modifyitems가 live 테스트 자체를 deselect하므로,
 # `--live` 를 명시적으로 줬을 때만 이 예외가 의미를 가진다.
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)

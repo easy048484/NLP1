@@ -134,7 +134,6 @@ def test_korean_numeral_irregular_month_names() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
 # 개인정보 오탐 방지 (CLAUDE.md 절대 원칙 4)
 #
 # 주민등록번호 "901231-1234567" 은 `(\d{4})-(\d{1,2})` 패턴에 중간 조각
@@ -145,7 +144,6 @@ def test_korean_numeral_irregular_month_names() -> None:
 #
 # date_parser._NO_DIGIT_BEFORE/_NO_DIGIT_AFTER 가드로 "네 자리 연도가 더 긴
 # 숫자열의 일부이면 날짜가 아니다"를 강제해 근본 차단했다.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(

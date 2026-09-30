@@ -10,14 +10,6 @@ from .models import ComplexityFlag
 RULE_VERSION = "civil_act_2026-03-17"
 RULE_EFFECTIVE_FROM = date(2026, 3, 17)
 
-LEGAL_SOURCES = [
-    "민법 제1009조(법정상속분)",
-    "민법 제1112조(유류분의 권리자와 유류분)",
-    "민법 제1113조(유류분의 산정)",
-    "민법 제1114조(산입될 증여)",
-    "민법 제1115조(유류분의 보전)",
-]
-
 LEGAL_SOURCE_URLS = [
     "https://www.law.go.kr/lsLinkCommonInfo.do?chrClsCd=010202&lsJoLnkSeq=1030472287",
     "https://www.law.go.kr/lsLinkCommonInfo.do?lsJoLnkSeq=1031182201",

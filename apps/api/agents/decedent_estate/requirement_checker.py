@@ -71,7 +71,7 @@ _ADDRESS_DISTRICT_RE = re.compile(
 )
 # 도로명/지번 건물번호까지는 있어도 동·호수 등 세부 거주 단위(아파트 등
 # 공동주택 단위)가 없으면 장소 특정성이 사실관계에 따라 달라질 수 있다 —
-# 무효로 단정하지 않고 building_number_only(YELLOW)로 분류한다(2026-09-05).
+# 무효로 단정하지 않고 building_number_only(YELLOW)로 분류한다.
 # 이 패턴이 candidate line 안에 있으면(어느 위치든) "세부 단위까지 기재됨"으로
 # 본다.
 _ADDRESS_DETAIL_RE = re.compile(r"\d+\s*동\s*\d+\s*호")

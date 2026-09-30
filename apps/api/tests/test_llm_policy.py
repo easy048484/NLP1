@@ -15,7 +15,7 @@ from orchestrator.llm_policy import llm_enabled, llm_mode, llm_required, llm_sta
 from schemas import AgentName, AgentOutput
 
 
-# ------------------------------------------------------------------ 값 해석
+# 값 해석
 
 
 @pytest.mark.parametrize(
@@ -66,7 +66,7 @@ def test_status(monkeypatch) -> None:
     assert llm_status() == "on"
 
 
-# ------------------------------------------------- required 는 폴백하지 않는다
+# required 는 폴백하지 않는다
 
 
 def _outputs() -> list[AgentOutput]:

@@ -159,8 +159,7 @@ def test_run_reads_answers_from_context() -> None:
     assert address["condition_id"] == "envelope_or_minor_discrepancy"
     assert address["grade"] == "YELLOW"
     assert address["precedent_ids"] == ["address_on_envelope_valid"]
-    # PENDING/열린 followup이 하나도 없어 review는 종결됐지만, 더 이상
-    # 자동으로 heir_navigator에 handoff하지 않는다(2026-09-05).
+    # review가 종결돼도 heir_navigator로 자동 handoff하지 않는다.
     assert output.next_action is None
 
 
@@ -316,13 +315,11 @@ def test_run_pending_question_includes_field_and_options() -> None:
     ]
 
 
-# ---------------------------------------------------------------------------
 # 네임스페이스 규약 (orchestrator/handoff.py 1번)
 #
 # 위 테스트들은 전부 평면 키(_ctx)로 돌아 전환기 폴백 경로를 검증한다. 여기서는
 # 같은 시나리오를 네임스페이스(_ns_ctx)로 돌려 두 경로가 같은 결과를 내는지 본다.
 # 상태 저장 정책(C안) 자체는 test_decedent_state.py 에서 따로 다룬다.
-# ---------------------------------------------------------------------------
 
 
 def test_namespaced_context_produces_same_result_as_flat() -> None:
@@ -388,12 +385,10 @@ def test_run_progress_all_checked_when_confirm_answers_given() -> None:
     assert output.data["progress"] == {"checked": 5, "total": 5}
 
 
-# ---------------------------------------------------------------------------
 # A안 (#58 P0-1 후속): body/precedents는 요건별로(requirements[rid] 안에)
 # 담긴다. 통짜 최상위 body/precedents(#58 원안)는 제거했다 — 프론트가 기대한
 # 건 요건마다 자기 body·precedents를 갖는 구조(RequirementSignal)였고,
 # 아무도 안 쓰는 통짜 필드를 남겨두면 중복 데이터가 된다.
-# ---------------------------------------------------------------------------
 
 
 def test_run_requirement_body_and_precedents_are_per_requirement() -> None:

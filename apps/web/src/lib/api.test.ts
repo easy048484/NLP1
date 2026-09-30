@@ -145,7 +145,7 @@ describe("normalizeChatResponse — contributions[] 계약", () => {
     );
     const c = r!.contributions[0];
     expect(c.data.will_type).toBe("namespace-값");
-    // LEGACY_FLAT_KEYS 제거: 네임스페이스 밖 평면 키는 더 이상 슬라이스에 섞지 않는다
+    // 네임스페이스 밖 평면 키는 슬라이스에 섞지 않는다
     const r2 = normalizeChatResponse(
       currentBackendResponse({
         agents: ["decedent_estate"],

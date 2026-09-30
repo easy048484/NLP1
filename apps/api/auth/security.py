@@ -49,7 +49,7 @@ def _secret() -> str:
     return _DEV_SECRET
 
 
-# --------------------------------------------------------------------- 비밀번호
+# 비밀번호
 
 
 def hash_password(plain: str) -> str:
@@ -84,7 +84,7 @@ def verify_password(plain: str, stored: str) -> bool:
     return hmac.compare_digest(candidate, expected)
 
 
-# ----------------------------------------------------------------------- 토큰
+# 토큰
 
 
 def create_access_token(user_id: str) -> str:

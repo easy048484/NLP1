@@ -76,7 +76,7 @@ class GraphState(TypedDict, total=False):
     data: dict[str, Any]
 
 
-# ------------------------------------------------------------------- 노드
+# 노드
 
 
 def node_load(state: GraphState) -> GraphState:
@@ -246,7 +246,7 @@ def node_finalize(state: GraphState) -> GraphState:
     return {"data": data, "next_action": next_action}
 
 
-# ------------------------------------------------------------------- 분기
+# 분기
 
 
 def _after_guard(state: GraphState) -> str:

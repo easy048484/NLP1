@@ -192,10 +192,8 @@ def test_tax_agent_uses_family_graph_and_calculates() -> None:
     assert "신고세액공제" not in output.reply
 
 
-# ---------------------------------------------------------------------------
 # family_graph 기반 spouse_is_sole_heir 판별 — 민법 제1003조상 형제자매는
 # 배우자의 단독상속 여부에 영향을 주면 안 되고, 부모(2순위)는 영향을 줘야 한다.
-# ---------------------------------------------------------------------------
 
 
 def _run_with_family_graph(session_id: str, heirs: list[dict]) -> AgentOutput:
@@ -280,10 +278,8 @@ def test_family_graph_grandchild_is_not_reported_as_parent_case() -> None:
     assert "부모님" not in output.reply
 
 
-# ---------------------------------------------------------------------------
 # _parse_money — "0원"을 부분 문자열로 검사하면 500000000원처럼 끝나는
 # 정상적인 금액까지 전부 0으로 잘못 인식되던 버그의 회귀 테스트.
-# ---------------------------------------------------------------------------
 
 
 def test_parse_money_handles_round_amounts_ending_in_zero() -> None:
@@ -341,10 +337,8 @@ def test_tax_agent_accepts_round_amount_ending_in_zero() -> None:
     )
 
 
-# ---------------------------------------------------------------------------
 # 자녀 없는 배우자 상속 — spouse_is_sole_heir를 묻지 않아 배우자 실제 상속액이
 # 5억원 이상이면 계산이 예외로 실패하던 버그의 회귀 테스트.
-# ---------------------------------------------------------------------------
 
 
 def _answer_all(session_id: str, answers: list[str]) -> AgentOutput:

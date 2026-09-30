@@ -46,9 +46,7 @@ function readVerification(obj: Record<string, unknown>): VerificationResult | nu
  * `data[<agent>]` 네임스페이스 슬라이스만으로 contribution 을 만든다.
  *
  * 현재 백엔드는 ChatResponse.contributions 로 에이전트별 원본 출력을 직접
- * 내려주므로 이 함수는 타지 않는다. 평면 병합 키를 소유자별로 재분배하던
- * LEGACY_FLAT_KEYS 방어(겹치는 pending_questions 가 두 에이전트에 복사되던
- * 임시 처리)는 contributions 도입으로 제거했다.
+ * 내려주므로 이 함수는 타지 않는다.
  */
 function splitContributions(
   agents: AgentName[],
@@ -204,6 +202,8 @@ export async function sendChatMessage(
   userMessage: string,
   opts?: {
     familyGraphId?: string | null;
+    /** DB 없이 가족 구성을 직접 실어 보낼 때 ({heirs:[...]}). 모바일 간단 버전용. */
+    familyGraph?: Record<string, unknown> | null;
     axis?: ConsultAxis | null;
     /** 선택 버튼 등에서 구조화 답변을 함께 보낼 때 (예: {will_type: "none"}) */
     context?: Record<string, unknown>;
@@ -222,6 +222,7 @@ export async function sendChatMessage(
       ...opts?.context,
     },
     ...(opts?.familyGraphId ? { family_graph_id: opts.familyGraphId } : {}),
+    ...(opts?.familyGraph ? { family_graph: opts.familyGraph } : {}),
     ...(opts?.axis ? { axis: opts.axis } : {}),
     ...(opts?.image
       ? {

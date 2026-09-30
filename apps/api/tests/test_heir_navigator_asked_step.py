@@ -32,7 +32,7 @@ from schemas import AgentInput  # noqa: E402
 TODAY = date(2026, 9, 6)
 
 
-# ------------------------------------------------------------- 별칭 매칭
+# 별칭 매칭
 
 
 def test_find_asked_step_matches_question_about_registration():
@@ -58,7 +58,7 @@ def test_find_asked_step_none_for_general_question():
     assert find_asked_step("아버지가 어제 돌아가셨어요. 뭐부터 해야 하나요?") is None
 
 
-# ------------------------------------------------------------- 플랜
+# 플랜
 
 
 def test_prerequisite_chain_follows_requirements_transitively():
@@ -92,7 +92,7 @@ def test_plan_without_asked_step_is_unchanged():
     assert build_plan(state, today=TODAY).asked_step is None
 
 
-# ------------------------------------------------------------- 렌더링
+# 렌더링
 
 
 def test_facts_block_puts_asked_step_before_next_actions():
@@ -116,7 +116,7 @@ def test_deterministic_reply_answers_asked_step_first():
     assert reply.index("소유권이전등기 신청서") < reply.index("사망신고")
 
 
-# ------------------------------------------------------------- run() 통합
+# run() 통합
 
 
 def test_run_answers_registration_question_without_death_date():

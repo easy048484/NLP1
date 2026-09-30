@@ -38,7 +38,7 @@ def _fresh_session_store(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
 
-# --------------------------------------------------- "정리" 제거 회귀 방지
+# "정리" 제거 회귀 방지
 
 
 @pytest.mark.parametrize(
@@ -91,7 +91,7 @@ def test_asset_tile_prompt_routes_to_asset_organizer_alone():
     assert [c.agent for c in output.contributions] == [AgentName.ASSET_ORGANIZER]
 
 
-# ------------------------------------------------------------- "안심상속" 추가
+# "안심상속" 추가
 
 
 def test_ansim_sangsok_word_alone_triggers_candidacy():
@@ -116,7 +116,7 @@ def test_post_death_disclosure_message_routes_to_asset_organizer_alone():
     assert [c.agent for c in output.contributions] == [AgentName.ASSET_ORGANIZER]
 
 
-# --------------------------------------------- 다중 후보 시나리오 (키워드 단계)
+# 다중 후보 시나리오 (키워드 단계)
 
 
 def test_asset_plus_tax_message_keeps_both_as_candidates():

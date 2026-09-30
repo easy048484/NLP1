@@ -159,7 +159,7 @@ def classify_heirs(family_graph: Optional[dict[str, Any]]) -> HeirClassification
         children or parents or grandchildren or grandparents
     )
 
-    # ---- 법정상속인 선택 (민법 1000·1003조) ----
+    # 법정상속인 선택 (민법 1000·1003조) ----
     if len(spouse) > 1:
         result.unsupported_reason = (
             "배우자가 두 명 이상으로 입력되어 확인이 필요합니다."

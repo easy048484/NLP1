@@ -45,7 +45,7 @@
   }
 }
 
-/* ================= 헤더 ================= */
+/* 헤더 */
 .site-header {
   position: sticky;
   top: 0;
@@ -195,7 +195,7 @@
   }
 }
 
-/* ================= 섹션 공통 ================= */
+/* 섹션 공통 */
 .site-section {
   padding: clamp(60px, 8.5vw, 108px) var(--sp-5);
 }
@@ -236,7 +236,7 @@
   color: var(--brand-navy);
 }
 
-/* ================= 패럴랙스 이미지 공통 ================= */
+/* 패럴랙스 이미지 공통 */
 .parallax-img {
   position: absolute;
   inset: -12% 0;
@@ -246,7 +246,7 @@
   will-change: transform;
 }
 
-/* ================= 히어로 (사진 배경 · 패럴랙스) ================= */
+/* 히어로 (사진 배경 · 패럴랙스) */
 .hero {
   position: relative;
   overflow: hidden;
@@ -322,7 +322,7 @@
   color: var(--ink-inverse-muted);
 }
 
-/* ================= 사진 밴드 ================= */
+/* 사진 밴드 */
 .photo-band {
   position: relative;
   width: 100%;
@@ -370,7 +370,7 @@
   color: rgba(255, 255, 255, 0.6);
 }
 
-/* ================= 서비스 소개 (feature grid) ================= */
+/* 서비스 소개 (feature grid) */
 .feature-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -399,7 +399,7 @@
   line-height: 1.72;
 }
 
-/* ================= 이용 절차 ================= */
+/* 이용 절차 */
 .usage-steps {
   list-style: none;
   padding: 0;
@@ -430,7 +430,7 @@
   line-height: 1.65;
 }
 
-/* ================= 절차 미리보기 ================= */
+/* 절차 미리보기 */
 .procedure-preview {
   list-style: none;
   padding: 0;
@@ -481,7 +481,7 @@
   line-height: 1.65;
 }
 
-/* ================= 신뢰 ================= */
+/* 신뢰 */
 .trust-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -499,7 +499,7 @@
   line-height: 1.75;
 }
 
-/* ================= 관련 기관 ================= */
+/* 관련 기관 */
 .agency-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -533,7 +533,7 @@
   color: var(--ink-faint);
 }
 
-/* ================= CTA 밴드 ================= */
+/* CTA 밴드 */
 .cta-band {
   position: relative;
   background: var(--brand-navy);
@@ -589,7 +589,7 @@
   color: var(--ink-inverse-muted);
 }
 
-/* ================= 페이지 히어로 (안내/서비스/FAQ) ================= */
+/* 페이지 히어로 (안내/서비스/FAQ) */
 .page-hero {
   position: relative;
   background: var(--brand-navy);
@@ -639,7 +639,7 @@
   text-decoration: underline;
 }
 
-/* ================= 안내 페이지 ================= */
+/* 안내 페이지 */
 .guide-h2 {
   font-size: clamp(1.5rem, 2.8vw, 2rem);
   letter-spacing: -0.02em;
@@ -811,7 +811,7 @@
   text-align: left;
 }
 
-/* ================= FAQ ================= */
+/* FAQ */
 .faq-list {
   list-style: none;
   padding: 0;
@@ -843,7 +843,7 @@
   line-height: 1.8;
 }
 
-/* ================= 상시 플로팅 상담 시작 버튼 ================= */
+/* 상시 플로팅 상담 시작 버튼 */
 .floating-cta {
   position: fixed;
   right: clamp(16px, 3vw, 32px);
@@ -879,7 +879,7 @@
   transform: translateY(-2px);
 }
 
-/* ================= 푸터 ================= */
+/* 푸터 */
 .site-footer {
   background: var(--brand-navy);
   color: var(--ink-inverse-muted);

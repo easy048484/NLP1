@@ -35,7 +35,7 @@ ALICE = "alice-user-id"
 BOB = "bob-user-id"
 
 
-# ------------------------------------------------------------------ 보관 기간
+# 보관 기간
 
 
 def test_ttl_splits_on_ownership():
@@ -44,7 +44,7 @@ def test_ttl_splits_on_ownership():
     assert _ANONYMOUS_TTL_SECONDS < _AUTHENTICATED_TTL_SECONDS
 
 
-# ------------------------------------------------------------------ 접근 권한
+# 접근 권한
 
 
 def test_anonymous_session_is_reachable_by_anyone_who_knows_the_id():
@@ -63,7 +63,7 @@ def test_owned_session_is_reachable_only_by_its_owner():
     assert not owned.can_be_accessed_by(None)
 
 
-# -------------------------------------------------- InMemorySessionStore
+# InMemorySessionStore
 
 
 def test_other_user_gets_a_fresh_state_instead_of_someone_elses_data():
@@ -124,7 +124,7 @@ def test_purge_removes_expired_sessions_only():
     assert store.load("owned", user_id=ALICE) is stale_but_owned
 
 
-# ------------------------------------------------------------ 라우터 왕복
+# 라우터 왕복
 
 
 def _fake_agent():
@@ -162,7 +162,7 @@ def test_logging_out_does_not_strip_the_owner(monkeypatch):
     assert store.load("c", user_id=ALICE).user_id == ALICE
 
 
-# ------------------------------------------------- PostgresSessionStore (DB)
+# PostgresSessionStore (DB)
 
 
 def test_postgres_ttl_reflects_ownership(with_db):

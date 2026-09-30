@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from enum import Enum
-from typing import Literal, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -99,13 +99,3 @@ class HeirShareResult(BaseModel):
     warnings: list[str]
     legal_sources: list[str]
     expert_handoff: ExpertHandoffSummary
-
-
-Relation = Literal["spouse", "child", "parent", "grandchild", "sibling", "grandparent"]
-
-
-class FamilyMember(BaseModel):
-    name: str = Field(min_length=1)
-    relation: Relation
-    alive: bool = True
-    minor: bool = False

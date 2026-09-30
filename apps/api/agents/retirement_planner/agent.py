@@ -93,7 +93,7 @@ def _parse_age(text: str) -> int | None:
     return age if 0 <= age <= 130 else None
 
 
-# =================================================================== 상태
+# 상태
 
 
 def _empty_state() -> dict[str, Any]:
@@ -149,7 +149,7 @@ def _own_profile_update(state: dict[str, Any]) -> SharedProfile:
     )
 
 
-# ================================================== flat 프로필 → 엔진 입력
+# flat 프로필 → 엔진 입력
 
 
 def _synthesize_assets_from_flat(shared: SharedProfile) -> list[models.Asset]:
@@ -239,7 +239,7 @@ def _format_scenario(result: SimulationResult) -> str:
     return f"- {result.target_age}세 기준: {status} (예상 잔액 {remaining})"
 
 
-# ================================================================= 흐름
+# 흐름
 
 
 def _finalize(state: dict[str, Any], shared: SharedProfile | None) -> AgentOutput:

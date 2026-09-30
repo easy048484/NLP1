@@ -1,0 +1,307 @@
+{
+  "version": "2026-09-24",
+  "notes": [
+    "라우팅 골든셋 — 각 시나리오는 한 세션(session_id)에서 순서대로 보내는 턴 목록이다.",
+    "expected: 이 턴에 실행돼야 하는 에이전트 집합(순서 무관). also_ok: 정답으로 인정할 다른 집합들.",
+    "forbid: 절대 실행되면 안 되는 에이전트. tags: 분석용 라벨(경계/이어가기/전환/복수 등).",
+    "정답 근거는 docs/라우팅방식변경.md, docs/데모_시나리오_0830.md, docs/heir_navigator_실험_시나리오_0906.md, agents/*/spec.py 의 description/example_utterances 다."
+  ],
+  "scenarios": [
+    {
+      "id": "single-heir-01",
+      "title": "사망 직후 포괄 질문",
+      "axis": "post_death",
+      "turns": [
+        {"message": "아버지가 어제 돌아가셨어요. 뭐부터 해야 하나요?", "expected": ["heir_navigator"], "tags": ["fresh", "heir_navigator"]}
+      ]
+    },
+    {
+      "id": "single-heir-02",
+      "title": "빚 언급이 있어도 상속포기 절차 질문 (asset_organizer 경계)",
+      "axis": "post_death",
+      "turns": [
+        {"message": "빚이 많을 것 같은데 상속포기를 해야 하나요? 기한은 언제까지예요?", "expected": ["heir_navigator"], "forbid": ["asset_organizer"], "tags": ["fresh", "boundary:asset"]}
+      ]
+    },
+    {
+      "id": "single-heir-03",
+      "title": "유언장 없음 언급이 있어도 절차 질문 (decedent_estate 경계)",
+      "axis": "post_death",
+      "turns": [
+        {"message": "유언장 없이 아버지가 돌아가셨는데 상속 절차가 어떻게 되나요?", "expected": ["heir_navigator"], "forbid": ["decedent_estate"], "tags": ["fresh", "boundary:decedent"]}
+      ]
+    },
+    {
+      "id": "single-heir-04",
+      "title": "단일 단계 질문 (사망신고)",
+      "axis": "post_death",
+      "turns": [
+        {"message": "사망신고는 어디서 하나요?", "expected": ["heir_navigator"], "tags": ["fresh", "asked_step"]}
+      ]
+    },
+    {
+      "id": "single-heir-05",
+      "title": "단일 단계 질문 (상속등기 서류)",
+      "axis": "post_death",
+      "turns": [
+        {"message": "상속등기 하려면 서류가 뭐가 필요해요?", "expected": ["heir_navigator"], "tags": ["fresh", "asked_step"]}
+      ]
+    },
+    {
+      "id": "single-heir-06",
+      "title": "선택 추천 요구 (가드레일) — 여전히 heir_navigator",
+      "axis": "post_death",
+      "turns": [
+        {"message": "한정승인이랑 상속포기 중에 뭐가 더 나아요?", "expected": ["heir_navigator"], "tags": ["fresh", "guardrail"]}
+      ]
+    },
+    {
+      "id": "single-decedent-01",
+      "title": "키워드 없이 유언장 효력 (문서/효력)",
+      "axis": "post_death",
+      "turns": [
+        {"message": "아버지가 손으로 남긴 문서가 있는데 이게 효력이 있는지 모르겠어요", "expected": ["decedent_estate"], "tags": ["fresh", "no_keyword"]}
+      ]
+    },
+    {
+      "id": "single-decedent-02",
+      "title": "생전 유언장 작성 요건",
+      "axis": "pre_need",
+      "turns": [
+        {"message": "유언장을 직접 쓰려고 하는데 형식 요건을 알려주세요", "expected": ["decedent_estate"], "tags": ["fresh", "pre_need"]}
+      ]
+    },
+    {
+      "id": "single-decedent-03",
+      "title": "유언장을 못 찾음 (존재 불확실)",
+      "axis": "post_death",
+      "turns": [
+        {"message": "집을 다 뒤졌는데도 유언장을 못 찾겠어요", "expected": ["decedent_estate"], "tags": ["fresh", "boundary:heir"]}
+      ]
+    },
+    {
+      "id": "single-decedent-04",
+      "title": "녹음 유언 효력",
+      "axis": "post_death",
+      "turns": [
+        {"message": "녹음으로 남긴 유언도 법적으로 효력이 있나요?", "expected": ["decedent_estate"], "tags": ["fresh"]}
+      ]
+    },
+    {
+      "id": "single-asset-01",
+      "title": "생전 재산·부채 목록화",
+      "axis": "pre_need",
+      "turns": [
+        {"message": "내 재산이랑 빚이 뭐가 있는지 한 번 정리해보고 싶어요.", "expected": ["asset_organizer"], "tags": ["fresh", "pre_need"]}
+      ]
+    },
+    {
+      "id": "single-asset-02",
+      "title": "안심상속 조회 결과 정리",
+      "axis": "post_death",
+      "turns": [
+        {"message": "안심상속 조회 결과 예금 8천만원, 아파트 5억, 증권은 계좌만 확인됐고 대출 2천만원이에요.", "expected": ["asset_organizer"], "forbid": ["tax_calculator"], "tags": ["fresh", "boundary:tax"]}
+      ]
+    },
+    {
+      "id": "single-asset-03",
+      "title": "고인 빚 파악 의도 (heir_navigator 경계)",
+      "axis": "post_death",
+      "turns": [
+        {"message": "돌아가신 아버지 빚부터 파악하고 싶어요", "expected": ["asset_organizer"], "also_ok": [["asset_organizer", "heir_navigator"]], "tags": ["fresh", "boundary:heir"]}
+      ]
+    },
+    {
+      "id": "single-asset-04",
+      "title": "FunctionRail 타일 프롬프트",
+      "axis": "pre_need",
+      "turns": [
+        {"message": "자산 정리하고 싶어요", "expected": ["asset_organizer"], "tags": ["fresh", "tile"]}
+      ]
+    },
+    {
+      "id": "single-tax-01",
+      "title": "짧은 상속세 질문",
+      "axis": "post_death",
+      "turns": [
+        {"message": "상속세 얼마나 나와요?", "expected": ["tax_calculator"], "tags": ["fresh"]}
+      ]
+    },
+    {
+      "id": "single-tax-02",
+      "title": "생전 상속세 시뮬레이션 (재산 나열이 있어도 asset_organizer 아님)",
+      "axis": "pre_need",
+      "turns": [
+        {"message": "제가 살아 있을 때 미리 계산해보고 싶습니다. 아파트 7억 원, 예금 3천만 원, 보험금 1억 원을 두 딸에게 남기면 상속세가 얼마나 나올까요?", "expected": ["tax_calculator"], "also_ok": [["asset_organizer", "tax_calculator"]], "tags": ["fresh", "pre_need", "boundary:asset"]}
+      ]
+    },
+    {
+      "id": "single-tax-03",
+      "title": "공제 질문",
+      "axis": "post_death",
+      "turns": [
+        {"message": "배우자 공제 받으면 세금이 얼마나 줄어요?", "expected": ["tax_calculator"], "tags": ["fresh"]}
+      ]
+    },
+    {
+      "id": "single-share-01",
+      "title": "법률 용어 없는 유류분 질문",
+      "axis": "pre_need",
+      "turns": [
+        {"message": "큰애한테 다 주고 싶은데 괜찮을까요", "expected": ["heir_share_analyzer"], "tags": ["fresh", "no_keyword", "pre_need"]}
+      ]
+    },
+    {
+      "id": "single-share-02",
+      "title": "사후 사전증여 + 유류분",
+      "axis": "post_death",
+      "turns": [
+        {"message": "아버지가 3년 전에 여동생에게 2억 원을 증여했고 최근 돌아가셨습니다. 남은 재산을 여동생과 반씩 나누면 제 유류분이 부족할 수 있나요?", "expected": ["heir_share_analyzer"], "tags": ["fresh"]}
+      ]
+    },
+    {
+      "id": "single-share-03",
+      "title": "법정상속분 질문",
+      "axis": "post_death",
+      "turns": [
+        {"message": "법정상속분이 어떻게 되나요? 어머니랑 저희 형제 셋이에요", "expected": ["heir_share_analyzer"], "tags": ["fresh"]}
+      ]
+    },
+    {
+      "id": "single-multi-01",
+      "title": "복수 의도: 재산 정리 + 상속세",
+      "axis": "post_death",
+      "turns": [
+        {"message": "아버지 재산부터 정리하고 상속세도 계산하고 싶어요", "expected": ["asset_organizer", "tax_calculator"], "tags": ["fresh", "multi"]}
+      ]
+    },
+    {
+      "id": "single-multi-02",
+      "title": "복수 의도: 유언장 효력 + 상속 절차",
+      "axis": "post_death",
+      "turns": [
+        {"message": "유언장 효력도 확인하고 상속 절차도 알고 싶어", "expected": ["decedent_estate", "heir_navigator"], "tags": ["fresh", "multi"]}
+      ]
+    },
+    {
+      "id": "single-stub-01",
+      "title": "은퇴 질문은 retirement_planner(껍데기)로 가면 안 됨",
+      "axis": "pre_need",
+      "turns": [
+        {"message": "은퇴 준비 자금이 얼마나 필요해요?", "expected": ["asset_organizer"], "also_ok": [["tax_calculator"]], "forbid": ["retirement_planner"], "tags": ["fresh", "stub", "out_of_scope"]}
+      ]
+    },
+    {
+      "id": "single-default-01",
+      "title": "주제 없는 인사 — 사후 축 기본 에이전트",
+      "axis": "post_death",
+      "turns": [
+        {"message": "안녕하세요, 상담 시작할게요", "expected": ["heir_navigator"], "tags": ["fresh", "axis_default"]}
+      ]
+    },
+    {
+      "id": "flow-heir-dates",
+      "title": "heir_navigator 슬롯 수집 이어가기 (실험 시나리오 1)",
+      "axis": "post_death",
+      "turns": [
+        {"message": "아버지가 지난주에 돌아가셨어요. 뭐부터 해야 하나요?", "expected": ["heir_navigator"], "tags": ["fresh"]},
+        {"message": "8월 30일에 돌아가셨어요.", "expected": ["heir_navigator"], "tags": ["continue", "no_keyword"]},
+        {"message": "사망신고는 어제 했어요. 다음엔 뭘 해야 하죠?", "expected": ["heir_navigator"], "tags": ["continue"]},
+        {"message": "빚이 재산보다 많으면 어떻게 하나요?", "expected": ["heir_navigator"], "forbid": ["asset_organizer"], "tags": ["continue", "hijack:asset"]}
+      ]
+    },
+    {
+      "id": "flow-demo-A",
+      "title": "데모 시나리오 A — 절차 → 자산 → 절차 → 상속세 → 유언장 → 복합",
+      "axis": "post_death",
+      "turns": [
+        {"message": "아버지가 2026년 6월 1일에 돌아가셨어요. 뭐부터 해야 하나요?", "expected": ["heir_navigator"], "tags": ["fresh"]},
+        {"message": "안심상속 조회 결과가 나왔는데 은행 예금 3,200만원, 부동산 3억 5천만원, 대출 1억 2천만원이에요. 나머지는 없어요.", "expected": ["asset_organizer"], "tags": ["switch"]},
+        {"message": "빚이 재산보다 많으면 어떻게 하나요?", "expected": ["heir_navigator"], "forbid": ["asset_organizer"], "tags": ["switch", "hijack:asset"]},
+        {"message": "상속세는 얼마나 나와요?", "expected": ["tax_calculator"], "tags": ["switch"]},
+        {"message": "자필로 쓴 유언장이 있는데 효력이 있나요?", "expected": ["decedent_estate"], "tags": ["switch"]},
+        {"message": "유언장 효력도 다시 보고 상속세도 다시 계산해줘", "expected": ["decedent_estate", "tax_calculator"], "tags": ["multi", "pending_reply"]}
+      ]
+    },
+    {
+      "id": "flow-demo-B",
+      "title": "데모 시나리오 B — 생전: 자산 → 상속세 → 유류분 → 유언",
+      "axis": "pre_need",
+      "turns": [
+        {"message": "자산 정리하고 싶어요", "expected": ["asset_organizer"], "tags": ["fresh", "tile"]},
+        {"message": "예금 8천만원, 아파트 5억 있고 대출은 없어요", "expected": ["asset_organizer"], "tags": ["continue"]},
+        {"message": "주식이랑 보험, 자동차는 없어요. 이대로 정리해 주세요", "expected": ["asset_organizer"], "tags": ["continue"]},
+        {"message": "이 정도면 상속세가 얼마나 나와요?", "expected": ["tax_calculator"], "tags": ["switch"]},
+        {"message": "한 자녀에게 다 주면 분쟁 위험이 있나요?", "expected": ["heir_share_analyzer"], "tags": ["switch"]},
+        {"message": "자필 유언장을 쓰려는데 형식이 궁금해요", "expected": ["decedent_estate"], "tags": ["switch"]}
+      ]
+    },
+    {
+      "id": "flow-decedent-pending",
+      "title": "decedent_estate 답변 대기 중 — 자산 단어가 섞인 답변은 이어가고, 명백한 새 주제는 전환",
+      "axis": "post_death",
+      "turns": [
+        {"message": "자필로 쓴 유언장이 있는데 효력이 있나요?", "expected": ["decedent_estate"], "tags": ["fresh"]},
+        {"message": "직접 손으로 쓴 거예요. 예금이랑 아파트를 큰아들에게 준다고 적혀 있고, 날짜랑 이름, 주소도 있고 도장도 찍혀 있어요", "expected": ["decedent_estate"], "forbid": ["asset_organizer", "heir_share_analyzer"], "tags": ["continue", "pending_reply", "hijack:asset"]},
+        {"message": "유언 얘기는 알겠고 이제 상속 신고는 어떻게 해야 돼?", "expected": ["heir_navigator"], "tags": ["switch", "pending_reply"]}
+      ]
+    },
+    {
+      "id": "flow-decedent-to-heir-share",
+      "title": "유언장 점검 뒤 유류분 제안형 질문",
+      "axis": "post_death",
+      "turns": [
+        {"message": "아버지가 손으로 남긴 문서가 있는데 이게 효력이 있는지 모르겠어요", "expected": ["decedent_estate"], "tags": ["fresh", "no_keyword"]},
+        {"message": "이 유언대로 형한테 다 가면 저는 아무것도 못 받는 건가요?", "expected": ["heir_share_analyzer"], "also_ok": [["decedent_estate"], ["decedent_estate", "heir_share_analyzer"]], "tags": ["switch", "pending_reply", "ambiguous"]}
+      ]
+    },
+    {
+      "id": "flow-asset-inertia",
+      "title": "asset_organizer 대화 중 유류분 질문 — 관성 없이 전환",
+      "axis": "pre_need",
+      "turns": [
+        {"message": "내 재산이랑 빚이 뭐가 있는지 정리해보고 싶어요", "expected": ["asset_organizer"], "tags": ["fresh"]},
+        {"message": "큰애한테 다 주고 싶은데 괜찮을까요", "expected": ["heir_share_analyzer"], "forbid": ["asset_organizer"], "tags": ["switch", "no_keyword", "inertia"]}
+      ]
+    },
+    {
+      "id": "flow-tax-continue",
+      "title": "tax_calculator 추가 정보 답변에 재산 단어가 섞여도 이어가기",
+      "axis": "post_death",
+      "turns": [
+        {"message": "상속세 얼마나 나와요?", "expected": ["tax_calculator"], "tags": ["fresh"]},
+        {"message": "배우자 있고 자녀 둘이에요. 재산은 아파트 5억이랑 예금 8천만원이고 대출 2천만원 있어요", "expected": ["tax_calculator"], "also_ok": [["asset_organizer", "tax_calculator"]], "tags": ["continue", "hijack:asset"]},
+        {"message": "네 맞아요, 계산해 주세요", "expected": ["tax_calculator"], "tags": ["continue", "short_answer"]}
+      ]
+    },
+    {
+      "id": "flow-share-to-tax",
+      "title": "유류분 점검 뒤 세금 질문",
+      "axis": "post_death",
+      "turns": [
+        {"message": "어머니와 자녀 두 명이 공동상속인이고 순상속재산은 5억 6천만 원입니다. 각자의 법정상속분과 합의한 실제 분할액을 비교해 주세요.", "expected": ["heir_share_analyzer"], "tags": ["fresh"]},
+        {"message": "그럼 세금은 얼마나 내야 해요?", "expected": ["tax_calculator"], "tags": ["switch"]}
+      ]
+    },
+    {
+      "id": "flow-heir-to-decedent",
+      "title": "절차 안내 중 유언장 발견 → decedent_estate 전환 (실험 시나리오 3)",
+      "axis": "post_death",
+      "turns": [
+        {"message": "유언장 없이 아버지가 돌아가셨는데 상속 절차가 어떻게 되나요?", "expected": ["heir_navigator"], "forbid": ["decedent_estate"], "tags": ["fresh", "boundary:decedent"]},
+        {"message": "돌아가신 날은 2026년 8월 10일이에요.", "expected": ["heir_navigator"], "tags": ["continue", "no_keyword"]},
+        {"message": "정리하다 보니 아버지가 자필로 쓰신 유언장이 나왔어요. 효력이 있는지 봐주세요.", "expected": ["decedent_estate"], "tags": ["switch"]}
+      ]
+    },
+    {
+      "id": "flow-heir-known-date",
+      "title": "빚 + 안 날 기산점 (실험 시나리오 2)",
+      "axis": "post_death",
+      "turns": [
+        {"message": "빚이 많을 것 같은데 상속포기를 해야 하나요? 기한은 언제까지예요?", "expected": ["heir_navigator"], "forbid": ["asset_organizer"], "tags": ["fresh", "boundary:asset"]},
+        {"message": "어머니가 2026년 7월 15일에 돌아가셨고, 빚이 있다는 건 8월 20일에 알았어요.", "expected": ["heir_navigator"], "tags": ["continue", "no_keyword"]},
+        {"message": "그러면 빚이 정확히 얼마나 되는지부터 파악해야 할 것 같은데 도와주세요", "expected": ["asset_organizer"], "also_ok": [["heir_navigator"], ["asset_organizer", "heir_navigator"]], "tags": ["switch", "ambiguous"]}
+      ]
+    }
+  ]
+}

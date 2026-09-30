@@ -123,7 +123,7 @@ export function FamilyScreen() {
           {centerNoun}의 배우자·자녀·부모. 실명 대신 "첫째"처럼 적어도 됩니다.
         </p>
 
-        {/* ── 기준 인물 앵커 ── */}
+        {/* 기준 인물 앵커 */}
         <div className="family-anchor">
           <label className="family-anchor-label" htmlFor="centerName">
             {isPreNeed ? "재산을 남길 사람" : "누구의 상속인가요?"}

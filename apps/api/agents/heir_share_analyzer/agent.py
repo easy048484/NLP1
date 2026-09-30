@@ -336,8 +336,7 @@ def run(payload: AgentInput) -> AgentOutput:
     state["asked_slot"] = None
     state["missing_fields"] = []
     state["last_result"] = result.model_dump(mode="json")
-    # 전문가 전달용 요약은 last_result 안에도 있지만, compose/프론트가 법률
-    # 계산 전체를 열지 않고 바로 꺼낼 수 있도록 별도 키로 한 번 더 제공한다.
+    # compose와 프론트가 계산 전체를 열지 않고 전달용 요약을 읽게 한다.
     state["expert_handoff"] = result.expert_handoff.model_dump(mode="json")
 
     return AgentOutput(

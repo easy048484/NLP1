@@ -86,9 +86,7 @@ def _run_turns(messages: list[str]) -> list[AgentOutput]:
     return outputs
 
 
-# ---------------------------------------------------------------------------
 # intent 게이트
-# ---------------------------------------------------------------------------
 
 
 def test_missing_intent_defaults_to_review_and_matches_existing_pipeline() -> None:
@@ -102,7 +100,6 @@ def test_missing_intent_defaults_to_review_and_matches_existing_pipeline() -> No
     # intent를 아예 안 보내는 옛 호출부와 동일하게 review 파이프라인이 그대로 돈다.
     assert "guide" not in output.data
     assert "requirements" in output.data
-    # 종결돼도 더 이상 자동 handoff 없음(2026-09-05).
     assert output.next_action is None
     assert "형식 요건상 문제가 발견되지 않았습니다" in output.reply
 
@@ -169,7 +166,6 @@ def test_notarial_ignores_intent_entirely() -> None:
     assert "guide" not in output.data
 
 
-# ---------------------------------------------------------------------------
 # 자연어 prepare intent 전환 (2026-09-05 버그 수정)
 #
 # 실측 재현: will_type/intent가 미지정이거나 이미 review로 저장돼 있어도,
@@ -177,7 +173,6 @@ def test_notarial_ignores_intent_entirely() -> None:
 # 보다 그 의도를 우선해 prepare로 전환해야 한다. document intake(사진/본문
 # 요청)가 반복되면 안 된다. 우선순위: 이번 턴 explicit context.intent >
 # 이번 턴 명확한 자연어 > 저장된 state.intent > 기본값 review.
-# ---------------------------------------------------------------------------
 
 
 def test_exact_three_turn_regression_ends_in_prepare_without_document_intake() -> None:
@@ -245,6 +240,84 @@ def test_exact_three_turn_will_type_switch_keeps_prepare_intent() -> None:
     assert turn3.data["decedent_estate"]["intent"] == "prepare"
     assert "**녹음 유언 작성 가이드입니다.**" in turn3.reply
     assert "**자필증서 유언 작성 가이드입니다.**" not in turn3.reply
+
+
+def test_prepare_intent_survives_particle_insertion_before_will_type_known() -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "유언장을 미리 써두려고
+    하는데 뭐 챙겨야 돼?"처럼 "미리"가 끼어들거나 "써두려고"처럼 보조용언이
+    붙으면 기존 exact substring marker("유언장을 쓰려고" 등)에 안 걸려서,
+    will_type이 아직 안 정해진 turn1에서 prepare 의도가 저장되지 못하고
+    turn2(will_type 버튼 선택)에서 review로 default되어 document intake
+    안내가 잘못 나갔다."""
+    turn1, turn2 = _run_turns(
+        [
+            "유언장을 미리 써두려고 하는데 뭐 챙겨야 돼?",
+            "직접 손으로 쓴 유언장",
+        ]
+    )
+
+    assert "어떤 형태의 유언인가요?" in turn1.reply
+    assert turn1.data["decedent_estate"]["intent"] == "prepare"
+
+    assert turn2.data["decedent_estate"]["will_type"] == "handwritten"
+    assert turn2.data["decedent_estate"]["intent"] == "prepare"
+    assert "**자필증서 유언 작성 가이드입니다.**" in turn2.reply
+    assert _DOCUMENT_INTAKE_NOTICE not in turn2.reply
+
+
+def test_prepare_intent_inferred_from_junbi_verb_stem() -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "유언장 미리 준비해두고
+    싶은데 뭐부터 봐야 해?"는 "준비하다" 어간을 기존 patterns/markers가 전혀
+    포함하지 않아 will_type도 모호한 turn1에서 prepare 의도가 저장되지
+    못했다."""
+    turn1, _ = _run_turns(
+        [
+            "유언장 미리 준비해두고 싶은데 뭐부터 봐야 해?",
+            "직접 손으로 쓴 유언장",
+        ]
+    )
+
+    assert "어떤 형태의 유언인가요?" in turn1.reply
+    assert turn1.data["decedent_estate"]["intent"] == "prepare"
+
+
+def test_already_prepared_will_mention_stays_review() -> None:
+    """ "유언장을 준비해봤는데"(완료형)는 이미 준비를 마친 문서를 점검해달라는
+    review 표현이다 — "준비" 어간을 prepare 트리거에 추가하면서 이 완료형과
+    섞이지 않는지 확인하는 오탐 방지 회귀."""
+    output = _run(
+        "아버지 유언장을 준비해봤는데 확인해주실래요?", will_type="handwritten"
+    )
+
+    assert output.data["decedent_estate"]["intent"] == "review"
+
+
+def test_prepare_intent_inferred_with_word_inserted_between_mention_and_verb() -> None:
+    """실제 UI 자연어 QA(2026-09-07)에서 발견 — "자필로 유언장 하나
+    남겨두려고 하는데, 형식 요건이 어떻게 돼?"는 "유언장"과 동사("남겨두려고")
+    사이에 "하나"가 끼어 있고 동사 자체도 "남기다" 계열이라, will_type이
+    이 turn에 바로 "자필" marker로 확정되는데도 intent가 review로
+    default되어 작성 가이드 대신 기존 유언장 내용 제출 요구가 나갔다."""
+    output = _run(
+        "나중에 문제 안 생기게 자필로 유언장 하나 남겨두려고 하는데, 형식 요건이 어떻게 돼?"
+    )
+
+    assert output.data["decedent_estate"]["will_type"] == "handwritten"
+    assert output.data["decedent_estate"]["intent"] == "prepare"
+    assert "**자필증서 유언 작성 가이드입니다.**" in output.reply
+    assert _DOCUMENT_INTAKE_NOTICE not in output.reply
+
+
+def test_already_left_will_with_wanggyeoda_verb_stays_review() -> None:
+    """ "유언장을 남기셨는데"(완료형)는 이미 작성이 끝난 유언장을 가리키는
+    review 표현이다 — "남기다" 어간을 prepare 트리거에 추가하면서 이 완료형과
+    섞이지 않는지 확인하는 오탐 방지 회귀."""
+    output = _run(
+        "아버지가 유언장을 남기셨는데 내용을 좀 봐주세요",
+        will_type="handwritten",
+    )
+
+    assert output.data["decedent_estate"]["intent"] == "review"
 
 
 def test_stored_review_yields_to_explicit_natural_language_prepare() -> None:
@@ -333,9 +406,7 @@ def test_recording_natural_language_prepare_intent() -> None:
     assert "review" not in output.data
 
 
-# ---------------------------------------------------------------------------
 # prepare 모드 — handwritten, 초안 없음 (가이드만)
-# ---------------------------------------------------------------------------
 
 
 def test_prepare_handwritten_without_draft_returns_guide_only() -> None:
@@ -391,9 +462,7 @@ def test_prepare_unknown_will_type_defaults_to_handwritten_guide_with_notice() -
     assert output.data["will_type"] == "handwritten"
 
 
-# ---------------------------------------------------------------------------
 # prepare 모드 — recording, 초안 없음 (가이드만)
-# ---------------------------------------------------------------------------
 
 
 def test_prepare_recording_without_draft_returns_guide_only() -> None:
@@ -424,9 +493,7 @@ def test_prepare_recording_without_draft_returns_guide_only() -> None:
     assert "민법 제1066조" not in output.reply
 
 
-# ---------------------------------------------------------------------------
 # prepare 모드 + 초안 있음 → 가이드 + review 결과 둘 다
-# ---------------------------------------------------------------------------
 
 
 def test_prepare_handwritten_with_draft_also_includes_review_result() -> None:
@@ -447,7 +514,7 @@ def test_prepare_handwritten_with_draft_also_includes_review_result() -> None:
     assert output.data["review"]["requirements"]["date"]["grade"] == "GREEN"
     # 초안이 있어도 가이드 정보는 그대로 함께 반환된다.
     assert set(output.data["guide"].keys()) == set(_HANDWRITTEN_GUIDE_IDS)
-    # next_action은 review 결과를 그대로 따른다 — 종결돼도 자동 handoff 없음(2026-09-05).
+    # next_action은 review 결과를 그대로 따른다.
     assert output.next_action is None
 
 
@@ -507,7 +574,6 @@ def test_prepare_recording_with_draft_also_includes_review_result() -> None:
     assert "✅ 연월일: 기재 확인" in output.reply
     assert "review" in output.data
     assert output.data["review"]["requirements"]["rec_content"]["grade"] == "GREEN"
-    # 종결돼도 더 이상 자동 handoff 없음(2026-09-05).
     assert output.next_action is None
     # 가이드+점검 결과가 이어붙는 화면도 recording(§1067) footer를 써야 한다.
     assert "민법 제1067조" in output.reply
@@ -525,13 +591,11 @@ def test_prepare_has_draft_context_flag_overrides_heuristic() -> None:
     assert output.next_action is None
 
 
-# ---------------------------------------------------------------------------
 # 마무리 문구(§3-3 상담 연결 · §3-4 하단 고지) 중복 방지
 #
 # 가이드 블록(format_guide)과 점검 블록(format_result)이 각각 같은 두 줄로 끝나서,
 # 초안을 함께 낸 경우 한 화면에 두 번씩 반복되던 문제의 회귀 방지. 개수를 세지
 # 않고 `in`으로만 검사하면 중복을 못 잡으므로 여기서는 count()로 확인한다.
-# ---------------------------------------------------------------------------
 
 _CONSULTATION_MARK = "대한법률구조공단 132"
 _FOOTER_MARK = "법률 자문이 아닙니다"
@@ -623,14 +687,12 @@ def test_namespaced_prepare_with_draft_runs_review_too() -> None:
     assert "review" in output.data
 
 
-# ---------------------------------------------------------------------------
 # 초안 판별 (_looks_like_draft)
 #
 # user_message가 비어 있지 않다는 것만으로 초안이라고 보면 "유언장을 준비하려고요"
 # 같은 요청 문장까지 초안으로 오인해, 아직 쓰지도 않은 사용자에게 "❌ 날짜가
 # 확인되지 않습니다"를 보여주게 된다. 재산 처분 의사 / 날짜 / 제목줄+내용 중
 # 하나 이상이 있을 때만 초안으로 본다.
-# ---------------------------------------------------------------------------
 
 _NOT_DRAFT_MESSAGES = [
     "유언장을 준비하려고요",

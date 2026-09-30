@@ -119,7 +119,7 @@ def test_no_liquid_assets_and_no_income_depletes_first_year():
     assert result.depletion_age == profile.current_age
 
 
-# ============================================== 부채 이중 모드 (asset_organizer v3)
+# 부채 이중 모드 (asset_organizer v3)
 
 
 def test_precise_mode_liability_adds_expense_only_within_payment_period():
@@ -207,7 +207,7 @@ def test_multiple_liabilities_apply_modes_independently():
     assert balances[61] - balances[62] == 12_000_000
 
 
-# ======================================================= 퇴직연금 소득 전환
+# 퇴직연금 소득 전환
 
 
 def test_pension_principal_excluded_but_income_kicks_in_from_start_age():

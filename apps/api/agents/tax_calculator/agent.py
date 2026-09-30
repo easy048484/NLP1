@@ -106,9 +106,7 @@ QUESTIONS = {
     ),
 }
 
-# 생전 준비와 사후 처리에서 계산에 필요한 슬롯은 같지만, 이용자에게 보이는
-# 표현은 달라야 한다. 기본 QUESTIONS는 기존 사후 상담 문구로 유지하고,
-# pre_need 요청에서만 아래 문구를 덮어쓴다.
+# 계산 슬롯은 같지만 상담 축에 맞게 질문 표현을 분리한다.
 PRE_NEED_QUESTIONS = {
     "decedent_is_resident": (
         "상속을 미리 준비하는 분이 현재 국내에 거주하고 있는지 알려주세요. "
@@ -386,10 +384,8 @@ def _apply_family_graph(
     _mark_confirmed(state, "spouse_exists")
     _mark_confirmed(state, "children_count")
 
-    # spouse_is_sole_heir는 부모(2순위) 정보까지 있는 완전한 상속인 목록
-    # (형태 A: {"heirs": [...]})일 때만 확정한다. 레거시 형태
-    # ({"spouse_alive", "num_children"})는 부모 생존 여부를 알 수 없으므로
-    # 기존처럼 사용자에게 물어본다.
+    # 부모 생존 여부까지 알 수 있는 완전한 상속인 목록에서만 단독상속을 확정한다.
+    # 축약 형식은 정보가 부족하므로 사용자에게 확인한다.
     has_full_heir_list = isinstance(family_graph, dict) and isinstance(
         family_graph.get("heirs"), list
     )
@@ -645,8 +641,7 @@ def run(payload: AgentInput) -> AgentOutput:
     # 수집·검토·지원 불가 응답에 이전 턴의 세액이 남지 않도록 한다.
     state["last_result"] = None
 
-    # 공유 자료는 이 경로에서 후보로만 읽는다. 별도 자동 입력을 병행하면
-    # 범위 거절·자료 변경 시에도 미확인 금액이 확정값으로 되살아난다.
+    # 공유 자료는 후보로만 읽어 미확인 금액이 확정값으로 되살아나지 않게 한다.
     profile_changed = _apply_financial_profile(payload, state)
     _apply_structured_context(payload, state)
     _apply_family_graph(payload.family_graph, state)
@@ -715,11 +710,7 @@ def run(payload: AgentInput) -> AgentOutput:
         and values.get("children_count") == 0
         and values.get("spouse_is_sole_heir") is False
     ):
-        # calculator.calculate_spouse_legal_share는 배우자+자녀 공동상속 또는
-        # 배우자 단독상속만 지원한다 — 배우자가 피상속인의 부모님과 함께
-        # 공동상속받는 경우는 아직 계산할 수 없다. 이 경우를 계산까지 보냈다가
-        # ValueError로 걸리면 "입력이 서로 안 맞는다"는 오해를 주므로 여기서
-        # 먼저 걸러 정확한 이유를 안내한다.
+        # 배우자와 직계존속의 공동상속은 미지원이므로 계산 전에 정확한 이유를 안내한다.
         state["status"] = "unsupported"
         state["asked_slot"] = None
         state["missing_fields"] = []

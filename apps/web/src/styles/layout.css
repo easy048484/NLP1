@@ -7,7 +7,7 @@
   background: var(--surface-page);
 }
 
-/* ===== 헤더 ===== */
+/* 헤더 */
 .app-header {
   position: sticky;
   top: 0;
@@ -62,7 +62,7 @@
   color: var(--ink);
 }
 
-/* ===== 본문 3-zone ===== */
+/* 본문 3-zone */
 .app-body {
   flex: 1;
   display: grid;
@@ -98,7 +98,7 @@
   display: none;
 }
 
-/* ===== 우측 일정·체크리스트 패널 ===== */
+/* 우측 일정·체크리스트 패널 */
 .schedule-panel {
   position: sticky;
   top: 58px;
@@ -134,7 +134,7 @@
   line-height: 1.55;
 }
 
-/* ===== 컨텍스트 패널 ===== */
+/* 컨텍스트 패널 */
 .context-panel {
   position: sticky;
   top: 58px;
@@ -246,7 +246,7 @@
   font-weight: 700;
 }
 
-/* ===== 반응형 ===== */
+/* 반응형 */
 @media (max-width: 1024px) {
   .app-body,
   .app-body.has-schedule {
