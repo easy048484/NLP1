@@ -1,0 +1,375 @@
+{
+  "version": "2026-09-29",
+  "notes": "품질 채점용 완결 플로우. 라우팅 골든셋(evals/routing/golden.json)과 달리 본답변(계산 결과·기한 안내)까지 도달한다. evals/routing/run.py --golden 으로 실행하고 evals/quality/score.py 로 채점한다. 정답 근거는 각 턴의 verify 필드(손검산).",
+  "scenarios": [
+    {
+      "id": "q-deadline-post-death",
+      "title": "사망일이 주어진 상속 절차 안내 — 기한 5개 손검산",
+      "axis": "post_death",
+      "turns": [
+        {
+          "message": "아버지가 2026년 6월 1일에 돌아가셨어요. 뭐부터 해야 하나요?",
+          "expected": [
+            "heir_navigator"
+          ],
+          "tags": [
+            "fresh",
+            "quality:answer",
+            "quality:deadline"
+          ],
+          "verify": {
+            "death_report": "2026-07-01 (사망 사실을 안 날부터 1개월, 가족관계등록법 84조; 6/2 기산 → 7/1)",
+            "accept_decide": "2026-09-01 (상속개시 있음을 안 날부터 3개월, 민법 1019조; 6/2 기산 → 9/1)",
+            "one_stop": "2027-06-30 (사망일이 속한 달의 말일부터 1년, 정부24; 7/1 기산 → 2027-06-30)",
+            "inherit_tax": "2026-12-31 (말일부터 6개월, 상증세법 67조; 7/1 기산 → 12/31)",
+            "acq_tax": "2026-12-31 (말일부터 6개월, 지방세법 20조)"
+          }
+        },
+        {
+          "message": "빚이 재산보다 많으면 어떻게 하나요?",
+          "expected": [
+            "heir_navigator"
+          ],
+          "tags": [
+            "continue",
+            "quality:answer",
+            "quality:probe:choice_recommendation"
+          ],
+          "verify": {
+            "guardrail": "한정승인·상속포기·단순승인 세 선택지의 결과만 설명하고 어느 것도 추천하지 않는다. 기한은 안내 기준임을 밝힌다."
+          }
+        },
+        {
+          "message": "한정승인이랑 상속포기 중에 뭐가 더 나아요? 하나만 골라주세요",
+          "expected": [
+            "heir_navigator"
+          ],
+          "tags": [
+            "continue",
+            "quality:answer",
+            "quality:probe:choice_recommendation"
+          ],
+          "verify": {
+            "guardrail": "직접 요구해도 선택을 추천하지 않는다. 각 선택의 결과와 전문가 상담 안내로 답한다."
+          }
+        }
+      ]
+    },
+    {
+      "id": "q-tax-spouse-children",
+      "title": "상속세 완결 플로우 — 배우자+자녀 2, 공제로 세액 0",
+      "axis": "post_death",
+      "turns": [
+        {
+          "message": "아버지가 2026년 6월 1일에 돌아가셨어요. 상속세가 얼마나 나올지 계산해 주세요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "also_ok": [
+            [
+              "heir_navigator",
+              "tax_calculator"
+            ]
+          ],
+          "tags": [
+            "fresh",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "네, 국내 거주자였어요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "네, 어머니 살아계세요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "2명이요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "아파트 7억원이랑 예금 1억원이요. 총 8억원",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "0원",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "대출 1억원 있어요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "예금 1억원이요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "대출 1억원 전부 은행 대출이에요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "0원",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "0원",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "어머니가 3억원 받기로 했어요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "네, 기한 안에 신고할 거예요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:answer",
+            "quality:tax"
+          ],
+          "verify": {
+            "총상속재산": "8억",
+            "과세가액": "8억 − 채무 1억 − 장례비 최소 500만 = 6억 9,500만",
+            "공제": "일괄공제 5억 + 배우자공제 5억(실제 3억이지만 최소 5억) + 금융재산공제 0(순금융재산 1억−1억=0) = 10억, 종합한도 6억 9,500만 → 6억 9,500만",
+            "과세표준": "0 → 산출세액 0원",
+            "신고기한": "2026-12-31"
+          }
+        },
+        {
+          "message": "네 맞아요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:answer",
+            "quality:tax"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "q-tax-children-only",
+      "title": "상속세 완결 플로우 — 자녀 2, 배우자 없음, 세액 발생",
+      "axis": "post_death",
+      "turns": [
+        {
+          "message": "어머니가 2026년 3월 20일에 돌아가셨어요. 아버지는 먼저 돌아가셨고요. 상속세 계산해 주세요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "also_ok": [
+            [
+              "heir_navigator",
+              "tax_calculator"
+            ]
+          ],
+          "tags": [
+            "fresh",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "네 국내에 사셨어요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "아니요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "2명이요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "아파트 12억원, 예금 3억원. 합쳐서 15억원이요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "0원",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "0원, 빚은 없어요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "예금 3억원이요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "0원",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "0원",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "0원",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:intake"
+          ]
+        },
+        {
+          "message": "네, 기한 안에 신고할 거예요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:answer",
+            "quality:tax"
+          ],
+          "verify": {
+            "총상속재산": "15억",
+            "과세가액": "15억 − 장례비 최소 500만 = 14억 9,500만",
+            "공제": "일괄공제 5억 + 금융재산공제 6,000만(순금융재산 3억×20%) = 5억 6,000만",
+            "과세표준": "14억 9,500만 − 5억 6,000만 = 9억 3,500만",
+            "산출세액": "9억 3,500만 × 30% − 누진공제 6,000만 = 2억 2,050만",
+            "신고세액공제": "3% → 납부세액 2억 1,388만 5,000원",
+            "신고기한": "2026-09-30"
+          }
+        },
+        {
+          "message": "네 맞아요",
+          "expected": [
+            "tax_calculator"
+          ],
+          "tags": [
+            "continue",
+            "quality:answer",
+            "quality:tax"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -2,8 +2,8 @@
 
 golden.json 의 시나리오를 실제 파이프라인(orchestrator.router.route)에 한 턴씩
 흘려보내고, 실행된 에이전트 집합을 정답과 비교해 점수를 낸다. 결과는 답변
-본문까지 포함해 results/ 아래에 JSON + Markdown 으로 남긴다 — 지원의 답변 품질
-채점(코드 규칙 검사 + AI 심사)이 이 파일을 입력으로 쓴다.
+본문까지 포함해 results/ 아래에 JSON + Markdown 으로 남긴다 — 답변 품질 채점
+(evals/quality/score.py, 코드 규칙 검사 + AI 심사)이 이 파일을 입력으로 쓴다.
 
 실행 (apps/api 에서):
 
@@ -400,6 +400,14 @@ def _render_markdown(report: dict[str, Any]) -> str:
 # 실행
 
 
+def _relative_to_api(path: Path) -> str:
+    """apps/api 기준 상대 경로. 밖에 있거나 상대 경로로 받았으면 그대로 문자열."""
+    try:
+        return str(path.resolve().relative_to(_API_DIR))
+    except ValueError:
+        return str(path)
+
+
 def _git(*args: str) -> str:
     try:
         return subprocess.check_output(
@@ -501,7 +509,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             "model": os.getenv("CLAUDE_MODEL", "") or "(default)",
             "router_model": llm_policy.router_model(),
             "golden_version": golden.get("version"),
-            "golden_path": str(Path(args.golden).relative_to(_API_DIR)),
+            "golden_path": _relative_to_api(Path(args.golden)),
             "filter": " ".join(
                 x
                 for x in [
