@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import calendar
-from datetime import date
+from datetime import date, timedelta
 
 from pydantic import BaseModel
 
@@ -37,6 +37,24 @@ def add_months(base: date, months: int) -> date:
     month = total % 12 + 1
     day = min(base.day, calendar.monthrange(year, month)[1])
     return date(year, month, day)
+
+
+def add_months_legal(base: date, months: int) -> date:
+    """민법 기간 계산으로 만료일을 구합니다 (제157조 초일불산입, 제160조).
+
+    기산일은 base 다음 날. 만료일은 최종 월에서 기산일에 해당하는 날의 전일이고,
+    해당하는 날이 없으면 그 달의 말일입니다. 단순 add_months 와 달리 말일 기산일 때
+    차이가 납니다: 6월 30일부터 6개월 → 7/1 기산 → 12월 31일 (add_months 는 12월 30일).
+    tax_calculator.calculator.calculate_filing_deadline 과 같은 결과를 냅니다.
+    """
+    start = base + timedelta(days=1)
+    total = start.month - 1 + months
+    year = start.year + total // 12
+    month = total % 12 + 1
+    last = calendar.monthrange(year, month)[1]
+    if start.day > last:
+        return date(year, month, last)
+    return date(year, month, start.day) - timedelta(days=1)
 
 
 def month_end(base: date) -> date:
@@ -103,7 +121,7 @@ def deadline_for(
     if resolved is None:
         return None
     base_date, estimated = resolved
-    due = add_months(base_date, step.deadline.months)
+    due = add_months_legal(base_date, step.deadline.months)
     return DeadlineItem(
         step=step.id,
         step_title=step.title,

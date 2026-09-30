@@ -29,7 +29,7 @@ export const POST_DEATH_STEPS: ProcedureStep[] = [
   {
     order: 2,
     title: "안심상속 원스톱서비스 신청",
-    deadline: "사망신고 시 또는 이후 6개월 이내",
+    deadline: "사망일이 속한 달의 말일부터 1년 이내 (사망신고와 동시 신청 가능)",
     where: "주민센터 · 정부24",
     detail:
       "금융거래, 토지·건축물, 자동차, 국세·지방세, 국민연금·공무원연금 등 고인의 재산과 채무를 한 번에 조회 신청할 수 있습니다.",

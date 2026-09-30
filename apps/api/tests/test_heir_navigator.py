@@ -388,3 +388,44 @@ def test_pre_planning_hands_back_to_decedent_estate():
         )
     )
     assert output.next_action == "handoff:decedent_estate"
+
+
+# --- 기한 만료일은 민법 기간 계산(제157조 초일불산입·제160조)을 따른다 ---
+
+
+def test_month_end_plus_six_months_follows_civil_code():
+    """말일 기산 6개월: 6/30 → 7/1 기산 → 12/31. 단순 월 가산(12/30)이 아니다.
+    tax_calculator.calculator.calculate_filing_deadline 과 같은 날짜여야 한다."""
+    from datetime import date
+
+    from agents.heir_navigator.procedure.deadlines import (
+        add_months_legal,
+        compute_deadlines,
+    )
+    from agents.tax_calculator.calculator import calculate_filing_deadline
+
+    assert add_months_legal(date(2026, 6, 30), 6) == date(2026, 12, 31)
+    assert add_months_legal(date(2026, 4, 30), 6) == date(2026, 10, 31)
+    assert add_months_legal(date(2026, 2, 28), 6) == date(2026, 8, 31)
+    assert add_months_legal(date(2026, 1, 31), 6) == date(2026, 7, 31)
+    # 해당일이 없는 달은 그 달 말일 (1/30 사망 → 1/31 기산 → 3개월 → 4/31 없음 → 4/30)
+    assert add_months_legal(date(2026, 1, 30), 3) == date(2026, 4, 30)
+    import calendar
+
+    for death in (
+        date(2026, 6, 1),
+        date(2026, 2, 10),
+        date(2026, 1, 31),
+        date(2026, 8, 30),
+    ):
+        due = {
+            i.step.value: i.due_date
+            for i in compute_deadlines(death_date=death, today=death)
+        }
+        # 법정 만료일 = 사망일이 속한 달의 말일 + 6개월 뒤 달의 말일
+        m = death.month - 1 + 6
+        y, mm = death.year + m // 12, m % 12 + 1
+        expected = date(y, mm, calendar.monthrange(y, mm)[1])
+        assert due["inherit_tax"] == expected, (death, due["inherit_tax"], expected)
+        # tax_calculator 는 같은 날짜에서 주말만 다음 영업일로 미룬다
+        assert calculate_filing_deadline(death) >= expected
