@@ -139,6 +139,25 @@ class HandoffRequest(BaseModel):
     )
 
 
+class SuggestedAction(BaseModel):
+    """opt-in 후속 제안 — 자동 handoff와 달리 사용자가 버튼을 눌러야만
+
+    ``message`` 가 새 user_message 로 전송되고, 그 메시지는 기존 router를
+    그대로 통과한다(target_agent 같은 직접 라우팅 필드는 두지 않는다 —
+    "다음 에이전트"는 항상 router.classify() 가 정한다). 특정 에이전트
+    조합에 종속되지 않은 일반 계약이라, decedent_estate → heir_share_analyzer
+    외에 다른 조합(예: asset_organizer → tax_calculator)에도 그대로 재사용할
+    수 있다.
+    """
+
+    #: 사용자에게 보여줄 제안 문구.
+    prompt: str
+    #: 버튼 라벨.
+    label: str
+    #: 버튼 클릭 시 그대로 전송할 user_message.
+    message: str
+
+
 class AgentInput(BaseModel):
     session_id: str
     user_message: str
@@ -230,6 +249,15 @@ class AgentOutput(BaseModel):
         ),
     )
     data: dict[str, Any] = Field(default_factory=dict)
+    suggested_actions: list[SuggestedAction] = Field(
+        default_factory=list,
+        description=(
+            "opt-in 후속 제안 목록. handoffs와 달리 오케스트레이터가 자동으로 "
+            "실행하지 않는다 — 사용자가 프론트에서 버튼을 눌러야만 message가 "
+            "새 user_message로 전송되고, 그 메시지는 기존 router.classify()를 "
+            "그대로 통과한다. 기본값 빈 배열이라 기존 API 소비자와 하위호환된다."
+        ),
+    )
 
 
 class VerificationResult(BaseModel):

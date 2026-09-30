@@ -39,7 +39,7 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from schemas import AgentInput, AgentName, AgentOutput, WillStatus
+from schemas import AgentInput, AgentName, AgentOutput, SuggestedAction, WillStatus
 
 from .date_parser import parse_dates
 from .image_reader import PHOTO_FIELD_IDS, extract_will_photo_fields
@@ -1438,16 +1438,82 @@ def _run_recording_prepare_pipeline(
     )
 
 
+#: 유류분 영향 확인 opt-in 제안(CTA). 절대 자동 handoff하지 않는다 — 사용자가
+#: 버튼을 눌러야만 아래 message가 새 user_message로 전송되고, 그 메시지는
+#: 기존 router.classify()를 그대로 통과해 "유류분" 키워드로 heir_share_analyzer에
+#: 도달한다(SuggestedAction 계약 자체는 decedent-specific하지 않다 — 향후
+#: asset_organizer → tax_calculator 같은 다른 조합에도 재사용 가능).
+_HEIR_SHARE_CTA = SuggestedAction(
+    prompt="유언 내용이 상속인의 유류분에 영향을 줄 수 있는지 참고용으로 확인해 볼까요?",
+    label="유류분 영향 확인하기",
+    message="유언 내용이 상속인의 유류분에 영향을 줄 수 있는지 확인해 주세요.",
+)
+
+
+def _review_complete_for_heir_share_cta(output: AgentOutput) -> bool:
+    """이 턴의 응답이 "요건 점검이 실제로 끝난 handwritten/recording review"인지.
+
+    구조화 state/data만 보고 판정한다(reply 문자열 파싱 금지). 아래 중 하나라도
+    아니면 CTA를 내지 않는다:
+    - will_type이 handwritten/recording으로 확정(_run_pipeline이 unknown도
+      handwritten으로 정규화해서 저장하므로 이 둘만 보면 된다)
+    - intent == "review" (prepare는 제외 — 초안이 있어 내부적으로 review
+      파이프라인을 이어붙인 경우도 최상위 intent는 "prepare"로 남는다)
+    - requirements 결과가 실제로 존재(빈 dict면 아직 본문/대본을 받기 전
+      intake 단계 — document/recording intake, will_type·intent 질문 등)
+    - pending_questions가 비어 있음
+    - requirements 중 PENDING 등급이 남아 있지 않음
+    - next_action이 await_user_confirmation이 아님 (RED/후속질문이 남아
+      있으면 _next_action*이 AWAIT_USER를 반환하므로 자연히 걸러진다)
+
+    will_type 체크는 방어적 안전장치다 — _run_no_will_pipeline/
+    _guidance_only_output은 intent/requirements를 명시적으로 초기화하지
+    않아서, 이전 턴에 완료된 review가 있던 세션이 "유언장이 없어요"로
+    전환되면 stale한 review 상태(intent="review", requirements 비어있지
+    않음)가 그대로 남을 수 있다.
+    """
+    ns = output.data.get(STATE_KEY, {}) if isinstance(output.data, dict) else {}
+    if ns.get("will_type") not in (_HANDWRITTEN_WILL_TYPE, _RECORDING_WILL_TYPE):
+        return False
+    if ns.get("intent") != _REVIEW_INTENT:
+        return False
+    requirements = ns.get("requirements") or {}
+    if not requirements:
+        return False
+    if ns.get("pending_questions"):
+        return False
+    if any(
+        isinstance(r, dict) and r.get("grade") == "PENDING"
+        for r in requirements.values()
+    ):
+        return False
+    if output.next_action == NEXT_ACTION_AWAIT_USER:
+        return False
+    return True
+
+
+def _with_suggested_actions(output: AgentOutput) -> AgentOutput:
+    """완료된 review 응답 뒤에만 유류분 CTA를 붙인다.
+
+    ⚠️ handoffs/next_action은 절대 건드리지 않는다 — CTA는 opt-in 제안일
+    뿐, 이 함수가 자동 handoff나 pending_handoff를 만들어서는 안 된다.
+    """
+    if _review_complete_for_heir_share_cta(output):
+        output.suggested_actions = [_HEIR_SHARE_CTA]
+    return output
+
+
 def run(payload: AgentInput) -> AgentOutput:
     """대화형 유언장 점검 실행 + 공유 will_status 요약을 얹어 돌려준다.
 
     실제 파이프라인은 _run_pipeline 이 담당하고, 이 함수는 그 결과에서
     tax_calculator·heir_share_analyzer 가 참고할 compact WillStatus 를 뽑아
-    AgentOutput.will_status 로 붙인다 (schemas.WillStatus).
+    AgentOutput.will_status 로 붙인다 (schemas.WillStatus). 요건 점검이 실제로
+    끝난 응답에는 유류분 영향 확인 opt-in 제안(suggested_actions)도 붙인다.
     """
     output = _run_pipeline(payload)
     output.will_status = _derive_will_status(output)
-    return output
+    return _with_suggested_actions(output)
 
 
 #: 요건 판정 등급(rules/requirements.json) → 공유 WillStatus 등급.

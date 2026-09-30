@@ -841,6 +841,19 @@
   display: grid;
   gap: var(--sp-2);
 }
+
+/* opt-in 후속 제안(SuggestedActionCard) — followup-block(답이 필요한 질문,
+ * 골드 배경)과 달리 "원하면 눌러보라"는 참고용 제안이라 중립 카드 톤을 쓴다. */
+.suggested-action-card {
+  display: grid;
+  gap: var(--sp-3);
+  justify-items: start;
+}
+.suggested-action-prompt {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
 .signal-list {
   margin-top: var(--sp-1);
 }

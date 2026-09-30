@@ -7,6 +7,7 @@ from .agent_io import (
     Estate,
     FinancialProfile,
     HandoffRequest,
+    SuggestedAction,
     VerificationResult,
     WillStatus,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "Estate",
     "FinancialProfile",
     "HandoffRequest",
+    "SuggestedAction",
     "VerificationResult",
     "WillStatus",
 ]
