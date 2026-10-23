@@ -27,5 +27,3 @@ build/
 # Logs
 *.log
 
-# 로컬 프리뷰 스크린샷 출력 (apps/web/_mock/*.mjs)
-apps/web/_mock/_shots/
