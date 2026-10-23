@@ -219,8 +219,28 @@ vitest
 
 ## References
 
-- 민법 제1000조~제1118조 (상속·유언·유류분), 상속세 및 증여세법
-- 헌법재판소 2024. 4. 25. 선고 2020헌가4 등 결정 (형제자매 유류분 위헌)
+### 법령
+
+- **민법** — 제157조·제160조·제161조(기간 계산), 제1000조·제1003조·제1009조(상속 순위·배우자 상속·법정상속분), 제1019조(승인·포기 기간, 특별한정승인), 제1066조~제1072조(유언의 방식·증인 결격), 제1112조~제1118조(유류분). [[국가법령정보센터]](https://www.law.go.kr/법령/민법)
+- **상속세 및 증여세법** — 상속공제·세율 및 제67조(상속세 과세표준 신고기한). [[국가법령정보센터]](https://www.law.go.kr/법령/상속세및증여세법)
+- **가족관계의 등록 등에 관한 법률** — 제84조(사망신고 기한). [[국가법령정보센터]](https://www.law.go.kr/법령/가족관계의등록등에관한법률)
+- **지방세법** — 제20조 제1항(상속 취득세 신고·납부 기한). [[국가법령정보센터]](https://www.law.go.kr/법령/지방세법)
+
+### 판례·결정례
+
+- 헌법재판소 2024. 4. 25. 선고 2020헌가4 등 결정 — 형제자매의 유류분(민법 제1112조 제4호) 위헌
+- 대법원 1998. 6. 12. 선고 97다38510 판결 — 자필증서 유언의 복사본 무효, 무인(拇印)에 의한 날인 유효. [[판례]](https://www.law.go.kr/LSW/precInfoP.do?evtNo=97%EB%8B%A438510)
+- 대법원 2006. 9. 8. 선고 2006다25103, 25110 판결 — 유언 방식 규정은 강행규정, 날인 없는 자필증서 유언 무효. [[판례]](https://www.law.go.kr/LSW/precInfoP.do?precSeq=68123)
+- 대법원 2009. 5. 14. 선고 2009다9768 판결 — 작성일(日)이 빠진 자필증서 유언 무효. [[판례]](https://www.law.go.kr/LSW/precInfoP.do?evtNo=2009%EB%8B%A49768)
+- 대법원 2014. 9. 26. 선고 2012다71688 판결 — 자필증서 유언의 주소 자서 요건. [[판례]](https://www.law.go.kr/LSW/precInfoP.do?precSeq=187497)
+
+### 공공기관 안내
+
+- 정부24 — 사망신고 및 안심상속 원스톱 서비스(사망자 재산 조회 통합 신청). [[link]](https://www.gov.kr)
+- 대한민국 법원 전자민원센터 — 상속한정승인·상속포기 신고 안내. [[link]](https://help.scourt.go.kr)
+- 국세청 홈택스 — 상속세 신고·납부 안내. [[link]](https://www.hometax.go.kr)
+
+### 기술
+
 - LangGraph. [[docs]](https://langchain-ai.github.io/langgraph/)
-- Anthropic Claude API. [[docs]](https://docs.anthropic.com/)
 - Zheng, L., et al. (2023). **Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena**. *NeurIPS 2023 Datasets and Benchmarks*. [[paper]](https://arxiv.org/abs/2306.05685)
